@@ -13,7 +13,7 @@ export async function joinWaitlist(_prev: JoinState, form: FormData): Promise<Jo
 
   const email = String(form.get("email") ?? "").trim().toLowerCase();
   if (email.length > 254 || !EMAIL.test(email)) {
-    return { ok: false, message: "That doesn't look like an email address. Check it and try again." };
+    return { ok: false, message: "That doesn't look like an email address. Check for a typo." };
   }
 
   try {
@@ -23,6 +23,6 @@ export async function joinWaitlist(_prev: JoinState, form: FormData): Promise<Jo
     return { ok: true, message: "You're on the list." };
   } catch (err) {
     console.error("waitlist: insert failed", err);
-    return { ok: false, message: "We couldn't save that right now. Try again in a minute." };
+    return { ok: false, message: "The server didn't save that. Nothing was sent; try again in a minute." };
   }
 }
