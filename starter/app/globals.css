@@ -1,0 +1,201 @@
+:root {
+  --paper: #f3eee3;
+  --paper-high: #fbf8f1;
+  --ink: #18160f;
+  --muted: #6e6350; /* tinted from the paper hue, never grey */
+  --signal: #c9391a;
+  --line: #d6cdbb;
+  /* Type scale: 1.25 ratio, used everywhere. */
+  --s-1: 0.8rem;
+  --s0: 1rem;
+  --s1: 1.25rem;
+  --s2: 1.563rem;
+  --display: clamp(2.6rem, 7.5vw, 5.75rem);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15130e;
+    --paper-high: #1d1a13;
+    --ink: #f1ebdf;
+    --muted: #a69b86;
+    --signal: #ef5a33;
+    --line: #37322a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { scrollbar-color: var(--line) var(--paper); }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(120% 70% at 50% -20%, var(--paper-high), var(--paper) 65%);
+  color: var(--ink);
+  font: var(--s0) / 1.6 var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  caret-color: var(--signal);
+  font-variant-numeric: tabular-nums;
+}
+
+::selection { background: var(--signal); color: var(--paper); }
+
+main {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: clamp(3rem, 12vh, 8rem) 1rem 3rem;
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
+  column-gap: clamp(2rem, 6vw, 5rem);
+}
+
+@media (max-width: 56rem) {
+  main { grid-template-columns: 1fr; }
+}
+
+/* The one bold decision: an oversized optical-size serif with a single signal color. */
+h1 {
+  font: 400 var(--display) / 0.98 var(--font-display), Georgia, serif;
+  font-variation-settings: "opsz" 72;
+  letter-spacing: -0.025em;
+  margin: 0 0 1.5rem;
+  text-wrap: balance;
+}
+
+h1 em { color: var(--signal); font-style: italic; }
+
+h2 {
+  font: 600 var(--s0) / 1.4 var(--font-body), sans-serif;
+  margin: 2.5rem 0 0.75rem;
+}
+
+.lede {
+  font-size: var(--s1);
+  line-height: 1.5;
+  max-width: 34rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.lede code, .ledger code, .proof code {
+  font: 0.9em var(--font-mono), ui-monospace, monospace;
+  color: var(--ink);
+}
+
+/* The prompt is real input the user will type, so it is the one place monospace belongs. */
+.prompt {
+  font: var(--s0) / 1.5 var(--font-mono), ui-monospace, monospace;
+  margin: 1.75rem 0 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper-high);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.prompt span { color: var(--signal); margin-right: 0.5ch; }
+
+.form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  max-width: 34rem;
+}
+
+.form input[type="email"] {
+  flex: 1 1 15rem;
+  font: inherit;
+  padding: 0.85rem 1rem;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--paper-high);
+  color: var(--ink);
+}
+
+.form input::placeholder { color: var(--muted); }
+
+.form button {
+  font: 600 var(--s0) var(--font-body), sans-serif;
+  padding: 0.85rem 1.5rem;
+  border: 2px solid var(--signal);
+  border-radius: 12px;
+  background: var(--signal);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.form button:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -8px var(--signal); }
+.form button:disabled { opacity: 0.6; cursor: progress; transform: none; box-shadow: none; }
+
+:focus-visible { outline: 3px solid var(--signal); outline-offset: 3px; border-radius: 4px; }
+
+.msg { flex-basis: 100%; min-height: 1.6em; margin: 0; }
+.msg.error { color: var(--signal); }
+
+.proof {
+  margin: 0.5rem 0 0;
+  font-size: var(--s-1);
+  color: var(--muted);
+}
+
+.proof strong { color: var(--ink); font-weight: 600; }
+
+/* The ledger sits lower than the pitch on purpose: two columns, two baselines. */
+.ledger { margin-top: clamp(2rem, 14vh, 9rem); }
+
+.ledger h2 { margin-top: 0; }
+
+.ledger dl { margin: 0; }
+
+.ledger dt {
+  font: 400 var(--s2) / 1.1 var(--font-display), Georgia, serif;
+  font-variation-settings: "opsz" 24;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.ledger dd {
+  margin: 0.5rem 0 1.5rem;
+  color: var(--muted);
+  max-width: 32rem;
+}
+
+footer {
+  grid-column: 1 / -1;
+  margin-top: 4rem;
+  font-size: var(--s-1);
+  color: var(--muted);
+}
+
+a { color: inherit; text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
+a:hover { color: var(--signal); }
+
+/* One authored moment: the page settles in, top to bottom. */
+.reveal {
+  animation: rise 0.8s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; }
+  .form button { transition: none; }
+}
+
+.sr-only,
+.hp {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
