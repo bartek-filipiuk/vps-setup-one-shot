@@ -19,7 +19,7 @@ log, explain the error to the user in plain words, and decide together. Do not l
 | install script exits early | apt lock (unattended-upgrades running) | wait 2 minutes, run it again; it is safe to re-run |
 | tunnel: `bind: Address already in use` | local 8000/6001/6002 taken | stop the local process using it |
 | panel shows "realtime connection lost" via the tunnel | 6001 not forwarded | include all three `-L` forwards |
-| "realtime connection lost" stays after the HTTPS domain is set | this Coolify version reaches realtime/terminal on ports 6001/6002 directly instead of through the domain **[verify]** | add firewall rules for TCP 6001 and 6002 restricted to the user's own IP (`curl -s https://ifconfig.me`); the panel works without them, only live updates and the web terminal do not |
+| "realtime connection lost" stays after the HTTPS domain is set | the browser still has the tunnel-era page open, or the proxy has not reloaded | hard-reload the panel on its domain; the docs say 6001/6002 are only needed for direct-IP access (coolify.io/docs/core/infrastructure/servers/firewall) |
 | `401` from the API | wrong or truncated token | create a new token, write it again (phase 04 step 3) |
 | API says it is disabled | API access off | Settings → Advanced → API Access |
 

@@ -1,8 +1,7 @@
 # Coolify v4 API: what this guide uses
 
 Base: `<COOLIFY_URL>/api/v1`, header `Authorization: Bearer <token>`. Use `capi` from `lib.sh`.
-Items marked **[verify]** come from experience with one Coolify version and have not been
-re-checked on the version in `README.md` → "Tested with".
+Checked against Coolify 4.3.23 on 2026-10-09 unless marked **[verify]**.
 
 ## Endpoints
 
@@ -13,17 +12,17 @@ re-checked on the version in `README.md` → "Tested with".
 | `POST /projects {name}` | one project per app | returns `uuid`; environment `production` exists by default |
 | `POST /security/keys {name, private_key}` | store a deploy key | returns `uuid` → `private_key_uuid` |
 | `POST /databases/postgresql` | Postgres | body: `project_uuid, server_uuid, environment_name, name, image, postgres_user, postgres_password, postgres_db, is_public:false, instant_deploy:true`; returns `uuid`, `internal_db_url` |
-| `GET /databases/{uuid}` | status, `internal_db_url` | status `running:healthy` when ready; the container name equals the uuid **[verify]** |
-| `POST /applications/private-deploy-key` | app from a private Git repo | body: `project_uuid, server_uuid, environment_name, name, git_repository` (SSH form `git@github.com:owner/repo.git`), `git_branch, build_pack:"dockerfile", ports_exposes, private_key_uuid, instant_deploy:false` |
-| `PATCH /applications/{uuid}` | domain, health check, webhook secret | `domains:"https://host"`, `health_check_enabled`, `health_check_path`, `health_check_port`, `manual_webhook_secret_github` **[verify]** |
+| `GET /databases/{uuid}` | status, `internal_db_url` | status `running:healthy` when ready; the uuid is the hostname inside the `coolify` network and part of the container name |
+| `POST /applications/private-deploy-key` | app from a private Git repo | body: `project_uuid, server_uuid, environment_name, name, git_repository` (SSH form `git@github.com:owner/repo.git`), `git_branch, build_pack:"dockerfile", ports_exposes, private_key_uuid, instant_deploy:false`, optional `base_directory:"/subfolder"` |
+| `PATCH /applications/{uuid}` | domain, health check, webhook secret | `domains:"https://host"`, `base_directory`, `health_check_enabled`, `health_check_path`, `health_check_port`, `manual_webhook_secret_github` |
 | `GET/POST/DELETE /applications/{uuid}/envs[/{env_uuid}]` | environment variables | POST body `{key, value, is_preview:false}` |
-| `GET /deploy?uuid={app}` | trigger a deploy | returns `deployments[0].deployment_uuid` (older versions: `deployment_uuid`) |
+| `POST /deploy?uuid={app}` | trigger a deploy | returns `deployments[0].deployment_uuid`; `GET` answers 405 since 4.3 |
 | `GET /deployments/{uuid}` | poll | `status`: `queued`, `in_progress`, `finished`, `failed`, `cancelled-by-user`; `logs` is a JSON string of `[{output, hidden}]` |
 | `GET /applications/{uuid}/logs?lines=100` | runtime logs | |
 
 Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/events/manual`,
-signed with the app's `manual_webhook_secret_github` **[verify]**. The equivalent Gitea endpoint
-and secret are proven; the GitHub pair is expected to be symmetric.
+a GitHub webhook with `content_type: json`, event `push`, and the app's
+`manual_webhook_secret_github` as the secret. Deliveries return 200 and trigger a deploy.
 
 ## Known quirks
 
@@ -41,7 +40,8 @@ and secret are proven; the GitHub pair is expected to be symmetric.
   `coolify` Docker network.
 - **The health check runs inside the container against `localhost`.** In Alpine images that is
   IPv6 first; the app must listen on `::`.
-- **Realtime (6001) and terminal (6002) behind the instance domain**: expected to be proxied
-  through the HTTPS domain, so the firewall keeps 6001/6002 closed **[verify]**.
+- **Realtime (6001) and terminal (6002) behind the instance domain**: once the dashboard works
+  through its domain on the Coolify proxy, 8000, 6001 and 6002 can stay closed; realtime and the
+  terminal go through 443 (coolify.io/docs/core/infrastructure/servers/firewall).
 - **Never put the API token into GitHub** (secrets, webhooks). It controls the whole server.
   Use the per-app webhook secret.

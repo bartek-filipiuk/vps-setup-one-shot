@@ -28,7 +28,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/version": return self.send(200, "4.0.0-test")
         if p == "/bad": return self.send(422, {"message": "Validation failed"})
         if p.startswith("/deploy?uuid="):
-            return self.send(200, {"deployments": [{"deployment_uuid": "d-" + p.split("=")[1]}]})
+            return self.send(405, {"message": "This endpoint has changed to a POST request."})
         if p.startswith("/deployments/"):
             d = p.split("/")[2]; polls[d] = polls.get(d, 0) + 1
             if polls[d] < 3: return self.send(200, {"status": "in_progress"})
@@ -38,6 +38,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"status": "failed", "logs": json.dumps(logs)})
         self.send(404, {"message": "not found"})
     def do_POST(self):
+        p = self.path.removeprefix("/api/v1")
+        if p.startswith("/deploy?uuid="):
+            return self.send(200, {"deployments": [{"deployment_uuid": "d-" + p.split("=")[1]}]})
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         self.send(201, {"echo": json.loads(body)})
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()

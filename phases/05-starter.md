@@ -49,7 +49,7 @@ so GitHub does not collect orphaned deploy keys (`gh repo deploy-key list --repo
 
 ```
 . ./lib.sh; state_set PROJECT_UUID "$(capi POST /projects "$(jq -n --arg n "$(state_get APP_NAME)" '{name:$n}')" | jq -r .uuid)"
-B=$(jq -n --arg p "$(state_get PROJECT_UUID)" --arg s "$(coolify_get COOLIFY_SERVER_UUID)" \
+B=$(jq -n --arg p "$(state_get PROJECT_UUID)" --arg s "$(coolify_server)" \
   --arg n "$(state_get APP_NAME)-db" --arg pw "$(openssl rand -hex 24)" \
   '{project_uuid:$p, server_uuid:$s, environment_name:"production", name:$n,
     image:"postgres:17-alpine", postgres_user:"app", postgres_password:$pw, postgres_db:"app",
@@ -69,7 +69,7 @@ Wait until it runs (up to two minutes):
 ## 4. Application (you)
 
 ```
-. ./lib.sh; B=$(jq -n --arg p "$(state_get PROJECT_UUID)" --arg s "$(coolify_get COOLIFY_SERVER_UUID)" \
+. ./lib.sh; B=$(jq -n --arg p "$(state_get PROJECT_UUID)" --arg s "$(coolify_server)" \
   --arg n "$(state_get APP_NAME)" --arg r "git@github.com:$(state_get GH_REPO).git" --arg k "$(state_get KEY_UUID)" \
   '{project_uuid:$p, server_uuid:$s, environment_name:"production", name:$n,
     git_repository:$r, git_branch:"main", build_pack:"dockerfile", ports_exposes:"3000",
@@ -133,12 +133,12 @@ code you cannot fix, do not improvise: delete the hook (`gh api -X DELETE repos/
 
 ## 7. Smoke test with the user
 
-They open `https://<APP_DOMAIN>`, enter their email, click **Join the waitlist**, and should see
+They open `https://<APP_DOMAIN>`, enter their email, click **Send me the repo**, and should see
 "You're on the list." and the counter at 1 after a reload. You prove the row is in Postgres
-(Coolify names the database container after its UUID):
+(the database container's name contains its UUID):
 
 ```
-. ./lib.sh; rssh "docker exec $(state_get DB_UUID) psql -U app -d app -tAc 'select count(*) from waitlist'"
+. ./lib.sh; rssh "docker exec \$(docker ps -q -f name=$(state_get DB_UUID)) psql -U app -d app -tAc 'select count(*) from waitlist'"
 ```
 
 ## 8. Per-project config (you)

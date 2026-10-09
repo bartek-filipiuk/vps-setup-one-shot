@@ -112,6 +112,9 @@ Follow `$SETUP_DIR/phases/05-starter.md` steps 2 to 6 with these differences:
 - Naming: in `.coolify.env`, `COOLIFY_DOMAIN` means this app's URL (the classic format other
   tools read). The Coolify panel URL is `COOLIFY_URL` in `~/.config/coolify/config`.
 - Postgres only if the plan says so. Port: whatever the app listens on.
+- Monorepo or app in a subfolder: add `base_directory:"/<folder>"` to the application body (the
+  Dockerfile is then read from that folder). The landing of this very guide is deployed that way
+  from `/starter`.
 - Environment variables, one POST per variable (`{key, value, is_preview:false}`):
   - Generated secrets: create them in the same command with `openssl rand -hex 32`, never printed.
   - Secrets the user owns (API keys, SMTP passwords): the user writes them into a local file

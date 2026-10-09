@@ -74,10 +74,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 
 - `starter/` is tested: Docker build, health check, signup flow, duplicate and invalid input,
   database down at runtime and at startup, IPv6 `localhost` health check.
-- The full guided flow has **not yet been run end to end on a real server**. Items marked
-  **[verify]** in `references/coolify-api.md` are expected behavior, not yet confirmed.
+- Phase 05 (deploy key, Postgres, app, domain, push-to-deploy) has been run against a live
+  Coolify 4.3.23; the landing at selfhosted.devince.dev is the result.
+- Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
+  end to end on a fresh server**.
 
-Tested with: Coolify (not yet), Ubuntu 24.04, Next.js 16.3, Postgres 17.
+Tested with: Coolify 4.3.23, Ubuntu 24.04, Next.js 16.3, Postgres 17.
 
 ## Not included yet
 

@@ -32,6 +32,13 @@ rssh() {
 # Config values are read with grep, not sourced: tokens contain '|'.
 coolify_get() { [ -f "$COOLIFY_CONFIG" ] && grep -m1 "^$1=" "$COOLIFY_CONFIG" | cut -d= -f2-; }
 
+# Server uuid: from the config when phase 04 wrote it, otherwise the first server from the API
+# (configs written by other tools often lack it).
+coolify_server() {
+  local s; s=$(coolify_get COOLIFY_SERVER_UUID)
+  [ -n "$s" ] && echo "$s" || capi GET /servers | jq -r '.[0].uuid // empty'
+}
+
 # capi METHOD /path [json-body] -> prints body; returns 1 and prints body to stderr on HTTP >= 400.
 capi() {
   local url token out code
@@ -49,7 +56,7 @@ capi() {
 # deploy_and_wait APP_UUID -> triggers a deploy, polls ~15 min, prints log tail on failure.
 deploy_and_wait() {
   local res dep status i poll=${DEPLOY_POLL_SECONDS:-10}
-  res=$(capi GET "/deploy?uuid=$1") || return 1
+  res=$(capi POST "/deploy?uuid=$1") || return 1  # GET returns 405 since Coolify 4.3
   dep=$(jq -r '.deployments[0].deployment_uuid // .deployment_uuid // empty' <<<"$res")
   [ -n "$dep" ] || { echo "No deployment uuid in: $res" >&2; return 1; }
   echo "deployment $dep queued"

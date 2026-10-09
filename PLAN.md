@@ -133,9 +133,10 @@ Other stacks: the prompt says "not supported yet" instead of guessing a Dockerfi
 
 ## Build order
 
-Status 2026-10-06: steps 1, 2, 3, 5 (written, not yet run on a real app) and 6 done.
-`starter/` tested in Docker; `lib.sh` + `verify.sh` tested against a mock API
-(`bash test/lib.test.sh`). Open: step 0 (spike) and step 4 (dry run), both need a real VPS.
+Status 2026-10-09: steps 1, 2, 3, 5 and 6 done. `starter/` tested in Docker; `lib.sh` +
+`verify.sh` tested against a mock API (`bash test/lib.test.sh`); phase 05 run for real against
+Coolify 4.3.23 (selfhosted.devince.dev). Open: step 0 (spike on a fresh VPS, phases 01-04) and
+step 4 (dry run), both need a new server.
 
 0. **Spike on a fresh CX-class VPS (~1 hour, a few cents):** run the flow by hand and
    settle every **[verify]**: GitHub manual webhook endpoint, PG18 status, instance-domain
