@@ -84,19 +84,47 @@ h2 {
   color: var(--ink);
 }
 
-/* The prompt is real input the user will type, so it is the one place monospace belongs. */
-.prompt {
-  font: var(--s0) / 1.5 var(--font-mono), ui-monospace, monospace;
+/* The command is the product: the one block on the page that gets monospace. */
+.command {
+  position: relative;
   margin: 1.75rem 0 0;
-  padding: 0.75rem 1rem;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--paper-high);
-  width: fit-content;
-  max-width: 100%;
+  background: var(--ink);
+  color: var(--paper);
+  max-width: 38rem;
 }
 
-.prompt span { color: var(--signal); margin-right: 0.5ch; }
+.command pre {
+  margin: 0;
+  padding: 1rem 5.5rem 1rem 1.25rem;
+  font: var(--s-1) / 1.6 var(--font-mono), ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.command code { color: inherit; font: inherit; }
+
+.copy {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  font: 600 var(--s-1) var(--font-body), sans-serif;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--paper);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--paper);
+  cursor: pointer;
+}
+
+.copy:hover { background: var(--paper); color: var(--ink); }
+
+.aside {
+  margin: 0.6rem 0 0;
+  font-size: var(--s-1);
+  color: var(--muted);
+}
 
 .form {
   display: flex;
@@ -163,6 +191,47 @@ h2 {
   color: var(--muted);
   max-width: 32rem;
 }
+
+.steps {
+  grid-column: 1 / -1;
+  margin-top: clamp(3rem, 10vh, 6rem);
+  max-width: 44rem;
+}
+
+.steps ol {
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  position: relative;
+  padding: 1.25rem 0 1.25rem 3.5rem;
+  border-top: 1px solid var(--line);
+}
+
+/* A process is numbered because the order is the point, not as decoration. */
+.steps li::before {
+  counter-increment: step;
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 1.1rem;
+  font: 400 var(--s2) / 1 var(--font-display), Georgia, serif;
+  color: var(--signal);
+}
+
+.steps h3 {
+  font: 400 var(--s2) / 1.1 var(--font-display), Georgia, serif;
+  font-variation-settings: "opsz" 24;
+  margin: 0 0 0.4rem;
+}
+
+.steps p { margin: 0; color: var(--muted); }
+
+.steps .you { margin-top: 0.35rem; color: var(--ink); }
+.steps .you span { font-weight: 600; color: var(--signal); }
 
 footer {
   grid-column: 1 / -1;

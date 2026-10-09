@@ -14,11 +14,14 @@ git clone https://github.com/<owner>/vps-setup-one-shot
 cd vps-setup-one-shot
 ```
 
-Open your agent (Claude Code, Codex, Cursor, or similar) in that folder and say:
+Then start your agent with the guide. With Claude Code it is one line:
 
 ```
-Read SETUP.md and guide me through it.
+claude "Read SETUP.md and guide me through it."
 ```
+
+Any other agent (Codex, Cursor, ...) works the same way: open it in that folder and say
+`Read SETUP.md and guide me through it.`
 
 Later, in the repo of an app you already have:
 
