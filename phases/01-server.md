@@ -9,9 +9,12 @@ tunnel until it has its own HTTPS domain."
 
 ## Hetzner path (`PROVIDER=hetzner`)
 
+Two variants share step 1: a new server (steps 2 and onward) or a server the user already has
+(skip to "Existing Hetzner server" below).
+
 ### 1. API token (user, in Hetzner Console)
 
-console.hetzner.com → pick or create a project (e.g. "vps-setup") → left sidebar **Security**
+console.hetzner.com → pick the project that holds the server (or create one, e.g. "vps-setup") → left sidebar **Security**
 → tab **API tokens** → **Generate API token** → description `vps-setup`, permission
 **Read & Write** → Generate. They should see the token once; it is not shown again.
 
@@ -63,6 +66,37 @@ hcloud server create --name "$(state_get SERVER_NAME)" --type "$(state_get HCLOU
   --ssh-key vps-setup --firewall vps-setup-fw
 state_set VPS_IP "$(hcloud server ip "$(state_get SERVER_NAME)")"
 ```
+
+## Existing Hetzner server (`PROVIDER=hetzner`, `SERVER_EXISTS=1`)
+
+The token from step 1 must belong to the project that contains the server. List it and let the
+user confirm which one:
+
+```
+hcloud server list -o columns=name,status,type,ipv4,datacenter
+```
+
+```
+. ./lib.sh; N="<name-from-the-list>"; state_set SERVER_NAME "$N"; state_set VPS_IP "$(hcloud server ip "$N")"
+hcloud server describe "$N" -o json | jq -r '"image: \(.image.description // .image.name)  type: \(.server_type.name)  ram: \(.server_type.memory) GB"'
+```
+
+Expect Ubuntu 24.04 and at least 4 GB RAM. Another image or less memory: stop and tell the user
+why (phase 02 and 03 assume a fresh 24.04 box; builds need the memory). The SSH key must be the
+one the server was created with; if `rssh true` fails in step 3 below, the user adds their key
+through the Hetzner Console (server → **Rescue** → reset root password → **Console** →
+`echo "<pubkey>" >> /root/.ssh/authorized_keys`).
+
+Firewall: create it exactly as in step 2 (reuse `vps-setup-fw` if it exists), then attach it to
+the running server:
+
+```
+hcloud firewall apply-to-resource vps-setup-fw --type server --server "$N" && hcloud firewall describe vps-setup-fw | grep -A3 -i 'applied to'
+```
+
+Expect the server listed under "Applied To". From that moment only 22, 80, 443 and ICMP reach
+the server; anything else that was running on it is cut off, which is the point on a fresh box.
+Then continue with step 3 (SSH check) and step 4 (DNS).
 
 ## Other provider (`PROVIDER=other`)
 

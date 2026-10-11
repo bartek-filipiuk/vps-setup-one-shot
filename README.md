@@ -35,8 +35,8 @@ Read /path/to/vps-setup-one-shot/PREPARE-APP.md and prepare this app for deploym
   (`gh`, `jq`, `dig`, `hcloud`) after asking.
 - A GitHub account.
 - A domain where you can edit DNS records.
-- A Hetzner Cloud account (new accounts may need identity verification, which can take hours)
-  or a fresh Ubuntu 24.04 server from any provider.
+- A Hetzner Cloud account (new accounts may need identity verification, which can take hours),
+  a fresh Hetzner server you already have, or a fresh Ubuntu 24.04 server from any provider.
 
 ## What it costs
 

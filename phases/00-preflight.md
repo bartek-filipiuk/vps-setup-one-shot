@@ -41,8 +41,12 @@ Always record the key and this repo's location (the absolute path, used later in
 
 ## 4. Questions (ask one at a time, record each with `state_set`)
 
-1. **Provider.** "Hetzner (I'll create the server for you) or another provider (you create an
-   Ubuntu 24.04 server with your SSH key and give me the IP)?" → `PROVIDER=hetzner|other`.
+1. **Provider.** Three answers:
+   - "Hetzner, create the server for me" → `PROVIDER=hetzner`.
+   - "Hetzner, I already have a fresh server" → `PROVIDER=hetzner` and `SERVER_EXISTS=1`.
+     Fresh means Ubuntu 24.04 with nothing installed yet; phase 02 and 03 assume that.
+   - "Another provider" (they create an Ubuntu 24.04 server with their SSH key and give you
+     the IP) → `PROVIDER=other`.
    For Hetzner, warn now: a brand new Hetzner account can require identity verification that
    takes hours. If they have no account yet, they should create it at console.hetzner.com now.
 2. **Domain.** "Which domain do you control?" → `DOMAIN=example.com`. They need access to its
@@ -51,9 +55,10 @@ Always record the key and this repo's location (the absolute path, used later in
    `app.<domain>` if the apex is already in use). Confirm both.
 4. **App name.** Lowercase, dashes only, used for the GitHub repo and Coolify resources.
    Default `my-landing` → `APP_NAME`.
-5. **Hetzner only: location.** "Europe or US?" Suggest `fsn1` (Falkenstein), `nbg1` (Nuremberg)
-   or `hel1` (Helsinki) for Europe, `ash` (Ashburn) or `hil` (Hillsboro) for the US
-   → `HCLOUD_LOCATION`. Phase 01 checks it is valid once `hcloud` is logged in.
+5. **Hetzner, new server only: location.** "Europe or US?" Suggest `fsn1` (Falkenstein),
+   `nbg1` (Nuremberg) or `hel1` (Helsinki) for Europe, `ash` (Ashburn) or `hil` (Hillsboro)
+   for the US → `HCLOUD_LOCATION`. Phase 01 checks it is valid once `hcloud` is logged in.
+   Skip when the server already exists.
 
 Example: `. ./lib.sh; state_set PROVIDER hetzner; state_set DOMAIN example.com`
 

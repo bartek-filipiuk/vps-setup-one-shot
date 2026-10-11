@@ -17,7 +17,7 @@ for t in ssh git gh jq curl dig openssl; do command -v "$t" >/dev/null || missin
 gh auth status >/dev/null 2>&1 && ok "gh logged in" || { bad "gh not logged in"; next phases/00-preflight.md; }
 ls ~/.ssh/id_*.pub >/dev/null 2>&1 && ok "ssh key exists" || { bad "no ssh key in ~/.ssh"; next phases/00-preflight.md; }
 keys="PROVIDER DOMAIN COOLIFY_DOMAIN APP_DOMAIN APP_NAME SSH_PUBKEY SETUP_DIR"
-[ "$(state_get PROVIDER)" = hetzner ] && keys="$keys HCLOUD_LOCATION"
+[ "$(state_get PROVIDER)" = hetzner ] && [ "$(state_get SERVER_EXISTS)" != 1 ] && keys="$keys HCLOUD_LOCATION"
 for k in $keys; do
   [ -n "$(state_get "$k")" ] || { bad "$k not set in $VPS_STATE"; next phases/00-preflight.md; }
 done
