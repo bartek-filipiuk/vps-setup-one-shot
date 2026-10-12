@@ -87,4 +87,5 @@ Tested with: Coolify 4.3.23, Ubuntu 24.04, Next.js 16.3, Postgres 17.
 ## Not included yet
 
 Off-site database backups to S3, staging/preview environments, monitoring and alerts, apps that
-are not Node.js, Git hosts other than GitHub, DNS automation.
+are not Node.js, Git hosts other than GitHub, DNS automation. What comes next, in which order
+and how we will know it is done: [ROADMAP.md](ROADMAP.md).

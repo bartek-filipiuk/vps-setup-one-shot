@@ -21,17 +21,19 @@ async function waitlistCount(): Promise<number | null> {
   }
 }
 
-function Header({ lang }: { lang: Lang }) {
+// otherPath: where the language switch goes; defaults to the other language's home.
+export function Header({ lang, otherPath, current }: { lang: Lang; otherPath?: string; current?: "roadmap" }) {
   const t = copy[lang];
   return (
     <header className="site-header">
       <nav className="nav" aria-label="Site">
         <a className="brand" href={t.path}>vps-setup-one-shot</a>
+        <a className="navlink" href={t.roadmap.path} aria-current={current === "roadmap" ? "page" : undefined}>{t.roadmap.nav}</a>
         <a className="live" href="/api/health">
           <span className="dot" aria-hidden="true" />
           <span>{t.live} {sha}</span>
         </a>
-        <a className="lang" href={t.other.path} hrefLang={t.other.lang} lang={t.other.lang} aria-label={t.other.label}>
+        <a className="lang" href={otherPath ?? t.other.path} hrefLang={t.other.lang} lang={t.other.lang} aria-label={t.other.label}>
           {t.other.short}
         </a>
       </nav>
@@ -39,7 +41,7 @@ function Header({ lang }: { lang: Lang }) {
   );
 }
 
-function Footer({ lang }: { lang: Lang }) {
+export function Footer({ lang }: { lang: Lang }) {
   const t = copy[lang].footer;
   return (
     <footer className="site-footer">

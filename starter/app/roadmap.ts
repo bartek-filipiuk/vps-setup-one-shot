@@ -1,0 +1,96 @@
+// Public roadmap. Mirrors ROADMAP.md in the repo root: same ids, same lanes, no dates.
+import type { Lang } from "./copy";
+
+export type LaneKey = "now" | "next" | "later" | "ideas";
+export type Item = { id: string; name: string; value: string; done?: string };
+export type Shipped = { date: string; text: string };
+
+const en: { lanes: Record<LaneKey, Item[]>; shipped: Shipped[] } = {
+  lanes: {
+    now: [
+      { id: "R01", name: "End-to-end harness on a throwaway server", value: "A script creates a small Hetzner server, runs every phase unattended, submits the starter form and deletes the server. Cents per run, on every change and nightly against the newest Coolify.", done: "A green run from server creation to ALL DONE, server gone, Coolify version logged." },
+      { id: "R02", name: "The recorded run, then public", value: "The whole flow on a fresh server, on video. Every unproven note in the repo settled. A guide for the agents that contribute.", done: "No [verify] marks left, the repo is public, this page links the recording." },
+      { id: "R03", name: "status.sh: one screen", value: "Server reachable, disk and memory, pending reboot, Coolify version, every app with its last deploy, days to certificate expiry, last backup and whether it worked.", done: "Every line is backed by a real check, on the test server and on a production one." },
+      { id: "R04", name: "Off-site backups and a restore drill", value: "Database backups to any S3-compatible storage, set up during handover. A runbook that restores one database from a chosen backup.", done: "The harness backs up, destroys the database, restores it, and the data is back." },
+      { id: "R05", name: "DOCTOR.md: my app is down", value: "From a symptom (site down, deploy failed, 502, certificate error, server unreachable) to a fix, or to an honest \"this needs a human because\".", done: "Five symptoms broken on purpose in the harness; the runbook reaches the right fix for each." },
+      { id: "R06", name: "Alerts that reach a phone", value: "Coolify's own notifications wired to email, Telegram or Discord, plus an external uptime check per app with a public status page.", done: "The harness stops an app and an alert arrives within five minutes." },
+    ],
+    next: [
+      { id: "R07", name: "Safe deploys", value: "Database dump before every deploy, the rollback point printed, a runbook that reverts to the previous image and restores the dump if needed.", done: "A broken commit is deployed, rolled back, and the app is healthy with its data." },
+      { id: "R08", name: "More stacks, by fixture", value: "Static sites, Docker Compose stacks, Python, Go. Each stack has a sample app the harness deploys; without one it stays \"not supported yet\".", done: "Three stacks beyond Node are green." },
+      { id: "R09", name: "Projects and clients", value: "One Coolify project per client or product, names and domains derived from it, a file listing what runs where, status grouped by project.", done: "Two projects run side by side in the harness." },
+      { id: "R10", name: "SERVICES.md: self-host the tools", value: "n8n, Plausible or Umami, Uptime Kuma, Forgejo, Minio and the other one-click services, each with a domain, HTTPS, backups and a line in status.", done: "Three services deploy in the harness with backups verified." },
+      { id: "R11", name: "Staging without a second server", value: "A staging branch deploys to staging.<your-domain> with its own database. Promotion is a merge to main.", done: "Push to staging changes staging; the merge changes production." },
+      { id: "R12", name: "Handover pack", value: "Everything a client or colleague needs to take over a project or a server: a team invite with the right role, the server summary, DNS and repo ownership, and the checklist that removes your own access.", done: "A second user, with only the pack, deploys a change." },
+      { id: "R13", name: "Move in from Vercel, Railway or Render", value: "The agent reads the existing project, reproduces it on your server, and walks the domain cut-over with a window to switch back.", done: "A sample app moves with its environment and the old deployment is still there." },
+    ],
+    later: [
+      { id: "R14", name: "Upgrades", value: "Coolify, Ubuntu and Postgres major versions, each with a dump first and a check after. Status says when each is due.", done: "Coolify upgrades to the newest release and Postgres 17 to 18 with data intact." },
+      { id: "R15", name: "Rebuild from nothing", value: "New server, every database restored from off-site backups, DNS repointed, apps redeployed from git. Run on purpose every quarter.", done: "The rebuilt server passes every check with all data present." },
+      { id: "R16", name: "Monthly checkup", value: "Open ports, SSH config, Docker exposure, Coolify advisories, certificate renewals, backup success rate, disk growth and this month's cost. Ends with actions, each with a runbook.", done: "No false positives on a clean setup." },
+      { id: "R17", name: "Second server and moving an app", value: "Add a bigger box or a client's own server to the same Coolify and move an app with its database.", done: "The starter moves between two servers and the form data survives." },
+      { id: "R18", name: "DNS through the API", value: "Cloudflare first, then the providers people ask for. The agent creates the records; the DNS click disappears.", done: "A harness run on a Cloudflare-managed domain needs no DNS click." },
+      { id: "R19", name: "Agent packaging", value: "A Claude Code plugin with /vps-setup, /vps-status and /vps-doctor, and the same guide working in Codex and Cursor.", done: "The harness passes through the plugin and through plain markdown." },
+      { id: "R20", name: "Providers beyond Hetzner", value: "Any Ubuntu box with your key becomes a first-class path, tested on one more provider.", done: "Green on Hetzner and on one other provider." },
+    ],
+    ideas: [
+      { id: "R21", name: "Preview deployment per pull request", value: "If Coolify's GitHub App source becomes drivable without the UI." },
+      { id: "R22", name: "A status page per client", value: "From the uptime monitor, on the client's domain." },
+      { id: "R23", name: "Secrets vault on your machine", value: "age or sops, with a rotation runbook." },
+      { id: "R24", name: "Starter variants", value: "The same plumbing with auth and transactional mail; a worker example as a second app from the same repo." },
+      { id: "R25", name: "Windows through WSL", value: "Tested in the harness driver." },
+      { id: "R26", name: "Cost forecast before anything is created", value: "What this setup will cost per month, from the provider's current price list." },
+    ],
+  },
+  shipped: [
+    { date: "11 October 2026", text: "Existing Hetzner server variant: pick a server you already have, attach the cloud firewall, continue as usual." },
+    { date: "11 October 2026", text: "Landing in English and Polish, optional double opt-in mail updates, consent, rate limit." },
+    { date: "9 October 2026", text: "Phase 05 proven on Coolify 4.3.23: private repo, Postgres 17, deploy key, webhook, push-to-deploy. This page runs on the setup it describes." },
+  ],
+};
+
+const pl: typeof en = {
+  lanes: {
+    now: [
+      { id: "R01", name: "Test end-to-end na jednorazowym serwerze", value: "Skrypt tworzy mały serwer na Hetznerze, przechodzi wszystkie fazy bez udziału człowieka, wysyła formularz startera i usuwa serwer. Grosze za przebieg, przy każdej zmianie i co noc na najnowszym Coolify.", done: "Zielony przebieg od utworzenia serwera do ALL DONE, serwer usunięty, wersja Coolify zapisana." },
+      { id: "R02", name: "Nagrany przebieg, potem publikacja", value: "Cały proces na świeżym serwerze, na wideo. Każda niesprawdzona notatka w repo rozstrzygnięta. Instrukcja dla agentów, które współtworzą projekt.", done: "Zero znaczników [verify], repo publiczne, ta strona linkuje nagranie." },
+      { id: "R03", name: "status.sh: jeden ekran", value: "Serwer odpowiada, dysk i pamięć, oczekujący restart, wersja Coolify, każda apka z ostatnim deployem, dni do wygaśnięcia certyfikatu, ostatni backup i czy się udał.", done: "Każda linia oparta na prawdziwym sprawdzeniu, na serwerze testowym i produkcyjnym." },
+      { id: "R04", name: "Backupy poza serwerem i ćwiczenie restore", value: "Backupy bazy do dowolnego storage zgodnego z S3, ustawiane przy przekazaniu. Runbook, który przywraca jedną bazę z wybranego backupu.", done: "Test robi backup, niszczy bazę, przywraca ją i dane wracają." },
+      { id: "R05", name: "DOCTOR.md: moja apka nie działa", value: "Od objawu (strona nie działa, deploy padł, 502, błąd certyfikatu, serwer nie odpowiada) do naprawy albo do uczciwego „tu potrzebny człowiek, bo”.", done: "Pięć objawów wywołanych celowo w teście; runbook dochodzi do właściwej naprawy każdego." },
+      { id: "R06", name: "Alerty, które docierają na telefon", value: "Powiadomienia Coolify podpięte do maila, Telegrama albo Discorda, plus zewnętrzny monitor dostępności każdej apki z publiczną stroną statusu.", done: "Test zatrzymuje apkę i alert przychodzi w ciągu pięciu minut." },
+    ],
+    next: [
+      { id: "R07", name: "Bezpieczne deploye", value: "Dump bazy przed każdym deployem, wypisany punkt powrotu, runbook, który wraca do poprzedniego obrazu i w razie potrzeby przywraca dump.", done: "Zepsuty commit wchodzi, zostaje cofnięty, a apka działa ze swoimi danymi." },
+      { id: "R08", name: "Więcej stacków, każdy z aplikacją testową", value: "Strony statyczne, stacki Docker Compose, Python, Go. Każdy stack ma przykładową apkę, którą test wdraża; bez niej zostaje „jeszcze niewspierany”.", done: "Trzy stacki poza Node na zielono." },
+      { id: "R09", name: "Projekty i klienci", value: "Jeden projekt Coolify na klienta albo produkt, nazwy i domeny wyprowadzone z niego, plik z listą co gdzie działa, status pogrupowany po projektach.", done: "Dwa projekty działają obok siebie w teście." },
+      { id: "R10", name: "SERVICES.md: własne narzędzia jednym promptem", value: "n8n, Plausible albo Umami, Uptime Kuma, Forgejo, Minio i inne usługi one-click, każda z domeną, HTTPS, backupem i linią w statusie.", done: "Trzy usługi wdrożone w teście, backupy sprawdzone." },
+      { id: "R11", name: "Staging bez drugiego serwera", value: "Gałąź staging wdraża się na staging.<twoja-domena> z własną bazą. Promocja to merge do main.", done: "Push na staging zmienia staging; merge zmienia produkcję." },
+      { id: "R12", name: "Pakiet przekazania", value: "Wszystko, czego klient albo współpracownik potrzebuje, żeby przejąć projekt lub serwer: zaproszenie do zespołu z właściwą rolą, podsumowanie serwera, własność DNS i repo, i checklista odcinająca Twój dostęp.", done: "Druga osoba, mając tylko pakiet, wdraża zmianę." },
+      { id: "R13", name: "Przeprowadzka z Vercela, Railway albo Rendera", value: "Agent czyta istniejący projekt, odtwarza go na Twoim serwerze i prowadzi przez przełączenie domeny z oknem na powrót.", done: "Przykładowa apka przenosi się ze środowiskiem, a stary deployment nadal istnieje." },
+    ],
+    later: [
+      { id: "R14", name: "Aktualizacje", value: "Coolify, Ubuntu i duże wersje Postgresa, każda z dumpem przed i sprawdzeniem po. Status mówi, kiedy która jest należna.", done: "Coolify aktualizuje się do najnowszej wersji, a Postgres 17 do 18 bez utraty danych." },
+      { id: "R15", name: "Odbudowa z niczego", value: "Nowy serwer, każda baza przywrócona z backupów poza serwerem, DNS przepięty, apki wdrożone z gita. Uruchamiane celowo co kwartał.", done: "Odbudowany serwer przechodzi wszystkie sprawdzenia z kompletem danych." },
+      { id: "R16", name: "Miesięczny przegląd", value: "Otwarte porty, konfiguracja SSH, ekspozycja Dockera, ostrzeżenia Coolify, odnowienia certyfikatów, skuteczność backupów, przyrost dysku i koszt tego miesiąca. Kończy się listą działań, każde z runbookiem.", done: "Zero fałszywych alarmów na czystym setupie." },
+      { id: "R17", name: "Drugi serwer i przenoszenie apki", value: "Większa maszyna albo własny serwer klienta w tym samym Coolify i przeniesienie apki razem z bazą.", done: "Starter przenosi się między dwoma serwerami, a dane z formularza zostają." },
+      { id: "R18", name: "DNS przez API", value: "Najpierw Cloudflare, potem dostawcy, o których ludzie poproszą. Agent tworzy rekordy; klik w DNS znika.", done: "Przebieg testu na domenie w Cloudflare nie wymaga kliku w DNS." },
+      { id: "R19", name: "Pakowanie dla agentów", value: "Plugin Claude Code z /vps-setup, /vps-status i /vps-doctor oraz ta sama instrukcja działająca w Codex i Cursor.", done: "Test przechodzi przez plugin i przez zwykły markdown." },
+      { id: "R20", name: "Dostawcy poza Hetznerem", value: "Dowolna maszyna z Ubuntu i Twoim kluczem jako pełnoprawna ścieżka, sprawdzona u jeszcze jednego dostawcy.", done: "Zielono na Hetznerze i u jednego innego dostawcy." },
+    ],
+    ideas: [
+      { id: "R21", name: "Podgląd dla każdego pull requesta", value: "Jeśli źródło GitHub App w Coolify da się ustawić bez klikania." },
+      { id: "R22", name: "Strona statusu dla każdego klienta", value: "Z monitora dostępności, na domenie klienta." },
+      { id: "R23", name: "Sejf na sekrety na Twoim komputerze", value: "age albo sops, z runbookiem rotacji." },
+      { id: "R24", name: "Warianty startera", value: "Ta sama instalacja z logowaniem i mailem transakcyjnym; przykład workera jako druga apka z tego samego repo." },
+      { id: "R25", name: "Windows przez WSL", value: "Sprawdzone w sterowniku testu." },
+      { id: "R26", name: "Prognoza kosztów, zanim cokolwiek powstanie", value: "Ile ten setup będzie kosztował miesięcznie, z aktualnego cennika dostawcy." },
+    ],
+  },
+  shipped: [
+    { date: "11 października 2026", text: "Wariant z istniejącym serwerem Hetznera: wskazujesz serwer, który już masz, firewall chmurowy zostaje podpięty, dalej jak zwykle." },
+    { date: "11 października 2026", text: "Landing po angielsku i polsku, opcjonalne aktualizacje mailem z podwójnym potwierdzeniem, zgoda, limit prób." },
+    { date: "9 października 2026", text: "Faza 05 sprawdzona na Coolify 4.3.23: prywatne repo, Postgres 17, klucz deploy, webhook, deploy po pushu. Ta strona działa na setupie, który opisuje." },
+  ],
+};
+
+export const roadmap: Record<Lang, typeof en> = { en, pl };
