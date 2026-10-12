@@ -107,6 +107,11 @@ a:hover { color: var(--color-text); }
 }
 .live { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-muted); text-decoration: none; }
 .live:hover { color: var(--color-text); }
+.lang {
+  font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: var(--color-text); text-decoration: none;
+  padding: 4px 10px; border: 1px solid var(--color-divider);
+}
+.lang:hover { border-color: var(--color-accent); color: var(--ink-accent); }
 
 /* — hero — */
 .hero { padding-top: clamp(28px, 3.4vw, 48px); }
@@ -145,11 +150,15 @@ h1 em { font-style: normal; color: var(--color-accent); }
 /* — signup plate: form cell + live proof cell — */
 .signup { margin-top: clamp(16px, 2vw, 24px); grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); }
 .signup form, .proof { padding: clamp(18px, 1.8vw, 26px); display: flex; flex-direction: column; gap: 12px; margin: 0; }
-.signup label {
+.signup label.title {
   font-family: var(--font-heading), sans-serif; font-weight: 600; text-transform: uppercase; letter-spacing: 0.01em;
   font-size: clamp(22px, 0.8vw + 16px, 26px); line-height: 1.1;
 }
+.what { margin: -4px 0 4px; font-size: 16px; line-height: 1.55; max-width: 60ch; }
 .row { display: flex; flex-wrap: wrap; gap: 10px; }
+.consent { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 1.5; color: var(--ink-muted); cursor: pointer; }
+.consent input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--color-accent-700); cursor: pointer; }
+.consent input[aria-invalid="true"] { outline: 2px solid var(--color-danger); outline-offset: 2px; }
 .input {
   flex: 1 1 220px; min-height: 48px; padding: 10px 14px; font: inherit; font-size: 16px;
   color: var(--color-text); caret-color: var(--color-accent); background: var(--color-surface);
@@ -230,6 +239,7 @@ code.file {
   display: flex; flex-wrap: wrap; align-items: center; gap: 12px 32px; font-size: 14px; line-height: 1.5; color: var(--ink-muted);
 }
 .foot .right { margin-left: auto; }
+.confirmed { padding-top: clamp(48px, 8vw, 112px); min-height: 50vh; }
 
 .sr-only, .hp {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
