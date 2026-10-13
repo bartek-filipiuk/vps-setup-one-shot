@@ -1,0 +1,44 @@
+# Contributing to vps-setup-one-shot
+
+For anyone who changes this repository, person or agent. The repo is developed by an autonomous
+agent with human review; read this before the first pull request. (`starter/AGENTS.md` is about
+the Next.js starter app only.)
+
+## Layout
+
+`SETUP.md` (entry point the user's agent reads), `phases/` (00–06, one file per step),
+`PREPARE-APP.md` (moving an existing app onto the server), `lib.sh` (state file, Coolify API
+helpers, deploy and wait), `verify.sh` (reads the real server state and says which phase is next),
+`references/` (Coolify API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
+deploys; it is also the landing), `test/` (checks that need no server), `ROADMAP.md` (the plan,
+ids R01…, mirrored in `starter/app/roadmap.ts`).
+
+## Rules
+
+1. **Proof before "done".** A phase, runbook or script counts as working only after a run on a real,
+   fresh, throwaway server, with the output in the pull request. "Should work" is not a result. Until
+   then the README "Status" section and the landing copy say so honestly.
+2. **Secrets never go through the chat, the repo or a command line the agent types.** The user types
+   tokens into their own terminal; files under `~/.config/vps-setup/` are `0600`. Never commit
+   `.coolify.env`, state files or logs with tokens. Run `gitleaks git .` before opening a PR.
+3. **Use Coolify, don't rebuild it.** Backups, notifications, rollback and services go through the
+   Coolify API. Pin behaviour to a tested Coolify version and note it in `references/coolify-api.md`.
+4. **Remote commands are explicit** (`ssh root@$VPS_IP '...'`), and nothing on the user's own
+   machine is killed by pattern: background processes are stopped through their control socket or
+   a saved PID.
+5. **One way to do each thing.** A second option needs a user with a concrete case.
+6. **Spending money needs the maintainer's yes.** Creating servers, buying domains or storage is
+   done only for an agreed run, and every run ends with the teardown from `SERVER.md`.
+
+## Checks
+
+- `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network).
+- `bash -n` on every changed shell file; `shellcheck` where available.
+- Changes to a phase: the PR says which run on a real server covered it, or is marked
+  "not run yet" and the README status stays as it is.
+
+## Pull requests
+
+One roadmap item or one fix per pull request, small commits in English, test output in the
+description. Keep `ROADMAP.md` and `starter/app/roadmap.ts` in sync. Commit messages carry no
+AI or tool attribution lines.

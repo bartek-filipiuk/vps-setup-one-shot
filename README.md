@@ -10,7 +10,7 @@ same server.
 ## Start
 
 ```
-git clone https://github.com/<owner>/vps-setup-one-shot
+git clone https://github.com/bartek-filipiuk/vps-setup-one-shot
 cd vps-setup-one-shot
 ```
 

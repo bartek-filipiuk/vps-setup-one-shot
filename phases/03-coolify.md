@@ -32,7 +32,7 @@ The firewall keeps them closed, so forward them over SSH. Check the local ports 
 
 ```
 for p in 8000 6001 6002; do lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && echo "local $p BUSY"; done
-. ./lib.sh; ssh -fN -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+. ./lib.sh; ssh -fN -M -S ~/.config/vps-setup/tunnel.sock -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
   -L 8000:localhost:8000 -L 6001:localhost:6001 -L 6002:localhost:6002 "root@$(state_get VPS_IP)" \
   >/dev/null 2>&1 && echo tunnel-up
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000
