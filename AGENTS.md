@@ -33,14 +33,20 @@ ids R01…, mirrored in `starter/app/roadmap.ts`).
 ## Checks
 
 - `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network).
-- `shellcheck lib.sh verify.sh test/*.sh` is clean (settings in `.shellcheckrc`); `bash -n` on
-  every other changed shell file.
+- `shellcheck lib.sh verify.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins);
+  `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
-  every untagged, `bash` or `sh` code block in `phases/`, `SETUP.md` and `PREPARE-APP.md`. Tag
-  blocks that are not shell (`text`, `json`, ...).
+  every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md` and
+  `PREPARE-APP.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
+  `json`, ...). `bash test/extract-blocks.test.sh` is its self-test and must print `ALL PASSED`.
+- Shellcheck exclusions. Scripts: only `.shellcheckrc` (`shell=bash`, `disable=SC2015,SC1091`),
+  default severity. Doc blocks: the same `.shellcheckrc` (passed with `--rcfile`) plus
+  `-e SC2034,SC2154`, because blocks set and read variables across blocks, at severity
+  `warning`. Anything else is fixed in the code or disabled inline with a reason.
 - CI runs the same on every PR and push to main (`.github/workflows/ci.yml`); the starter build
   (`npm ci && npm run build`) runs when `starter/` changes (`starter.yml`). The full run on a real
-  server (`e2e.yml`) is manual only and still a stub that always fails.
+  server (`e2e.yml`) is manual only and still a stub that always fails. Actions are pinned by
+  commit SHA with the version in a comment.
 - Changes to a phase: the PR says which run on a real server covered it, or is marked
   "not run yet" and the README status stays as it is.
 
