@@ -1,0 +1,36 @@
+# Full run on a real, throwaway server (R01). Manual only; not implemented yet.
+#
+# Secrets it will need (repository secrets, never in the repo or the logs):
+#   HCLOUD_TOKEN  - API token of a throwaway Hetzner project, used only for e2e servers
+#   DNS_TOKEN     - DNS API token that may create and delete the per-run hostname records
+#   E2E_GH_TOKEN  - GitHub token that can push the starter repo created by the run
+#
+# Until the run exists this job always fails, so nobody reads a green check as a passed e2e.
+name: e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check secrets, then stop (not implemented)
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          DNS_TOKEN: ${{ secrets.DNS_TOKEN }}
+          E2E_GH_TOKEN: ${{ secrets.E2E_GH_TOKEN }}
+        run: |
+          missing=""
+          for s in HCLOUD_TOKEN DNS_TOKEN E2E_GH_TOKEN; do
+            [ -n "${!s}" ] || missing="$missing $s"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing secrets:$missing"
+            exit 1
+          fi
+          echo "e2e not implemented yet (R01)"
+          exit 1

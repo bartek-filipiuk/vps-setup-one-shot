@@ -1,0 +1,33 @@
+name: starter
+
+on:
+  pull_request:
+    paths: ['starter/**']
+  push:
+    branches: [main]
+    paths: ['starter/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starter
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: starter/package-lock.json
+      - run: npm ci
+      - run: npm run build
