@@ -19,6 +19,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: lib.sh tests (fake Coolify API, no server)
         run: bash test/lib.test.sh
+      - name: status.sh tests (fake Coolify API, ssh and openssl stubs, no server)
+        run: bash test/status.test.sh
 
   shellcheck:
     runs-on: ubuntu-latest
@@ -37,7 +39,7 @@ jobs:
       - name: shellcheck version
         run: shellcheck --version
       - name: shellcheck scripts
-        run: shellcheck lib.sh verify.sh test/*.sh
+        run: shellcheck lib.sh verify.sh status.sh test/*.sh
       - name: block extractor self-test
         run: bash test/extract-blocks.test.sh
       - name: check shell blocks in the runbooks

@@ -20,6 +20,16 @@ Checked against Coolify 4.3.23 on 2026-10-09 unless marked **[verify]**.
 | `GET /deployments/{uuid}` | poll | `status`: `queued`, `in_progress`, `finished`, `failed`, `cancelled-by-user`; `logs` is a JSON string of `[{output, hidden}]` |
 | `GET /applications/{uuid}/logs?lines=100` | runtime logs | |
 
+Read-only calls used by `status.sh`, verified 2026-10-13 on 4.3.23 (GET, response shapes as below).
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /applications` | every app | array; items have `uuid`, `name`, `fqdn` (comma-separated URLs), `status` like `running:healthy`, `running:unhealthy`, `exited:unhealthy` |
+| `GET /deployments/applications/{uuid}` | last deploy of an app | object `{count, deployments:[...]}`, `deployments[0]` is the newest; fields include `status`, `created_at`, `finished_at`, `commit`, `application_name`; a successful deploy is `finished`; dates like `2026-10-13T12:08:21.000000Z`; no deploys = `count` 0, empty list |
+| `GET /databases` | every database | array with `uuid`, `name` |
+| `GET /databases/{uuid}/backups` | scheduled backups of a database | array of `{uuid, enabled, frequency, last_execution_at (may be null), executions:[...]}` |
+| `GET /databases/{uuid}/backups/{backup_uuid}/executions` | backup runs | object `{executions:[...]}`; fields `uuid`, `status` (`success`), `created_at` like `2026-10-13T12:08:10+00:00` (offset, not `Z`), `finished_at` (null), `filename`, `message`, `size` |
+
 Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/events/manual`,
 a GitHub webhook with `content_type: json`, event `push`, and the app's
 `manual_webhook_secret_github` as the secret. Deliveries return 200 and trigger a deploy.

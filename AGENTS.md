@@ -8,7 +8,8 @@ the Next.js starter app only.)
 
 `SETUP.md` (entry point the user's agent reads), `phases/` (00–06, one file per step),
 `PREPARE-APP.md` (moving an existing app onto the server), `lib.sh` (state file, Coolify API
-helpers, deploy and wait), `verify.sh` (reads the real server state and says which phase is next),
+helpers, deploy and wait), `verify.sh` (reads the real server state and says which phase is next), `status.sh` (one-screen
+health check, read-only),
 `references/` (Coolify API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `test/` (checks that need no server), `ROADMAP.md` (the plan,
 ids R01…, mirrored in `starter/app/roadmap.ts`).
@@ -33,7 +34,10 @@ ids R01…, mirrored in `starter/app/roadmap.ts`).
 ## Checks
 
 - `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network).
-- `shellcheck lib.sh verify.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins);
+- `bash test/status.test.sh` must print `ALL PASSED` (`status.sh` against a fake Coolify API with
+  ssh and openssl stubs; seams `STATUS_SSH`, `STATUS_OPENSSL`, `STATUS_LATEST_URL`,
+  `STATUS_TIMEOUT`). The test needs GNU `date` (Linux, CI); `status.sh` itself also runs on macOS.
+- `shellcheck lib.sh verify.sh status.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins);
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
   every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md` and

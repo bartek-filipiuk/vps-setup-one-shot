@@ -40,6 +40,7 @@ Rules that apply to every item:
   vs latest release, every app with status and last deploy result, days to certificate expiry, last
   backup and whether it succeeded. Non-zero exit when something needs attention.
   Done when: every line is backed by a real check on the harness server and on a production server.
+  (Code and fake-API tests done; not run on a server yet.)
 - **R06 Alerts that reach a phone.** Coolify's notifications (deploy failed, backup failed, server
   unreachable) wired to email, Telegram or Discord; an external uptime check per app domain through
   Uptime Kuma run as a Coolify service, with its public status page. Done when: the harness stops

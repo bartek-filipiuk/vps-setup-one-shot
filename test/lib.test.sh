@@ -11,7 +11,7 @@ fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected [$3] got [$2]"; fails=$((fails + 1)); fi; }
 
 python3 - "$PORT" <<'EOF' &
-import json, sys
+import json, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 polls = {}
 class H(BaseHTTPRequestHandler):
@@ -25,6 +25,10 @@ class H(BaseHTTPRequestHandler):
         p = self.path.removeprefix("/api/v1")
         if p == "/version": return self.send(200, "4.0.0-test")
         if p == "/bad": return self.send(422, {"message": "Validation failed"})
+        if p == "/slow":
+            time.sleep(3)
+            try: return self.send(200, "late")
+            except OSError: return
         if p.startswith("/deploy?uuid="):
             return self.send(405, {"message": "This endpoint has changed to a POST request."})
         if p.startswith("/deployments/"):
@@ -65,6 +69,8 @@ check "capi POST body via stdin" "$(capi POST /x '{"k":"a b|c"}' | jq -r .echo.k
 err=$(capi GET /bad 2>&1 >/dev/null); rc=$?
 check "capi 422 returns 1" "$rc" "1"
 case "$err" in *"HTTP 422"*"Validation failed"*) check "capi 422 message" ok ok ;; *) check "capi 422 message" "$err" "HTTP 422 ...";; esac
+start=$SECONDS; CAPI_MAX_TIME=1 capi GET /slow >/dev/null 2>&1; rc=$?
+check "capi CAPI_MAX_TIME gives up" "$rc:$((SECONDS - start < 3))" "1:1"
 
 # phase 04: server uuid written into the coolify config (token kept, private, no duplicates)
 ( VPS_STATE=$COOLIFY_CONFIG; state_set COOLIFY_SERVER_UUID s1; state_set COOLIFY_SERVER_UUID s2 )

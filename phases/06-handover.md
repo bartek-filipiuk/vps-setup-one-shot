@@ -44,6 +44,7 @@ Write a summary the user can keep. No secrets in it.
 
 - Deploy: git push to main (or Coolify UI -> app -> Deploy)
 - Logs: Coolify UI -> app -> Logs
+- Health: $(state_get SETUP_DIR)/status.sh (one screen; exit 0 = all OK)
 - Panel access if the domain breaks: ssh -N -L 8000:localhost:8000 root@$(state_get VPS_IP), then http://localhost:8000
 
 ## Deploy another app

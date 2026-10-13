@@ -59,6 +59,10 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 - `~/.config/vps-setup/state` keeps what cannot be checked from outside (IP, domains, resource IDs,
   a few "you confirmed this" flags).
 - `~/.config/coolify/config` holds the API URL and token (mode 600).
+- `status.sh` prints one screen: server (ssh, disk, memory, pending reboot), Coolify version vs
+  the latest release, every app with its status, last deploy and days to certificate expiry, and
+  the last backup of every database. A Coolify release a minor version or more ahead is a warning.
+  Exit 0 all OK, 1 needs attention, 2 server or API unreachable.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
   `/api/health` checking the database, a non-root multi-stage Docker image.
 
@@ -79,6 +83,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   database down at runtime and at startup, IPv6 `localhost` health check.
 - Phase 05 (deploy key, Postgres, app, domain, push-to-deploy) has been run against a live
   Coolify 4.3.23; the landing at selfhosted.devince.dev is the result.
+- `status.sh` is tested against a fake Coolify API only (`test/status.test.sh`) and has **not
+  been run on a real server yet**. The API response shapes it reads were checked by hand on a
+  live Coolify 4.3.23 (`references/coolify-api.md`). On macOS it needs `gtimeout`
+  (`brew install coreutils`) for the certificate checks; without it they are skipped with a
+  warning. The script's macOS date fallback has not been run on a Mac.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
