@@ -31,6 +31,7 @@ Rules that apply to every item:
   needs the Coolify admin registration and API token steps automated, and per-run hostnames because
   of Let's Encrypt rate limits; that part depends on R18.
   Done when: the PR checks run on every PR and one on-demand full run went green.
+  PR checks are live (ci.yml); the full run is still to build.
 - **R04 Off-site backups and a restore drill.** Coolify database backups to any S3-compatible
   storage (Hetzner Object Storage first), set up in phase 06. `RESTORE.md` restores one database
   from a chosen backup. Done when: the harness backs up, destroys the database, restores, and the

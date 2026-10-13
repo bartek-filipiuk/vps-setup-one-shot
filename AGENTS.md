@@ -33,7 +33,14 @@ ids R01…, mirrored in `starter/app/roadmap.ts`).
 ## Checks
 
 - `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network).
-- `bash -n` on every changed shell file; `shellcheck` where available.
+- `shellcheck lib.sh verify.sh test/*.sh` is clean (settings in `.shellcheckrc`); `bash -n` on
+  every other changed shell file.
+- `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
+  every untagged, `bash` or `sh` code block in `phases/`, `SETUP.md` and `PREPARE-APP.md`. Tag
+  blocks that are not shell (`text`, `json`, ...).
+- CI runs the same on every PR and push to main (`.github/workflows/ci.yml`); the starter build
+  (`npm ci && npm run build`) runs when `starter/` changes (`starter.yml`). The full run on a real
+  server (`e2e.yml`) is manual only and still a stub that always fails.
 - Changes to a phase: the PR says which run on a real server covered it, or is marked
   "not run yet" and the README status stays as it is.
 
