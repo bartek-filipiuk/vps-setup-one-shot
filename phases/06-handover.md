@@ -68,6 +68,6 @@ Show the user the file.
 Finish with three sentences: what they now have, where the summary is, and the one-liner for
 their next app:
 
-```
+```text
 Read <path-to-vps-setup-one-shot>/PREPARE-APP.md and prepare this app for deployment.
 ```

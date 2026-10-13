@@ -14,7 +14,7 @@ does not work yet. So check first:
 ```
 . ./lib.sh; IP=$(state_get VPS_IP)
 for h in "$(state_get COOLIFY_DOMAIN)" "$(state_get APP_DOMAIN)"; do
-  echo "$h A=$(dig +short A $h @1.1.1.1 | tr '\n' ' ') AAAA=$(dig +short AAAA $h @1.1.1.1 | tr '\n' ' ') (want A=$IP, no AAAA)"
+  echo "$h A=$(dig +short A "$h" @1.1.1.1 | tr '\n' ' ') AAAA=$(dig +short AAAA "$h" @1.1.1.1 | tr '\n' ' ') (want A=$IP, no AAAA)"
 done
 ```
 

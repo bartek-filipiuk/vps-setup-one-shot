@@ -63,7 +63,7 @@ image refuses. The password is hex so it never needs URL-escaping, and it is nev
 Wait until it runs (up to two minutes):
 
 ```
-. ./lib.sh; for i in $(seq 1 12); do s=$(capi GET "/databases/$(state_get DB_UUID)" | jq -r .status); echo "$s"; case "$s" in running*) break;; esac; sleep 10; done
+. ./lib.sh; for _ in $(seq 1 12); do s=$(capi GET "/databases/$(state_get DB_UUID)" | jq -r .status); echo "$s"; case "$s" in running*) break;; esac; sleep 10; done
 ```
 
 ## 4. Application (you)
