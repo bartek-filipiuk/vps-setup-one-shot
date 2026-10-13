@@ -59,6 +59,9 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 - `~/.config/vps-setup/state` keeps what cannot be checked from outside (IP, domains, resource IDs,
   a few "you confirmed this" flags).
 - `~/.config/coolify/config` holds the API URL and token (mode 600).
+- `status.sh` prints one screen: server (ssh, disk, memory, pending reboot), Coolify version vs
+  the latest release, every app with its status, last deploy and days to certificate expiry, and
+  the last backup of every database. Exit 0 all OK, 1 needs attention, 2 server or API unreachable.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
   `/api/health` checking the database, a non-root multi-stage Docker image.
 
@@ -79,6 +82,9 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   database down at runtime and at startup, IPv6 `localhost` health check.
 - Phase 05 (deploy key, Postgres, app, domain, push-to-deploy) has been run against a live
   Coolify 4.3.23; the landing at selfhosted.devince.dev is the result.
+- `status.sh` is tested against a fake Coolify API only (`test/status.test.sh`); it has **not
+  been run on a real server yet**, and some of the API calls it reads are marked **[verify]** in
+  `references/coolify-api.md`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
