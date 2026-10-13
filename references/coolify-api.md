@@ -20,6 +20,17 @@ Checked against Coolify 4.3.23 on 2026-10-09 unless marked **[verify]**.
 | `GET /deployments/{uuid}` | poll | `status`: `queued`, `in_progress`, `finished`, `failed`, `cancelled-by-user`; `logs` is a JSON string of `[{output, hidden}]` |
 | `GET /applications/{uuid}/logs?lines=100` | runtime logs | |
 
+Read-only calls used by `status.sh`, not yet checked against a live Coolify. `status.sh` shows
+`n/a` instead of failing when one of them answers 404.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /applications` | every app: `uuid`, `name`, `status`, `fqdn` | **[verify]** `status` like `running:healthy`, `exited:unhealthy`; `fqdn` comma-separated URLs |
+| `GET /deployments/applications/{uuid}` | last deploy of an app | **[verify]** `{count, deployments:[{status, created_at}]}` or a plain array; the script reads both |
+| `GET /databases` | every database: `uuid`, `name` | **[verify]** |
+| `GET /databases/{uuid}/backups` | scheduled backups of a database | **[verify]** array of `{uuid, frequency, ...}`, may embed `executions` |
+| `GET /databases/{uuid}/backups/{backup_uuid}/executions` | backup runs | **[verify]** `{executions:[{status, created_at, finished_at}]}`, `status` `success`, `failed` or `running` |
+
 Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/events/manual`,
 a GitHub webhook with `content_type: json`, event `push`, and the app's
 `manual_webhook_secret_github` as the secret. Deliveries return 200 and trigger a deploy.
