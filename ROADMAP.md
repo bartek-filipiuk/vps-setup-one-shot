@@ -12,7 +12,7 @@ survive the bad day (failed deploy, full disk, dead server); and hand a project 
 a colleague without handing over their own credentials. Every item serves one of those five.
 
 Rules that apply to every item:
-- Nothing ships without a run on a fresh, throwaway server (R01). "Should work" is not a result.
+- Nothing is called working without a run on a real, fresh server; until then the README Status says so.
 - Runbooks plus a thin, tested shell layer. Where Coolify has the feature (backups,
   notifications, rollback, services), we drive it through its API; we never rebuild it.
 - Secrets stay on the user's machine or their server. Never in the chat, never in the repo.
@@ -20,28 +20,25 @@ Rules that apply to every item:
 
 ## Now
 
-- **R01 End-to-end harness on a throwaway server.** `test/e2e.sh` creates a CX-class Hetzner
-  server, drives phases 01–06 unattended (answers from a fixture state file, the two admin clicks
-  replaced by a documented tunnel or API step), runs `verify.sh`, submits the starter form and
-  deletes the server. Cents per run; on every PR and nightly against Coolify `latest`.
-  Done when: a green run from `hcloud server create` to `ALL DONE`, server gone, Coolify version logged.
-- **R02 The recorded run, then public.** The whole flow on a fresh server, recorded; every
-  `[verify]` in `PLAN.md` and `references/` settled; `AGENTS.md` at the root telling a contributing
-  agent how this repo is developed. Done when: `grep -r '\[verify\]'` is empty, the repo is public,
-  the landing links the recording.
-- **R03 `status.sh`: one screen.** Server reachable, disk and memory, pending reboot, Coolify version
-  vs latest release, every app with status and last deploy result, days to certificate expiry, last
-  backup and whether it succeeded. Non-zero exit when something needs attention.
-  Done when: every line is backed by a real check on the harness server and on a production server.
+- **R02 The first full run, recorded.** One manual end-to-end run of phases 01–06 on a fresh small
+  Hetzner server (CX22-class), recorded. The real `[verify]` notes settled: the domain lockout in
+  `PLAN.md` and Postgres 18 in `references/coolify-api.md`. Results written into the README "Status".
+  Done when: README Status says phases 01–06 ran end-to-end on <Coolify version>, the two `[verify]`
+  notes are settled, the landing links the recording.
+- **R01 Staged test harness.** On every PR, the checks that need no server: `test/lib.test.sh`,
+  shellcheck, and `bash -n` on the shell blocks extracted from `phases/`. A full run on a throwaway
+  server only on demand (`workflow_dispatch` or a label) and before releases. A fully unattended run
+  needs the Coolify admin registration and API token steps automated, and per-run hostnames because
+  of Let's Encrypt rate limits; that part depends on R18.
+  Done when: the PR checks run on every PR and one on-demand full run went green.
 - **R04 Off-site backups and a restore drill.** Coolify database backups to any S3-compatible
   storage (Hetzner Object Storage first), set up in phase 06. `RESTORE.md` restores one database
   from a chosen backup. Done when: the harness backs up, destroys the database, restores, and the
   waitlist row is back; `status.sh` shows off-site backup age.
-- **R05 `DOCTOR.md`: "my app is down".** From a symptom (site down, deploy failed, 502, certificate
-  error, server unreachable) through `status.sh`, deployment logs, container logs, disk and DNS to
-  a fix from `references/` or an honest "this needs a human because X".
-  Done when: the five symptoms have harness fixtures that break the server on purpose, and the
-  runbook reaches the right fix for each.
+- **R03 `status.sh`: one screen.** Server reachable, disk and memory, pending reboot, Coolify version
+  vs latest release, every app with status and last deploy result, days to certificate expiry, last
+  backup and whether it succeeded. Non-zero exit when something needs attention.
+  Done when: every line is backed by a real check on the harness server and on a production server.
 - **R06 Alerts that reach a phone.** Coolify's notifications (deploy failed, backup failed, server
   unreachable) wired to email, Telegram or Discord; an external uptime check per app domain through
   Uptime Kuma run as a Coolify service, with its public status page. Done when: the harness stops
@@ -53,27 +50,19 @@ Rules that apply to every item:
   `ROLLBACK.md` reverts to the previous image and restores the dump if needed; migration guidance
   in `PREPARE-APP.md` (expand, then contract). Done when: the harness deploys a broken commit,
   rolls back, and the app is healthy with its data.
-- **R08 More stacks, by fixture.** Each supported stack gets a sample app in `fixtures/` that the
-  harness deploys: static site, Docker Compose stack, Python (FastAPI, Django), Go. A stack without
-  a green fixture stays "not supported yet". Done when: three stacks beyond Node are green.
-- **R09 Projects and clients.** One Coolify project per client or product, one environment per
-  stage, names and domains derived from the project name, `PROJECTS.md` listing what runs where,
-  `status.sh` grouped by project. Done when: the harness runs two projects side by side.
+- **R05 `DOCTOR.md`: "my app is down".** From a symptom (site down, deploy failed, 502, certificate
+  error, server unreachable) through `status.sh`, deployment logs, container logs, disk and DNS to
+  a fix from `references/` or an honest "this needs a human because X".
+  Done when: the five symptoms have harness fixtures that break the server on purpose, and the
+  runbook reaches the right fix for each.
 - **R10 `SERVICES.md`: self-host the tools in one prompt.** n8n, Plausible or Umami, Uptime Kuma,
   Forgejo, Minio and the other Coolify one-click services, each with a domain, HTTPS, backups and a
   line in `status.sh`. Done when: three services deploy in the harness with backups verified.
-- **R11 Staging without a second server.** A `staging` branch deploys to `staging.<app-domain>`
-  as a second app with its own database; promotion is a merge to `main`. Done when: the harness
-  pushes to `staging`, sees it change, merges, sees production change.
 - **R12 Handover pack.** `HANDOVER.md` produces what a client or colleague needs to take over a
   project or a server: a Coolify team invite with the right role, a scoped token where Coolify
   supports it, `SERVER.md` for that project, DNS and repo ownership steps, and the checklist that
   removes the original developer's access. Done when: a second user, with only the pack, deploys a
   change in the harness.
-- **R13 Move in from Vercel, Railway or Render.** The agent reads the existing project (framework,
-  env, domains), reproduces it on the user's server, and walks the domain cut-over with a
-  rollback window. Done when: a fixture Next.js app on Vercel moves with its env and the old
-  deployment is still there to switch back to.
 
 ## Later
 
@@ -88,9 +77,6 @@ Rules that apply to every item:
   firewall, sshd config, Docker socket exposure, Coolify advisories, certificate renewals, backup
   success rate, disk growth, and what the servers cost this month. Ends with actions, each with a
   runbook. Done when: it runs on the harness server with no false positives on a clean setup.
-- **R17 Second server and moving an app.** Add a server to the same Coolify (a bigger box, or a
-  client's own account) and move an app with its database with a short downtime window.
-  Done when: the harness moves the starter between two servers and the form data survives.
 - **R18 DNS through the API.** Cloudflare first, then the providers users ask for: the agent
   creates the records and the `dig` gate becomes a formality. Done when: a harness run on a
   Cloudflare-managed test domain needs no DNS click.
@@ -98,8 +84,24 @@ Rules that apply to every item:
   parity for Codex and Cursor through `AGENTS.md`; the markdown stays the source, a test diffs the
   two. Done when: the harness passes through the plugin and through plain markdown.
 - **R20 Providers beyond Hetzner.** `PROVIDER=other` becomes first-class: the generic path (an
-  Ubuntu box with your key) tested in the harness on one more provider; provider-specific firewall
-  and backup steps only on request. Done when: the harness is green on Hetzner and one other.
+  Ubuntu box with your key) tested on dedicated servers; provider-specific firewall and backup steps
+  only on request. What differs on a dedicated server: the OS is installed through the provider's
+  panel or API, the firewall lives on the host instead of in a cloud firewall, and there is
+  out-of-band access. Providers to test on, and why:
+  - Scaleway Dedibox: critical production with a clear SLA for power and connectivity.
+  - OVHcloud Advance: automation, custom images, vRack, Anti-DDoS.
+  - Servers.com: demanding recovery (iDRAC, IPKVM, Virtual Media).
+  - Worldstream: best published value (ECC, RAID-1, iDRAC, DDoS protection).
+  Done when: the generic path is green on one of them in addition to Hetzner.
+- **R08 More stacks, by fixture.** Each supported stack gets a sample app in `fixtures/` that the
+  harness deploys: static site, Docker Compose stack, Python (FastAPI, Django), Go. A stack without
+  a green fixture stays "not supported yet". Done when: three stacks beyond Node are green.
+- **R09 Projects and clients.** One Coolify project per client or product, one environment per
+  stage, names and domains derived from the project name, `PROJECTS.md` listing what runs where,
+  `status.sh` grouped by project. Done when: the harness runs two projects side by side.
+- **R11 Staging without a second server.** A `staging` branch deploys to `staging.<app-domain>`
+  as a second app with its own database; promotion is a merge to `main`. Done when: the harness
+  pushes to `staging`, sees it change, merges, sees production change.
 
 ## Ideas
 
@@ -109,9 +111,6 @@ Rules that apply to every item:
 - **R23 Secrets vault on the user's machine** (`age` or `sops`) with a rotation runbook.
 - **R24 Starter variants:** the same plumbing with auth and transactional mail; a cron-and-queue
   worker example as a second app from the same repo.
-- **R25 Windows through WSL**, tested in the harness driver.
-- **R26 Cost forecast before anything is created:** what this setup will cost per month, with the
-  provider's current price list.
 
 ## Done
 
@@ -120,3 +119,5 @@ Rules that apply to every item:
 - **2026-10-11** Landing in English and Polish, optional Brevo double opt-in, consent, rate limit.
 - **2026-10-09** Phase 05 proven on Coolify 4.3.23: private repo, Postgres 17, deploy key, webhook,
   push-to-deploy; the landing runs on the setup it describes.
+
+Retired ids: R13, R17, R25, R26 (cut 2026-10-13 to keep the roadmap focused).
