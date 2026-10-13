@@ -4,9 +4,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 REPO=$PWD
-REAL_HOME=$HOME
 export HOME; HOME=$(mktemp -d)
-export GH_CONFIG_DIR="$REAL_HOME/.config/gh"
 export DEPLOY_POLL_SECONDS=0
 PORT=$((20000 + RANDOM % 10000))
 fails=0
@@ -91,11 +89,13 @@ case "$out" in *"secret internals"*) check "hidden lines skipped" shown hidden ;
 
 # verify.sh picks the right phase
 mkdir -p "$HOME/.ssh" && touch "$HOME/.ssh/id_ed25519.pub"
-out=$("$REPO/verify.sh" 2>&1 | tail -1)
+# Stub gh so the check does not depend on this machine's (or CI's) gh login.
+mkdir -p "$HOME/bin" && printf '#!/bin/sh\nexit 0\n' > "$HOME/bin/gh" && chmod +x "$HOME/bin/gh"
+out=$(PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1 | tail -1)
 check "verify: no answers -> 00" "$out" "NEXT: phases/00-preflight.md"
 for k in DOMAIN COOLIFY_DOMAIN APP_DOMAIN APP_NAME SSH_PUBKEY SETUP_DIR; do state_set "$k" example.invalid; done
 state_set PROVIDER other
-out=$("$REPO/verify.sh" 2>&1 | tail -1)
+out=$(PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1 | tail -1)
 check "verify: answers, no server -> 01" "$out" "NEXT: phases/01-server.md"
 
 echo; [ "$fails" = 0 ] && echo "ALL PASSED" || { echo "$fails FAILED"; exit 1; }
