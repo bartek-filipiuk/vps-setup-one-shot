@@ -35,7 +35,8 @@ ids R01…, mirrored in `starter/app/roadmap.ts`).
 
 - `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network).
 - `bash test/status.test.sh` must print `ALL PASSED` (`status.sh` against a fake Coolify API with
-  ssh and openssl stubs; seams `STATUS_SSH`, `STATUS_OPENSSL`, `STATUS_LATEST_URL`).
+  ssh and openssl stubs; seams `STATUS_SSH`, `STATUS_OPENSSL`, `STATUS_LATEST_URL`,
+  `STATUS_TIMEOUT`). The test needs GNU `date` (Linux, CI); `status.sh` itself also runs on macOS.
 - `shellcheck lib.sh verify.sh status.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins);
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
