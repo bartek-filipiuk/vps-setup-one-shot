@@ -16,15 +16,29 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: lib.sh tests (fake Coolify API, no server)
         run: bash test/lib.test.sh
 
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: install shellcheck v0.10.0 (pinned, checksum verified)
+        env:
+          SC_VERSION: v0.10.0
+          SC_SHA256: 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
+        run: |
+          f="shellcheck-$SC_VERSION.linux.x86_64.tar.xz"
+          curl -fsSLo "$RUNNER_TEMP/$f" "https://github.com/koalaman/shellcheck/releases/download/$SC_VERSION/$f"
+          echo "$SC_SHA256  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/shellcheck-$SC_VERSION" >> "$GITHUB_PATH"
+      - name: shellcheck version
+        run: shellcheck --version
       - name: shellcheck scripts
         run: shellcheck lib.sh verify.sh test/*.sh
+      - name: block extractor self-test
+        run: bash test/extract-blocks.test.sh
       - name: check shell blocks in the runbooks
         run: bash test/extract-blocks.sh
