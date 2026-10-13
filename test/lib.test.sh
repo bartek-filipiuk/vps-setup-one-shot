@@ -90,12 +90,22 @@ case "$out" in *"secret internals"*) check "hidden lines skipped" shown hidden ;
 # verify.sh picks the right phase
 mkdir -p "$HOME/.ssh" && touch "$HOME/.ssh/id_ed25519.pub"
 # Stub gh so the check does not depend on this machine's (or CI's) gh login.
-mkdir -p "$HOME/bin" && printf '#!/bin/sh\nexit 0\n' > "$HOME/bin/gh" && chmod +x "$HOME/bin/gh"
+# GH_STUB_LOGGED_IN=0 makes `gh auth status` fail.
+mkdir -p "$HOME/bin"
+cat > "$HOME/bin/gh" <<'STUB'
+#!/bin/sh
+[ "$1 $2" = "auth status" ] && [ "${GH_STUB_LOGGED_IN:-1}" = 0 ] && exit 1
+exit 0
+STUB
+chmod +x "$HOME/bin/gh"
 out=$(PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1 | tail -1)
 check "verify: no answers -> 00" "$out" "NEXT: phases/00-preflight.md"
 for k in DOMAIN COOLIFY_DOMAIN APP_DOMAIN APP_NAME SSH_PUBKEY SETUP_DIR; do state_set "$k" example.invalid; done
 state_set PROVIDER other
 out=$(PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1 | tail -1)
 check "verify: answers, no server -> 01" "$out" "NEXT: phases/01-server.md"
+out=$(GH_STUB_LOGGED_IN=0 PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1)
+case "$out" in *"gh not logged in"*"NEXT: phases/00-preflight.md") check "verify: gh not logged in -> 00" ok ok ;;
+  *) check "verify: gh not logged in -> 00" "$(echo "$out" | tail -3)" "gh not logged in ... NEXT: phases/00-preflight.md" ;; esac
 
 echo; [ "$fails" = 0 ] && echo "ALL PASSED" || { echo "$fails FAILED"; exit 1; }
