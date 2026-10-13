@@ -47,7 +47,8 @@ domain again: each failed attempt counts against Let's Encrypt's limits.
 The user now opens `https://<COOLIFY_DOMAIN>` and logs in. They should see the same dashboard with a
 padlock in the address bar, and no "realtime connection lost" warning after a minute. If that
 warning stays, see "Coolify install and panel" in `references/troubleshooting.md`. Close the
-tunnel: `pkill -f 'L 8000:localhost:8000'`.
+tunnel through its control socket, so nothing else on the machine is touched:
+`. ./lib.sh; ssh -S ~/.config/vps-setup/tunnel.sock -O exit "root@$(state_get VPS_IP)"`.
 
 ## 3. API access and token (user)
 

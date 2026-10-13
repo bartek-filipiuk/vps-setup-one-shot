@@ -45,7 +45,13 @@ CD=$(state_get COOLIFY_DOMAIN)
 # curl fails on an invalid cert, so any status below 400 means "served over valid HTTPS".
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$CD" || true)
 [ "${code:-000}" -ge 200 ] && [ "$code" -lt 400 ] && ok "https://$CD serves Coolify with a valid cert" || { bad "https://$CD not reachable with a valid cert"; next phases/04-domain.md; }
-curl -s -o /dev/null --max-time 5 "http://$IP:8000" && { bad "port 8000 is publicly reachable"; next phases/04-domain.md; } || ok "port 8000 closed to the internet"
+# 7 = refused, 28 = timed out (firewall drop): closed. 0 = it answered. Anything else is not proof either way.
+curl -s -o /dev/null --max-time 5 "http://$IP:8000"; rc=$?
+case $rc in
+  0) bad "port 8000 is publicly reachable"; next phases/04-domain.md ;;
+  7|28) ok "port 8000 closed to the internet" ;;
+  *) bad "could not check port 8000 (curl exit $rc), check your own network and run again"; next phases/04-domain.md ;;
+esac
 capi GET /version >/dev/null 2>&1 && ok "API token works (Coolify $(capi GET /version 2>/dev/null | tr -d '"'))" || { bad "API token missing or rejected"; next phases/04-domain.md; }
 [ -n "$(coolify_get COOLIFY_SERVER_UUID)" ] && ok "server uuid saved" || { bad "COOLIFY_SERVER_UUID missing"; next phases/04-domain.md; }
 
