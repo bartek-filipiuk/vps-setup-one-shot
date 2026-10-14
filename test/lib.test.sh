@@ -17,8 +17,27 @@ import json, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 polls = {}
 SHA = "e4d273e858b3da0acefd09f4724d2073f3d5fab0"
+S3_KEY, S3_SECRET = "AKFAKEKEY123", "s3SeCrEt/x+y=z|w"
+storages = {}          # uuid -> storage, without key and secret (as the real API answers)
+schedules = {"db-pg": [{"uuid": "bk1", "enabled": True, "frequency": "0 2 * * *", "save_s3": True}], "db-new": []}
+execs = {}             # backup uuid -> executions
+FINAL = {              # what a backup_now run of each schedule ends as
+    "bk1": {"status": "success", "message": "Backup done", "s3_uploaded": True},
+    "bk-warn": {"status": "success", "message": "Backup done. Warning: S3 upload failed: Access Denied"},
+    "bk-msg": {"status": "success", "message": "Backup done"},
+    "bk-fail": {"status": "failed", "message": "pg_dump: error: connection refused"},
+}
 def seq(line):
     with open(sys.argv[2], "a") as f: f.write(line + "\n")
+def executions(b):
+    if b not in execs:
+        execs[b] = [{"uuid": "ex-old-" + b, "status": "success", "created_at": "2026-10-13T12:08:10+00:00", "finished_at": None,
+                     "filename": "/data/coolify/backups/databases/old.dmp", "message": "Backup done", "size": 1000, "s3_uploaded": True}]
+    for e in execs[b]:
+        if "_final" in e:
+            e["_polls"] += 1
+            if e["_polls"] >= 2: e.update(e.pop("_final")); e.pop("_polls")
+    return [{k: v for k, v in e.items() if not k.startswith("_")} for e in execs[b]]
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body):
@@ -55,6 +74,12 @@ class H(BaseHTTPRequestHandler):
                                    "postgres_user": "app", "postgres_db": "app", "postgres_password": "pw-SECRET-123"})
         if p == "/databases/db-redis":
             return self.send(200, {"uuid": "db-redis", "database_type": "standalone-redis", "image": "redis:7.2"})
+        if p == "/s3-storages": return self.send(200, list(storages.values()))
+        if p.startswith("/s3-storages/"): return self.send(200, storages[p.split("/")[2]])
+        if p.startswith("/databases/") and p.endswith("/backups"):
+            return self.send(200, schedules.get(p.split("/")[2], []))
+        if p.startswith("/databases/") and p.endswith("/executions"):
+            return self.send(200, {"executions": executions(p.split("/")[4])})
         if p.startswith("/deployments/"):
             d = p.split("/")[2]; polls[d] = polls.get(d, 0) + 1
             if polls[d] < 3: return self.send(200, {"status": "in_progress"})
@@ -69,10 +94,44 @@ class H(BaseHTTPRequestHandler):
             seq("deploy " + p.split("=")[1])
             return self.send(200, {"deployments": [{"deployment_uuid": "d-" + p.split("=")[1]}]})
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if p == "/s3-storages":
+            b = json.loads(body); u = "s3-%d" % (len(storages) + 1)
+            storages[u] = {k: b.get(k) for k in ("name", "description", "endpoint", "bucket", "region", "is_usable")} | {"uuid": u}
+            seq("s3 POST %s %s %s %s creds=%s" % (b["name"], b["endpoint"], b["bucket"], b["region"],
+                "ok" if (b.get("key"), b.get("secret")) == (S3_KEY, S3_SECRET) else "bad"))
+            return self.send(201, {"uuid": u})
+        if p.startswith("/s3-storages/") and p.endswith("/validate"):
+            st = storages[p.split("/")[2]]
+            if st["bucket"] == "wrong-bucket": return self.send(200, {"valid": False, "message": "The specified bucket does not exist"})
+            return self.send(200, {"valid": True, "message": "S3 storage connection is valid."})
+        if p.startswith("/databases/") and p.endswith("/backups"):
+            d = p.split("/")[2]; seq("backup POST %s %s" % (d, json.dumps(json.loads(body), sort_keys=True, separators=(",", ":"))))
+            schedules.setdefault(d, []).append({"uuid": "bk-new", "enabled": True, "frequency": json.loads(body)["frequency"], "save_s3": True})
+            return self.send(201, {"uuid": "bk-new", "message": "Backup configuration created successfully."})
         if p.endswith("/rollback"):
             seq("rollback " + p.split("/")[2] + " " + json.loads(body)["commit"])
             return self.send(200, {"message": "Rollback deployment queued.", "deployment_uuid": "d-good"})
         self.send(201, {"echo": json.loads(body)})
+    def do_PATCH(self):
+        p = self.path.removeprefix("/api/v1")
+        b = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+        if p.startswith("/s3-storages/"):
+            u = p.split("/")[2]; storages[u].update({k: v for k, v in b.items() if k not in ("key", "secret")})
+            seq("s3 PATCH %s creds=%s" % (u, "ok" if (b.get("key"), b.get("secret")) == (S3_KEY, S3_SECRET) else "bad"))
+            return self.send(200, {"uuid": u})
+        if p.startswith("/databases/") and "/backups/" in p:
+            d, bk = p.split("/")[2], p.split("/")[4]
+            if b == {"backup_now": True}:
+                seq("backup PATCH %s %s backup_now" % (d, bk))
+                if bk in FINAL:
+                    n = len(executions(bk))
+                    execs[bk].append({"uuid": "ex-new-%d" % n, "status": "running", "created_at": "2026-10-14T10:00:0%d+00:00" % n,
+                        "finished_at": None, "filename": "/data/coolify/backups/databases/root/%s/pg-dump-app-176000000%d.dmp" % (d, n),
+                        "size": 2048, "message": None, "_polls": 0, "_final": FINAL[bk]})
+                return self.send(200, {"message": "Backup updated."})
+            seq("backup PATCH %s %s %s" % (d, bk, json.dumps(b, sort_keys=True, separators=(",", ":"))))
+            return self.send(200, {"message": "Backup updated."})
+        self.send(404, {"message": "not found"})
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 EOF
 SERVER=$!
@@ -130,6 +189,13 @@ cat > "$HOME/fakebin/docker" <<'STUB'
 #!/bin/sh
 echo "docker $*" >> "$HOME/docker.log"
 case "$*" in
+  "run --rm --env-file "*)
+    # mc in a container: $4 env file, $6 DIR:/out, $9 image, ${12} source, ${13} /out/NAME
+    want="MC_HOST_s3=https://AKFAKEKEY123:s3SeCrEt%2Fx%2By%3Dz%7Cw@fsn1.your-objectstorage.com"
+    if [ "$(cat "$4")" = "$want" ]; then echo "envfile ok $(stat -c %a "$4")" >> "$HOME/envcheck.log"; else echo "envfile bad" >> "$HOME/envcheck.log"; fi
+    [ "${FAKE_MC_FAIL:-0}" = 1 ] && { echo "mc: <ERROR> Object does not exist." >&2; exit 1; }
+    printf 'PGDMP fake object %s\n' "${12}" > "${6%:/out}/${13#/out/}" ;;
+  "images "*) [ "${FAKE_NO_HELPER:-0}" = 1 ] || printf '%s\n' ghcr.io/coollabsio/coolify-helper:1.0.9 ghcr.io/coollabsio/coolify-helper:1.0.17 ;;
   "ps -q -f name="*) [ "${FAKE_NO_CONTAINER:-0}" = 1 ] || echo cid ;;
   *pg_database_size*) echo "${FAKE_DB_SIZE:-4096}" ;;
   *" pg_dump "*) [ "${FAKE_PG_DUMP_FAIL:-0}" = 1 ] && exit 1; [ "${FAKE_PG_DUMP_EMPTY:-0}" = 1 ] && exit 0; printf 'PGDMP fake dump: %s\n' "$*" ;;
@@ -269,6 +335,117 @@ check "restore failure rc" "$rc" "1"; has "restore failure shows pg_restore erro
 case "$out" in *"restored "*) check "restore failure: no success line" shown none ;; *) check "restore failure: no success line" ok ok ;; esac
 out=$(db_restore db-pg "$HOME/dumps/db-pg/missing.dump" 2>&1); rc=$?
 check "restore missing dump" "$rc:$out" "1:dump not found or empty: $HOME/dumps/db-pg/missing.dump"
+# off-site backups (R04): S3 storage, schedule, backup now, list, fetch from S3, restore.
+# jq and curl are wrapped to log their argv, so a credential on any command line shows up in argv.log.
+mkdir -p "$HOME/argvbin" "$HOME/srvtmp"
+for t in jq curl; do
+  # shellcheck disable=SC2016 # $* and $@ belong to the generated wrapper
+  printf '#!/bin/sh\nprintf "%%s\\n" "%s $*" >> "$HOME/argv.log"\nexec %s "$@"\n' "$t" "$(command -v "$t")" > "$HOME/argvbin/$t"
+  chmod +x "$HOME/argvbin/$t"
+done
+PATH="$HOME/argvbin:$PATH"; export TMPDIR="$HOME/srvtmp"
+S3E="$HOME/.config/vps-setup/s3.env"; : > "$HOME/outputs.log"
+# s3run CMD...: runs a lib function, sets $out and $rc, keeps every output for the secret check
+s3run() { out=$("$@" 2>&1); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"; }
+EP=https://fsn1.your-objectstorage.com
+
+: > "$HOME/seq.log"
+s3run s3_storage_create backups "$EP" my-backups fsn1
+check "s3: missing s3.env refused" "$rc:$out" "1:no S3 credentials: $S3E is missing (phase 06 step 1)"
+( umask 022; printf 'S3_KEY=AKFAKEKEY123\nS3_SECRET=s3SeCrEt/x+y=z|w\n' > "$S3E" )
+s3run s3_storage_create backups "$EP" my-backups fsn1
+check "s3: s3.env mode 644 refused" "$rc:$out" "1:refusing $S3E: mode 644, must be 600 (chmod 600 $S3E)"
+check "s3: nothing sent while refused" "$(cat "$HOME/seq.log")" ""
+chmod 600 "$S3E"
+s3run s3_storage_create backups "$EP" my-backups fsn1
+check "s3 create rc" "$rc" "0"
+has "s3 create: created" "$out" '^S3 storage backups created \(s3-1\)$'
+has "s3 create: validated" "$out" '^S3 storage s3-1 valid: S3 storage connection is valid\.$'
+has "s3 create: keep s3.env" "$out" "^Keep $S3E: a restore"
+check "s3 create: API got name, endpoint, bucket, region, key, secret" "$(cat "$HOME/seq.log")" "s3 POST backups $EP my-backups fsn1 creds=ok"
+check "s3 create: state" "$(state_get S3_STORAGE_UUID)" "s3-1"
+: > "$HOME/seq.log"
+s3run s3_storage_create backups "$EP" my-backups fsn1
+check "s3 create again: updates, no duplicate" "$rc:$(cat "$HOME/seq.log")" "0:s3 PATCH s3-1 creds=ok"
+s3run s3_storage_create other "$EP" wrong-bucket fsn1
+check "s3 validate fail rc" "$rc" "1"
+has "s3 validate fail: Coolify's message" "$out" '^S3 storage s3-2 failed validation: The specified bucket does not exist$'
+has "s3 validate fail: where to fix" "$out" 'Settings -> S3 Storages'
+check "s3 validate fail: state unchanged" "$(state_get S3_STORAGE_UUID)" "s3-1"
+
+# attach: PATCH the existing schedule, or POST a new one
+: > "$HOME/seq.log"
+s3run db_backup_attach_s3 db-pg s3-1
+check "attach existing rc:state" "$rc:$(state_get BACKUP_UUID)" "0:bk1"
+check "attach existing: PATCH body" "$(cat "$HOME/seq.log")" 'backup PATCH db-pg bk1 {"database_backup_retention_amount_s3":30,"s3_storage_uuid":"s3-1","save_s3":true}'
+: > "$HOME/seq.log"
+s3run db_backup_attach_s3 db-new s3-1
+check "attach new rc:state" "$rc:$(state_get BACKUP_UUID)" "0:bk-new"
+check "attach new: POST body" "$(cat "$HOME/seq.log")" 'backup POST db-new {"database_backup_retention_amount_locally":7,"database_backup_retention_amount_s3":30,"enabled":true,"frequency":"0 2 * * *","s3_storage_uuid":"s3-1","save_s3":true}'
+
+# backup now: waits for the new run, then judges the run and the S3 upload
+export BACKUP_POLL_SECONDS=0
+: > "$HOME/seq.log"
+s3run db_backup_now db-pg bk1
+check "backup now rc" "$rc" "0"
+check "backup now: PATCH backup_now" "$(cat "$HOME/seq.log")" "backup PATCH db-pg bk1 backup_now"
+has "backup now: waits while running" "$out" '^\[0s\] running$'
+has "backup now: execution line" "$out" '^execution ex-new-1: success, file /data/coolify/backups/databases/root/db-pg/pg-dump-app-1760000001\.dmp, 2048 bytes$'
+has "backup now: S3 uploaded" "$out" '^S3: uploaded$'
+s3run db_backup_now db-pg bk-warn
+check "backup now S3 warning rc" "$rc" "1"
+has "backup now S3 warning message" "$out" '^S3: upload FAILED: Backup done\. Warning: S3 upload failed: Access Denied$'
+s3run db_backup_now db-pg bk-msg
+check "backup now, s3_uploaded not reported: rc" "$rc" "0"
+has "backup now, s3_uploaded not reported: said" "$out" '^S3: no upload error in the message \(this Coolify does not report s3_uploaded\)$'
+s3run db_backup_now db-pg bk-fail
+check "backup now failed rc" "$rc" "1"
+has "backup now failed message" "$out" '^backup failed: pg_dump: error: connection refused$'
+BACKUP_POLL_TRIES=2 s3run db_backup_now db-pg bk-never
+check "backup now timeout rc" "$rc" "1"
+has "backup now timeout message" "$out" '^Timed out after 0s; no finished backup run of schedule bk-never$'
+
+# list: newest first, with the S3 state and the file name for db_fetch_from_s3
+s3run db_backup_list db-pg
+check "list rc" "$rc" "0"
+check "list header" "$(head -1 <<<"$out")" "$(printf 'schedule\texecution\tcreated_at\tstatus\tsize\ts3\tfilename')"
+check "list newest first" "$(sed -n 2p <<<"$out")" "$(printf 'bk1\tex-new-1\t2026-10-14T10:00:01+00:00\tsuccess\t2048\tuploaded\t/data/coolify/backups/databases/root/db-pg/pg-dump-app-1760000001.dmp')"
+check "list older run" "$(sed -n 3p <<<"$out" | cut -f2,6)" "$(printf 'ex-old-bk1\tuploaded')"
+
+# fetch from S3 onto the server: creds over stdin into a 600 env file, file 600, then restore it
+F=/data/coolify/backups/databases/root/db-pg/pg-dump-app-1760000001.dmp
+: > "$HOME/seq.log"; : > "$HOME/docker.log"; : > "$HOME/envcheck.log"
+s3run db_fetch_from_s3 db-pg "$F"
+got="$HOME/dumps/db-pg/s3-pg-dump-app-1760000001.dmp"
+check "fetch rc:output" "$rc:$out" "0:$got $(stat -c %s "$got" 2>/dev/null)"
+check "fetch file mode 600" "$(stat -c %a "$got")" "600"
+check "fetch: mc got the creds from a 600 env file" "$(cat "$HOME/envcheck.log")" "envfile ok 600"
+has "fetch: mc copies bucket/key without the leading slash" "$(cat "$HOME/docker.log")" "^docker run --rm --env-file $HOME/srvtmp/[^ ]+ -v $HOME/dumps/db-pg:/out --entrypoint mc ghcr\.io/coollabsio/coolify-helper:1\.0\.17 --quiet cp s3/my-backups/data/coolify/backups/databases/root/db-pg/pg-dump-app-1760000001\.dmp /out/s3-pg-dump-app-1760000001\.dmp$"
+has "fetch: creds travel in the ssh stdin" "$(cat "$HOME/ssh.stdin")" '^MC_HOST_s3=https://AKFAKEKEY123:'
+check "fetch: env file deleted" "$(ls -A "$HOME/srvtmp")" ""
+s3run db_restore db-pg "$got"
+check "restore of the fetched file" "$rc:$(tail -1 <<<"$out")" "0:restored $got into app"
+: > "$HOME/envcheck.log"
+FAKE_MC_FAIL=1 s3run db_fetch_from_s3 db-pg /data/x/pg-dump-app-2.dmp
+check "fetch failure rc" "$rc" "1"
+has "fetch failure message" "$out" '^download of s3/my-backups/data/x/pg-dump-app-2\.dmp failed$'
+check "fetch failure: no file, env file deleted" "$(find "$HOME/dumps/db-pg" -name '*pg-dump-app-2*' | wc -l):$(ls -A "$HOME/srvtmp")" "0:"
+FAKE_NO_HELPER=1 s3run db_fetch_from_s3 db-pg /data/x/pg-dump-app-3.dmp
+check "fetch without a coolify-helper image" "$rc:$out" "1:no coolify-helper image on the server; set MC_IMAGE"
+: > "$HOME/docker.log"
+MC_IMAGE=my/mc:1 s3run db_fetch_from_s3 db-pg /data/x/pg-dump-app-4.dmp
+has "fetch: MC_IMAGE overrides the helper" "$(cat "$HOME/docker.log")" " --entrypoint mc my/mc:1 --quiet cp "
+: > "$HOME/seq.log"
+S3_ENV="$HOME/nope.env" s3run db_fetch_from_s3 db-pg /data/x/y.dmp
+check "fetch without creds refused" "$rc:$out" "1:no S3 credentials: $HOME/nope.env is missing (phase 06 step 1)"
+check "fetch without creds: no ssh" "$(cat "$HOME/seq.log")" ""
+
+# the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
+leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
+check "s3 creds in no argv and no output" "${leaks:-none}" "none"
+check "argv log was written" "$(grep -c '^jq ' "$HOME/argv.log" | awk '{print ($1 > 10) ? "yes" : "no"}')" "yes"
+PATH=${PATH#"$HOME/argvbin:"}; unset TMPDIR BACKUP_POLL_SECONDS
+
 sed -i '/^VPS_IP=/d; /^DB_UUID=/d; /^APP_UUID=/d; /^ROLLBACK_COMMIT=/d; /^LAST_DUMP=/d' "$VPS_SETUP_STATE"
 
 # verify.sh picks the right phase

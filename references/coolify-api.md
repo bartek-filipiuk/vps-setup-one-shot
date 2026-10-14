@@ -40,7 +40,33 @@ Safe deploys (`deploy_and_wait`, `rollback_and_wait`, `ROLLBACK.md`). GET calls 
 | `POST /applications/{uuid}/rollback {commit}` | redeploy an existing image, no rebuild | returns `{message, deployment_uuid}`, then poll `GET /deployments/{uuid}` **[verify]** |
 | `POST /applications/{uuid}/stop`, `POST /applications/{uuid}/start` | stop writes during a restore | return `{message}` **[verify]** |
 | `GET /databases/{uuid}` | dump parameters | `database_type` (`standalone-postgresql`, `standalone-redis`, ...), `image`, `postgres_user`, `postgres_db`; also `postgres_password`, never print the whole object |
-| `POST /databases/{uuid}/backups` | create a **scheduled** backup | there is no call that runs a database backup on demand on 4.3.23 (`.../storages/{uuid}/backups/run` exists, but only for persistent-volume backups), so `db_dump` runs `pg_dump` in the container over `rssh` and keeps the files in `/root/db-dumps/<DB_UUID>/` |
+| `POST /databases/{uuid}/backups` | create a **scheduled** backup | see the off-site table below; `db_dump` still runs `pg_dump` over `rssh` before a deploy, because a deploy needs a finished dump at a known path on the server, and keeps the files in `/root/db-dumps/<DB_UUID>/` |
+
+Off-site backups (`s3_storage_create`, `db_backup_attach_s3`, `db_backup_now`, `db_backup_list`,
+`db_fetch_from_s3`, `status.sh` off-site line, `RESTORE.md`). `GET /s3-storages` was checked on a
+live 4.3.23 on 2026-10-14; everything else here is from the 4.3.23 source and `openapi.yaml` and
+not yet exercised **[verify]**.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /s3-storages` | find a storage by name | array of `{uuid, name, description, endpoint, bucket, region, is_usable, ...}`; `key` and `secret` are not returned (live GET) |
+| `GET /s3-storages/{uuid}` | endpoint and bucket for a download | same fields as the list **[verify]** |
+| `POST /s3-storages {name, description, endpoint, bucket, region, key, secret, is_usable}` | create the storage | returns `{uuid}`; the body goes through `capi`'s stdin, the key pair never on a command line **[verify]** |
+| `PATCH /s3-storages/{uuid}`, `DELETE /s3-storages/{uuid}` | update (same fields) or delete | **[verify]** |
+| `POST /s3-storages/{uuid}/validate` | Coolify lists the bucket with the stored key pair | `{valid: bool, message}`; `valid:false` with the S3 error as `message` **[verify]** |
+| `POST /databases/{uuid}/backups` | create a scheduled backup | `frequency` required (cron or `daily`, ...), `enabled`, `save_s3`, `s3_storage_uuid`, `dump_all`, `databases_to_backup`, `database_backup_retention_amount_locally` / `_s3` (also `_days_` and `_max_storage_` variants), `timeout`, `backup_now`; returns `{uuid, message}` **[verify]** |
+| `PATCH /databases/{uuid}/backups/{backup_uuid}` | attach S3 to a schedule; run it now | same fields; `{"backup_now":true}` dispatches a backup job at once: this is the on-demand run (no separate endpoint). It does not return the execution; poll the executions for a new `uuid` **[verify]** |
+| `GET /databases/{uuid}/backups` | schedules | also `save_s3`, `s3_storage_id` (numeric id, not the uuid) and the retention fields **[verify]** |
+| `GET /databases/{uuid}/backups/{backup_uuid}/executions` | did the copy reach S3 | `status` stays `success` when only the upload failed; then `message` contains `Warning: S3 upload failed: ...`. The model has `s3_uploaded` and `s3_storage_deleted`, but the live GET did not show `s3_uploaded`, so the scripts use it when present and the message otherwise **[verify]** |
+
+Where the files go: Coolify uploads with `mc` to `<bucket>/<execution filename without the
+leading slash>`. A Postgres backup without `dump_all` is `pg_dump --format=custom`, so
+`db_restore` (`pg_restore`) takes it as it is; with `dump_all` it is a gzipped `pg_dumpall` and
+needs `psql` instead **[verify]**. `db_fetch_from_s3` downloads with the `mc` inside the newest
+`ghcr.io/coollabsio/coolify-helper` image already on the server (the image Coolify itself uploads
+with; checked 2026-10-14 on a 4.3.23 server: `coolify-helper:1.0.17` has `/usr/bin/mc`; `minio/mc`
+is gone from Docker Hub), override with `MC_IMAGE`, and `MC_HOST_s3=https://KEY:SECRET@host`, key
+and secret percent-encoded **[verify]**.
 
 Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/events/manual`,
 a GitHub webhook with `content_type: json`, event `push`, and the app's

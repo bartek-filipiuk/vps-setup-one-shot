@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Pulls the shell code blocks out of the runbooks (phases/*.md, SETUP.md, PREPARE-APP.md,
-# ROLLBACK.md) and
-# checks each one with `bash -n` and shellcheck. Untagged, bash and sh fences are checked; other
-# tags (text, json, ...) are skipped. ``` and ~~~ fences, any length >= 3, may be indented; a
-# fence closes only on the same character, at least as long; CRLF is fine. A fence still open at
-# the end of a file is a failure. No server, no network.
+# ROLLBACK.md, RESTORE.md) and checks each one with `bash -n` and shellcheck. Untagged, bash
+# and sh fences are checked; other tags (text, json, ...) are skipped. ``` and ~~~ fences, any
+# length >= 3, may be indented; a fence closes only on the same character, at least as long;
+# CRLF is fine. A fence still open at the end of a file is a failure. No server, no network.
 # Usage: bash test/extract-blocks.sh [file.md ...]   (default: the runbooks; prints ALL BLOCKS OK)
 # Shellcheck uses the repo .shellcheckrc plus -e SC2034,SC2154 (blocks set and read state
 # variables across blocks), at severity warning.
@@ -12,7 +11,7 @@ files=()
 for a in "$@"; do case "$a" in /*) files+=("$a") ;; *) files+=("$PWD/$a") ;; esac; done
 cd "$(dirname "$0")/.." || exit 1
 REPO=$PWD
-[ "${#files[@]}" -gt 0 ] || files=(phases/*.md SETUP.md PREPARE-APP.md ROLLBACK.md)
+[ "${#files[@]}" -gt 0 ] || files=(phases/*.md SETUP.md PREPARE-APP.md ROLLBACK.md RESTORE.md)
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
