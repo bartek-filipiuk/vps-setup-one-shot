@@ -48,7 +48,7 @@ Delete the server and billing stops; `~/.config/vps-setup/SERVER.md` lists the t
 
 You: create accounts, pay, add two DNS records, register the Coolify admin, create two API
 tokens (typed into your own terminal, never into the chat), choose backups (and, for off-site
-ones, create a storage bucket and its key pair).
+ones, create a storage bucket and its key pair), create a Discord webhook for alerts.
 
 The agent: creates the server and firewall, hardens SSH, adds swap, installs Coolify, creates the
 GitHub repo, deploy key, database, app and webhook, deploys, and proves each step worked.
@@ -69,9 +69,13 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 - Phase 06 connects Coolify's scheduled database backups to an S3 bucket (Hetzner Object
   Storage): daily, 7 kept on the server, 30 in the bucket, one run right away. `RESTORE.md`
   downloads a chosen backup onto the server and restores it.
+- Phase 06 also turns on Coolify's notifications to a Discord channel (deploy failed, backup
+  failed, server unreachable and back, disk usage, restart limit) from one webhook URL you paste
+  into your own terminal.
 - `status.sh` prints one screen: server (ssh, disk, memory, pending reboot), Coolify version vs
   the latest release, every app with its status, last deploy and days to certificate expiry, and
-  the last backup of every database, plus the age of its last copy in S3. A Coolify release a
+  the last backup of every database, plus the age of its last copy in S3, and whether a
+  notification channel is on with the alert events. A Coolify release a
   minor version or more ahead is a warning. Exit 0 all OK, 1 needs attention, 2 server or API
   unreachable.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
@@ -110,6 +114,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   `test/status.test.sh`) and have **not been run on a real server yet**. `GET /s3-storages` was
   checked on a live Coolify 4.3.23; the other calls come from the 4.3.23 source and are marked
   `[verify]` in `references/coolify-api.md`.
+- Alerts (R06a: `notify_setup`, `notify_status` in `lib.sh`, phase 06 step 2, the `status.sh`
+  alerts line) are tested against a fake Coolify API only (`test/lib.test.sh`,
+  `test/status.test.sh`) and have **not been run on a real server yet**: no Discord message has
+  been sent through them. `GET /notifications/*` was checked on a live Coolify 4.3.23; the PATCH
+  call comes from the 4.3.23 source and is marked `[verify]` in `references/coolify-api.md`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
@@ -117,6 +126,6 @@ Tested with: Coolify 4.3.23, Ubuntu 24.04, Next.js 16.3, Postgres 17.
 
 ## Not included yet
 
-Staging/preview environments, monitoring and alerts, apps that
+Staging/preview environments, uptime checks from outside with a status page (R06b), apps that
 are not Node.js, Git hosts other than GitHub, DNS automation. What comes next, in which order
 and how we will know it is done: [ROADMAP.md](ROADMAP.md).
