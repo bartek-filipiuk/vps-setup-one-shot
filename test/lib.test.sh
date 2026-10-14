@@ -68,6 +68,11 @@ class H(BaseHTTPRequestHandler):
                 {"deployment_uuid": "d-pr", "status": "finished", "commit": "1111111111111111111111111111111111111111", "pull_request_id": 7},
                 {"deployment_uuid": "d-old2", "status": "failed", "commit": "ffffffffffffffffffffffffffffffffffffffff", "pull_request_id": 0},
                 {"deployment_uuid": "d-old1", "status": "finished", "commit": SHA, "pull_request_id": 0}]})
+        if p.startswith("/applications/") and "/logs" in p:
+            a, q = p.split("/")[2], p.partition("?")[2]
+            seq("logs %s %s" % (a, q))
+            if a == "stopped-app": return self.send(400, {"message": "Application is not running."})
+            return self.send(200, {"logs": "2026-10-14T10:00:00Z ready on :::3000\nGET /api/health 200\n  stack line \"quoted\""})
         if p.startswith("/applications/") and p.count("/") == 2:
             a = p.split("/")[2]
             return self.send(200, {"uuid": a, "status": "exited:unhealthy" if a == "stopped-app" else "running:healthy"})
@@ -327,6 +332,26 @@ out=$(rollback_and_wait good "$SHA" 2>&1); rc=$?
 check "rollback rc" "$rc" "0"
 has "rollback queued" "$out" "^rollback deployment d-good queued \(to commit $SHA\)$"
 check "rollback posts the commit" "$(cat "$HOME/seq.log")" "rollback good $SHA"
+
+# app_logs: runtime logs, N passed as lines=, the stopped app said plainly, bad N refused before any call
+: > "$HOME/seq.log"
+out=$(app_logs good 2>&1); rc=$?
+check "app_logs rc:output" "$rc:$out" "0:2026-10-14T10:00:00Z ready on :::3000
+GET /api/health 200
+  stack line \"quoted\""
+check "app_logs default 100 lines" "$(cat "$HOME/seq.log")" "logs good lines=100"
+: > "$HOME/seq.log"; app_logs good 250 >/dev/null 2>&1
+check "app_logs passes N" "$(cat "$HOME/seq.log")" "logs good lines=250"
+out=$(app_logs stopped-app 2>&1); rc=$?
+check "app_logs stopped app" "$rc:$out" '1:app_logs: app stopped-app is not running, so there are no runtime logs; check the container: rssh "docker ps -a --filter name=stopped-app"'
+: > "$HOME/seq.log"
+for n in 0 -5 abc 10001 007 99999999999999999999; do
+  out=$(app_logs good "$n" 2>&1); rc=$?
+  check "app_logs N=$n refused" "$rc:$out" "1:app_logs: N must be an integer from 1 to 10000, got '$n'"
+done
+out=$(app_logs good 10000 2>&1); check "app_logs N=10000 accepted" "$?" "0"
+check "app_logs bad N: no request" "$(cat "$HOME/seq.log")" "logs good lines=10000"
+out=$(app_logs 2>&1); check "app_logs without uuid" "$?:$out" "1:usage: app_logs APP_UUID [N]"
 
 # db_restore: refused while the app runs, pg_restore all or nothing, wipe only on RESTORE_WIPE=yes
 dump=$(state_get LAST_DUMP)

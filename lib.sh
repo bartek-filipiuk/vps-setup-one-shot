@@ -232,6 +232,27 @@ deploy_logs() {
     tail -60
 }
 
+# app_logs APP_UUID [N] -> the last N (default 100, at most 10000) lines of the app's runtime
+# logs (GET /applications/{uuid}/logs?lines=N, read-only; DOCTOR.md). Coolify answers 400
+# "Application is not running." when no container runs: that is said plainly, return 1.
+app_logs() {
+  local n=${2:-100} r
+  [ -n "${1:-}" ] || { echo "usage: app_logs APP_UUID [N]" >&2; return 1; }
+  case "$n" in ''|*[!0-9]*|0*) n=x ;; esac
+  [ "$n" != x ] && [ "${#n}" -le 5 ] && [ "$n" -le 10000 ] ||
+    { echo "app_logs: N must be an integer from 1 to 10000, got '${2:-}'" >&2; return 1; }
+  # capi writes only the body to stdout on success and only its error line on failure.
+  if ! r=$(capi GET "/applications/$1/logs?lines=$n" 2>&1); then
+    case "$r" in
+      "HTTP 400 "*"not running"*)
+        echo "app_logs: app $1 is not running, so there are no runtime logs; check the container: rssh \"docker ps -a --filter name=$1\"" >&2 ;;
+      *) echo "$r" >&2 ;;
+    esac
+    return 1
+  fi
+  jq -r '.logs // empty' <<<"$r"
+}
+
 # --- off-site backups: Coolify scheduled backups copied to S3-compatible storage (RESTORE.md) ---
 
 # S3 credentials: S3_KEY= and S3_SECRET= lines in S3_ENV (default ~/.config/vps-setup/s3.env,
