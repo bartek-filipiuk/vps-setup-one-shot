@@ -36,6 +36,7 @@ Rules that apply to every item:
   storage (Hetzner Object Storage first), set up in phase 06. `RESTORE.md` restores one database
   from a chosen backup. Done when: the harness backs up, destroys the database, restores, and the
   waitlist row is back; `status.sh` shows off-site backup age.
+  (Code and fake-API tests done; not run on a server yet.)
 - **R03 `status.sh`: one screen.** Server reachable, disk and memory, pending reboot, Coolify version
   vs latest release, every app with status and last deploy result, days to certificate expiry, last
   backup and whether it succeeded. Non-zero exit when something needs attention.
