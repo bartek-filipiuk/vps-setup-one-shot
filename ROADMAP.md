@@ -42,10 +42,10 @@ Rules that apply to every item:
   backup and whether it succeeded. Non-zero exit when something needs attention.
   Done when: every line is backed by a real check on the harness server and on a production server.
   (Code and fake-API tests done; not run on a server yet.)
-- **R06a Alerts that reach a phone.** Coolify's own notifications (deploy failed, backup failed,
-  server unreachable and back, disk usage, container restart limit) sent to a Discord channel, set
-  up in phase 06 from one webhook URL the user pastes into their own terminal; `status.sh` says
-  whether a channel is on with those events. Done when: the harness stops the starter container
+- **R06a Alerts that reach a phone.** Coolify's own notifications (app stopped, deploy failed,
+  backup failed, server unreachable and back, disk usage, container restart limit) sent to a
+  Discord channel, set up in phase 06 from one webhook URL the user pastes into their own
+  terminal; `status.sh` says whether a channel is on with those events. Done when: the harness stops the starter container
   and a Discord message arrives within five minutes.
   (Code and fake-API tests done; not run on a server yet.)
 

@@ -112,10 +112,11 @@ again.
 . ./lib.sh; notify_setup discord
 ```
 
-This turns on Discord in Coolify with the URL from `notify.env` and these events: deployment
-failed, backup failed, server unreachable and reachable again, disk usage high, and container
-restart limit reached. Successful deploys and backups stay quiet. Expect
-`discord: enabled, 6/6 alert events on`; it records `ALERTS=discord`. A `Coolify refused`
+This turns on Discord in Coolify with the URL from `notify.env` and these events: app stopped
+or restarted (Coolify's "status change"), deployment failed, backup failed, server unreachable
+and reachable again, disk usage high, and container restart limit reached. Successful deploys
+and backups stay quiet. Expect
+`discord: enabled, 7/7 alert events on`; it records `ALERTS=discord`. A `Coolify refused`
 message quotes Coolify's reason (usually a mistyped URL): the user runs the 2a command again,
 then you run 2b again.
 

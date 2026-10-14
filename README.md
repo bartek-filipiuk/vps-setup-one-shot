@@ -69,9 +69,9 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 - Phase 06 connects Coolify's scheduled database backups to an S3 bucket (Hetzner Object
   Storage): daily, 7 kept on the server, 30 in the bucket, one run right away. `RESTORE.md`
   downloads a chosen backup onto the server and restores it.
-- Phase 06 also turns on Coolify's notifications to a Discord channel (deploy failed, backup
-  failed, server unreachable and back, disk usage, restart limit) from one webhook URL you paste
-  into your own terminal.
+- Phase 06 also turns on Coolify's notifications to a Discord channel (app stopped, deploy failed,
+  backup failed, server unreachable and back, disk usage, restart limit) from one webhook URL you
+  paste into your own terminal.
 - `status.sh` prints one screen: server (ssh, disk, memory, pending reboot), Coolify version vs
   the latest release, every app with its status, last deploy and days to certificate expiry, and
   the last backup of every database, plus the age of its last copy in S3, and whether a

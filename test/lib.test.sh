@@ -461,7 +461,7 @@ check "fetch without creds: no ssh" "$(cat "$HOME/seq.log")" ""
 
 # alerts (R06a): Coolify notifications to Discord; the webhook URL is handled like the S3 keys
 NE="$HOME/.config/vps-setup/notify.env"; WH=https://discord.com/api/webhooks/1/wh-SECRET-abc
-OFF6="deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached"
+OFF7="status_change deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached"
 : > "$HOME/seq.log"
 s3run notify_setup
 check "alerts: missing notify.env refused" "$rc:$out" "1:no notification webhook: $NE is missing (phase 06 step 2)"
@@ -476,18 +476,18 @@ s3run notify_setup telegram
 check "alerts: other channels refused" "$rc:$out" "1:notification channel 'telegram' is not supported; Discord is the one way (phase 06 step 2)"
 chmod 600 "$NE"
 s3run notify_status
-check "alerts: status before setup" "$rc:$out" "1:discord: disabled, 0/6 alert events on (off: $OFF6)"
+check "alerts: status before setup" "$rc:$out" "1:discord: disabled, 0/7 alert events on (off: $OFF7)"
 s3run notify_setup
 check "alerts setup rc" "$rc" "0"
-check "alerts setup: exact body, URL from notify.env" "$(cat "$HOME/seq.log")" 'notify PATCH discord {"backup_failure_discord_notifications":true,"deployment_failure_discord_notifications":true,"discord_enabled":true,"discord_ping_enabled":true,"restart_limit_reached_discord_notifications":true,"server_disk_usage_discord_notifications":true,"server_reachable_discord_notifications":true,"server_unreachable_discord_notifications":true} url=ok'
-check "alerts setup: output" "$out" "discord: enabled, 6/6 alert events on
+check "alerts setup: exact body, URL from notify.env" "$(cat "$HOME/seq.log")" 'notify PATCH discord {"backup_failure_discord_notifications":true,"deployment_failure_discord_notifications":true,"discord_enabled":true,"discord_ping_enabled":true,"restart_limit_reached_discord_notifications":true,"server_disk_usage_discord_notifications":true,"server_reachable_discord_notifications":true,"server_unreachable_discord_notifications":true,"status_change_discord_notifications":true} url=ok'
+check "alerts setup: output" "$out" "discord: enabled, 7/7 alert events on
 Next: Coolify -> Notifications -> Discord -> Send test notification (the API has no test call)."
 check "alerts setup: state" "$(state_get ALERTS)" "discord"
 first=$out; : > "$HOME/seq.log"
 s3run notify_setup
 check "alerts setup again: same body, same output" "$rc:$(cut -d' ' -f1-3 "$HOME/seq.log"):$out" "0:notify PATCH discord:$first"
 s3run notify_status
-check "alerts: status after setup" "$rc:$out" "0:discord: enabled, 6/6 alert events on"
+check "alerts: status after setup" "$rc:$out" "0:discord: enabled, 7/7 alert events on"
 ( umask 077; printf 'DISCORD_WEBHOOK_URL=https://localhost/api/webhooks/2/wh-SECRET-bad\n' > "$HOME/bad.env" )
 NOTIFY_ENV="$HOME/bad.env" s3run notify_setup
 check "alerts: 422 shows Coolify's message without the URL" "$rc:$out" "1:Coolify refused the discord settings (HTTP 422): Validation failed.; discord_webhook_url: The URL <webhook URL> points to a private address.

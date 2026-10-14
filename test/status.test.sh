@@ -85,11 +85,11 @@ BASE=$(jq -n --arg d "$(ago 2)" --arg b "$(ago_tz 5)" '{
   execs: {b1: {executions: [{uuid: "e1", status: "success", created_at: $b, finished_at: null,
     filename: "/data/coolify/backups/pg-dump.dmp", message: "Backup done", size: 1234, s3_uploaded: true}]}},
   notif: {
-    discord: ({id: 1, team_id: 0, discord_enabled: true, discord_ping_enabled: true, status_change_discord_notifications: false}
+    discord: ({id: 1, team_id: 0, discord_enabled: true, discord_ping_enabled: true, status_change_discord_notifications: true}
       + ([$ev | split(" ")[] | {key: "\(.)_discord_notifications", value: true}] | from_entries)),
     telegram: {id: 2, team_id: 0, telegram_enabled: false, deployment_failure_telegram_notifications: true},
     email: {id: 3, team_id: 0, smtp_enabled: false, resend_enabled: false, use_instance_email_settings: false}}
-}' --arg ev "deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached")
+}' --arg ev "status_change deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached")
 
 # run JQ_FILTER [jq args...] -> sets $out and $rc from status.sh on the patched scenario
 run() {
@@ -177,7 +177,7 @@ has "local only: local backup line unchanged" "$out" '^OK +backup starter-db +la
 run '.backups.d1 = []'
 check "no schedule: no off-site line on top of the FAIL" "$(grep -c 'off-site' <<<"$out")" "0"
 
-# alerts: Coolify notification channels; the six failure events of NOTIFY_EVENTS must be on
+# alerts: Coolify notification channels; the seven alert events of NOTIFY_EVENTS must be on
 run .
 has "all green: alerts" "$out" '^OK +alerts +discord: on, alert events on$'
 expect "alerts: discord off" 1 '^WARN +alerts +none \(no notification channel enabled; phase 06 step 2\)$' '.notif.discord.discord_enabled = false'
@@ -185,7 +185,7 @@ expect "alerts: event missing" 1 '^WARN +alerts +discord on but backup_failure s
   '.notif.discord.backup_failure_discord_notifications = false | del(.notif.discord.server_disk_usage_discord_notifications)'
 expect "alerts: another channel fully on" 0 '^OK +alerts +telegram: on, alert events on$' \
   '.notif.telegram = (.notif.discord | with_entries(.key |= sub("discord"; "telegram"))) | .notif.discord.discord_enabled = false'
-expect "alerts: email through SMTP" 1 '^WARN +alerts +email on but deployment_failure .* off$' '.notif.discord.discord_enabled = false | .notif.email.smtp_enabled = true'
+expect "alerts: email through SMTP" 1 '^WARN +alerts +email on but status_change deployment_failure .* off$' '.notif.discord.discord_enabled = false | .notif.email.smtp_enabled = true'
 expect "alerts: all 404" 1 '^WARN +alerts +n/a \(could not read\)$' 'del(.notif)'
 expect "alerts: unreadable" 1 '^WARN +alerts +n/a \(could not read\)$' '.notif = {discord: [1], telegram: "x"}'
 

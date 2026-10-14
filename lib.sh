@@ -437,10 +437,12 @@ EOF
 
 # --- alerts: Coolify notifications to Discord (R06a, phase 06 step 2) ---
 
-# Events that page a person (failures and the server coming and going). status_change and the
-# *_success events stay off: they fire on every routine deploy and backup. status.sh reads this
-# list too. Coolify names each setting <event>_<channel>_notifications.
-NOTIFY_EVENTS="deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached"
+# Events that page a person. status_change is the "app stopped" alert: in the 4.3.23 source
+# Coolify sends StatusChanged ("<resource> has been stopped") and ContainerRestarted through it,
+# and nothing else reports an app that went down. The *_success events stay off: they fire on
+# every routine deploy and backup. status.sh reads this list too. Coolify names each setting
+# <event>_<channel>_notifications.
+NOTIFY_EVENTS="status_change deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached"
 # Every channel Coolify has (GET/PATCH /notifications/<channel>); notify_setup drives discord only.
 # shellcheck disable=SC2034 # read by status.sh
 NOTIFY_CHANNELS="email discord slack telegram pushover webhook"

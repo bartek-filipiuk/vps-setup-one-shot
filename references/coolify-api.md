@@ -76,12 +76,14 @@ Settings belong to the team of the API token.
 | Call | Use | Notes |
 |------|-----|-------|
 | `GET /notifications/{email\|discord\|slack\|telegram\|pushover\|webhook}` | read a channel's settings | flat object of booleans: `<channel>_enabled` and `<event>_<channel>_notifications` for `backup_failure`, `backup_success`, `deployment_failure`, `deployment_success`, `docker_cleanup_failure`, `docker_cleanup_success`, `restart_limit_reached`, `scheduled_task_failure`, `scheduled_task_success`, `server_disk_usage`, `server_patch`, `server_reachable`, `server_unreachable`, `status_change`, `traefik_outdated`; Discord also `discord_ping_enabled`; plus `id`, `team_id`. Secrets (`discord_webhook_url`, ...) are not returned (live GET). Email has no `email_enabled`: `status.sh` counts it on when `smtp_enabled` or `resend_enabled` is true **[verify]** |
-| `PATCH /notifications/discord {discord_enabled, discord_webhook_url, discord_ping_enabled, <event>_discord_notifications...}` | turn on Discord with the six alert events | allow-list per channel; an unknown key is a 422 `{"message":"Validation failed.","errors":{"<field>":["..."]}}`; `discord_webhook_url` must be http(s) and not localhost or a private IP (the host is not checked to be discord.com) **[verify]**. The response may echo the webhook URL to a token with `read:sensitive`, so `notify_setup` never prints it and shows only `message` and `errors` of a 422, URL blanked **[verify]** |
+| `PATCH /notifications/discord {discord_enabled, discord_webhook_url, discord_ping_enabled, <event>_discord_notifications...}` | turn on Discord with the seven alert events | allow-list per channel; an unknown key is a 422 `{"message":"Validation failed.","errors":{"<field>":["..."]}}`; `discord_webhook_url` must be http(s) and not localhost or a private IP (the host is not checked to be discord.com) **[verify]**. The response may echo the webhook URL to a token with `read:sensitive`, so `notify_setup` never prints it and shows only `message` and `errors` of a 422, URL blanked **[verify]** |
 | (none) | test notification | no API call; Coolify UI → **Notifications** → **Discord** → **Send test notification** **[verify]** |
 
-Which event a stopped app container raises is not settled: if Coolify reports it as
-`status_change` (off in `NOTIFY_EVENTS`, because it also fires on routine restarts), the R06a
-drill gets no message and `status_change` has to join the list **[verify]**.
+`status_change` is the "app stopped" alert, read in the 4.3.23 source:
+`app/Notifications/Application/StatusChanged.php` uses `getEnabledChannels('status_change')` with
+the subject "Coolify: {resource} has been stopped", and `Container/ContainerRestarted.php` uses
+it too; there is no separate container-stopped notification. So `NOTIFY_EVENTS` includes it, or
+the R06a drill (stop the app, a message arrives) gets nothing. Not yet seen on a server **[verify]**.
 
 Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/events/manual`,
 a GitHub webhook with `content_type: json`, event `push`, and the app's
