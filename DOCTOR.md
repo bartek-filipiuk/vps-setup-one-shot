@@ -18,7 +18,9 @@ every step.
 `capi`, `rssh` with `docker ps`, `docker logs`, `docker inspect`, `df` and `journalctl`, and
 `dig`, `curl`, `openssl` on this machine. A fix (redeploy, rollback, restart, a DNS change,
 restarting `coolify-proxy`) is proposed in one sentence with the runbook or table row it comes
-from, and happens only after an explicit yes.
+from, and happens only after an explicit yes. Logs (`docker logs`, `app_logs`, `deploy_logs`)
+can hold tokens and personal data: quote only the lines that explain the failure, never whole logs
+or environment values.
 
 ## 1. Triage, in this order
 
@@ -85,6 +87,7 @@ Run each step, write down what it says, then go to the symptom in step 2.
 ```text
 status.sh exit 2 and "ssh ... server unreachable"          -> E  server unreachable
 status.sh exit 2, ssh OK, "api ... unreachable"            -> E  (Coolify itself is down)
+status.sh exit 2, "token rejected" or "config missing"     -> not an outage: phase 04 step 3 (token), then triage again
 newest deployment "failed"                                 -> B  deploy failed
 health 000, without certificate check 200 (or 3xx/5xx)     -> D  certificate error
 health 000 both ways, DNS A record is not the server IP    -> D  (DNS; the certificate follows it)
@@ -243,7 +246,8 @@ Run (from this machine; `hcloud` only for a Hetzner server, read-only `describe`
 . ./lib.sh; IP=$(VPS_STATE=$VPS_SETUP_STATE state_get VPS_IP)
 rssh true && echo "ssh OK" || echo "ssh failed (exit $?)"
 curl -s --max-time 10 -o /dev/null -w "http $IP: %{http_code}\n" "http://$IP" || true
-hcloud server describe "$(VPS_STATE=$VPS_SETUP_STATE state_get SERVER_NAME)" -o format='{{.Status}}'
+[ "$(VPS_STATE=$VPS_SETUP_STATE state_get PROVIDER)" = hetzner ] &&
+  hcloud server describe "$(VPS_STATE=$VPS_SETUP_STATE state_get SERVER_NAME)" -o format='{{.Status}}'
 ```
 
 If ssh works but the Coolify API does not:
