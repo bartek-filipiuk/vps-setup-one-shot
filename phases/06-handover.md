@@ -152,6 +152,7 @@ Write a summary the user can keep. No secrets in it.
 - Risky deploy (migrations): cd $(state_get SETUP_DIR) && . ./lib.sh && deploy_and_wait $(state_get APP_UUID)  (dumps the database first, prints the rollback point)
 - Bad deploy: $(state_get SETUP_DIR)/ROLLBACK.md (previous image via Coolify rollback, dumps in /root/db-dumps/ on the server)
 - Restore the database from an off-site backup: $(state_get SETUP_DIR)/RESTORE.md
+- App down (site down, deploy failed, 502, certificate error, server unreachable): $(state_get SETUP_DIR)/DOCTOR.md
 - Logs: Coolify UI -> app -> Logs
 - Health: $(state_get SETUP_DIR)/status.sh (one screen; exit 0 = all OK)
 - Alerts: the Discord channel; check the Coolify settings: cd $(state_get SETUP_DIR) && . ./lib.sh && notify_status

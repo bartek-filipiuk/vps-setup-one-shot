@@ -42,7 +42,8 @@ cannot be checked from outside (IP, domains, resource UUIDs, and a few "user con
 - **Stop and ask** before anything destructive (deleting servers, volumes, repos, DNS records)
   or anything that costs money beyond the VPS the user agreed to.
 - **When stuck:** check `references/troubleshooting.md` for the log signature first, and
-  `references/coolify-api.md` for API shape and known quirks. Never invent API fields.
+  `references/coolify-api.md` for API shape and known quirks. Never invent API fields. An app
+  that was working and is now down: `DOCTOR.md`.
 
 ## Phases
 

@@ -78,6 +78,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   notification channel is on with the alert events. A Coolify release a
   minor version or more ahead is a warning. Exit 0 all OK, 1 needs attention, 2 server or API
   unreachable.
+- `DOCTOR.md` is the runbook for "my app is down": `status.sh`, the health route, the newest
+  deployment, the container, its logs (`app_logs`), disk and DNS, read-only, then one of five
+  symptoms (site down, deploy failed, 502/503/504, certificate error, server unreachable) with
+  its fix from `references/`, `ROLLBACK.md` or `RESTORE.md`, or an honest "this needs a human".
+  Nothing changes without your yes.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
   `/api/health` checking the database, a non-root multi-stage Docker image.
 
@@ -119,6 +124,10 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   `test/status.test.sh`) and have **not been run on a real server yet**: no Discord message has
   been sent through them. `GET /notifications/*` was checked on a live Coolify 4.3.23; the PATCH
   call comes from the 4.3.23 source and is marked `[verify]` in `references/coolify-api.md`.
+- `DOCTOR.md` (R05) and `app_logs` are tested against a fake Coolify API only
+  (`test/lib.test.sh`) and have **not been run on a real server yet**; the five symptoms have
+  not been broken on purpose on a server. `GET /applications/{uuid}/logs` was checked on a live
+  Coolify 4.3.23; its "not running" answer comes from the source and is marked `[verify]`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
