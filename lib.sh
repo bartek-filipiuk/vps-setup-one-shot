@@ -434,3 +434,99 @@ fi
 EOF
   } | rssh "sh -s -- $(printf %q "$db") $(printf %q "$bucket/$obj") $(printf %q "$base") $(printf %q "$DUMP_DIR") $(printf %q "${MC_IMAGE:-}")"
 }
+
+# --- alerts: Coolify notifications to Discord (R06a, phase 06 step 2) ---
+
+# Events that page a person (failures and the server coming and going). status_change and the
+# *_success events stay off: they fire on every routine deploy and backup. status.sh reads this
+# list too. Coolify names each setting <event>_<channel>_notifications.
+NOTIFY_EVENTS="deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached"
+# Every channel Coolify has (GET/PATCH /notifications/<channel>); notify_setup drives discord only.
+# shellcheck disable=SC2034 # read by status.sh
+NOTIFY_CHANNELS="email discord slack telegram pushover webhook"
+
+# The webhook URL: a DISCORD_WEBHOOK_URL= line in NOTIFY_ENV (default
+# ~/.config/vps-setup/notify.env, mode 600), typed in by the user (phase 06 step 2). Anyone with
+# the URL can post into the channel, so it is handled like the S3 keys: read with grep, never
+# sourced, never on a command line (jq gets it through its environment, Coolify through capi's
+# stdin), and no Coolify response to a PATCH is ever printed (it may echo the URL).
+notify_env_file() { echo "${NOTIFY_ENV:-$HOME/.config/vps-setup/notify.env}"; }
+notify_cred() { grep -m1 "^$1=" "$(notify_env_file)" 2>/dev/null | cut -d= -f2-; }
+
+# notify_secret_key CHANNEL -> the notify.env key holding that channel's webhook URL; the
+# Coolify field is the same name in lower case. A second channel is one more line here.
+notify_secret_key() {
+  case ${1:-} in
+    discord) echo DISCORD_WEBHOOK_URL ;;
+    *) echo "notification channel '${1:-}' is not supported; Discord is the one way (phase 06 step 2)" >&2; return 1 ;;
+  esac
+}
+
+notify_label() { case $1 in discord) echo Discord ;; *) echo "$1" ;; esac; }
+
+# notify_env_check [CHANNEL] -> 0 when notify.env exists, is private and has the channel's URL.
+notify_env_check() {
+  local f mode key; f=$(notify_env_file); key=$(notify_secret_key "${1:-discord}") || return 1
+  [ -f "$f" ] || { echo "no notification webhook: $f is missing (phase 06 step 2)" >&2; return 1; }
+  mode=$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f")
+  case "$mode" in 600|400) ;; *) echo "refusing $f: mode $mode, must be 600 (chmod 600 $f)" >&2; return 1 ;; esac
+  [ -n "$(notify_cred "$key")" ] || { echo "$f needs a $key= line" >&2; return 1; }
+}
+
+# notify_summary CHANNEL < GET-json -> "<channel>: enabled|disabled, N/M alert events on[ (off: ...)]".
+# Returns 1 when the channel is off or an event is missing.
+notify_summary() {
+  local s state all off list
+  s=$(jq -er --arg ch "$1" --arg ev "$NOTIFY_EVENTS" '
+    objects | . as $o | ($ev | split(" ")) as $all
+    | [$all[] | select($o["\(.)_\($ch)_notifications"] != true)] as $off
+    | "\(if .["\($ch)_enabled"] == true then "enabled" else "disabled" end) \($all | length) \($off | length) \($off | join(" "))"
+  ' 2>/dev/null) || { echo "$1: could not read the notification settings" >&2; return 1; }
+  read -r state all off list <<<"$s"
+  echo "$1: $state, $((all - off))/$all alert events on${list:+ (off: $list)}"
+  [ "$state" = enabled ] && [ "$off" = 0 ]
+}
+
+# notify_status [CHANNEL] -> the channel's state from Coolify (default discord); 1 unless it is
+# enabled with every NOTIFY_EVENTS event on.
+notify_status() {
+  local ch=${1:-discord} r
+  r=$(capi GET "/notifications/$ch") || return 1
+  notify_summary "$ch" <<<"$r"
+}
+
+# notify_setup [CHANNEL] -> turns the channel on in Coolify (the token's team) with the webhook URL
+# from notify.env, every NOTIFY_EVENTS event on (Discord: with @here pings), then reads the
+# settings back. Records ALERTS=<channel>. Re-running it sets the same values again.
+notify_setup() {
+  local ch=${1:-discord} key body err code msg url
+  key=$(notify_secret_key "$ch") || return 1
+  notify_env_check "$ch" || return 1
+  body=$(N_URL=$(notify_cred "$key") jq -n --arg ch "$ch" --arg f "$(tr '[:upper:]' '[:lower:]' <<<"$key")" --arg ev "$NOTIFY_EVENTS" '
+    {"\($ch)_enabled": true, ($f): env.N_URL}
+    + (if $ch == "discord" then {discord_ping_enabled: true} else {} end)
+    + ([$ev | split(" ")[] | {key: "\(.)_\($ch)_notifications", value: true}] | from_entries)') || return 1
+  # The response is never printed: with a read:sensitive token it echoes the URL.
+  if ! err=$(capi PATCH "/notifications/$ch" "$body" 2>&1 >/dev/null); then
+    body=
+    # capi's error is "HTTP <code> PATCH /path: <body>"; show Coolify's message and the field
+    # errors, never the raw body, and blank out the URL should Coolify quote it.
+    code=$(sed -n '1s/^HTTP \([0-9]*\) .*/\1/p' <<<"$err")
+    msg=$(sed '1s/^HTTP [0-9]* [A-Z]* [^ ]*: //' <<<"$err" | jq -r '
+      [.message // empty] + [(.errors // {}) | to_entries[] | "\(.key): \(.value | if type == "array" then join(" ") else tostring end)"]
+      | join("; ")' 2>/dev/null)
+    url=$(notify_cred "$key")
+    [ -n "$url" ] && msg=${msg//"$url"/<webhook URL>}
+    if [ -n "$code" ]; then
+      echo "Coolify refused the $ch settings (HTTP $code): ${msg:-no message}" >&2
+    else
+      echo "$err" >&2   # no HTTP answer: curl's or capi's own message, no body
+    fi
+    [ "$code" = 422 ] && echo "Check the webhook URL in $(notify_env_file) (phase 06 step 2) and run this again." >&2
+    return 1
+  fi
+  body=
+  notify_status "$ch" || { echo "Coolify did not keep the $ch settings; check Coolify -> Notifications -> $(notify_label "$ch")" >&2; return 1; }
+  state_set ALERTS "$ch"
+  echo "Next: Coolify -> Notifications -> $(notify_label "$ch") -> Send test notification (the API has no test call)."
+}

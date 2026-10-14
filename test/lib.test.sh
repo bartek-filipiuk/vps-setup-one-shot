@@ -27,6 +27,12 @@ FINAL = {              # what a backup_now run of each schedule ends as
     "bk-msg": {"status": "success", "message": "Backup done"},
     "bk-fail": {"status": "failed", "message": "pg_dump: error: connection refused"},
 }
+WEBHOOK = "https://discord.com/api/webhooks/1/wh-SECRET-abc"
+EVENTS = ["backup_failure", "backup_success", "deployment_failure", "deployment_success", "docker_cleanup_failure",
+          "docker_cleanup_success", "restart_limit_reached", "scheduled_task_failure", "scheduled_task_success",
+          "server_disk_usage", "server_patch", "server_reachable", "server_unreachable", "status_change", "traefik_outdated"]
+# Discord settings as the live GET answers (no URL in it); PATCH accepts only these keys plus the URL.
+notif = {"id": 1, "team_id": 0, "discord_enabled": False, "discord_ping_enabled": False} | {e + "_discord_notifications": False for e in EVENTS}
 def seq(line):
     with open(sys.argv[2], "a") as f: f.write(line + "\n")
 def executions(b):
@@ -75,6 +81,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/databases/db-redis":
             return self.send(200, {"uuid": "db-redis", "database_type": "standalone-redis", "image": "redis:7.2"})
         if p == "/s3-storages": return self.send(200, list(storages.values()))
+        if p == "/notifications/discord": return self.send(200, notif)
         if p.startswith("/s3-storages/"): return self.send(200, storages[p.split("/")[2]])
         if p.startswith("/databases/") and p.endswith("/backups"):
             return self.send(200, schedules.get(p.split("/")[2], []))
@@ -115,6 +122,18 @@ class H(BaseHTTPRequestHandler):
     def do_PATCH(self):
         p = self.path.removeprefix("/api/v1")
         b = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+        if p == "/notifications/discord":
+            bad = [k for k in b if k not in notif and k != "discord_webhook_url" or k in ("id", "team_id")]
+            if bad: return self.send(422, {"message": "Validation failed.", "errors": {k: ["This field is not allowed."] for k in bad}})
+            u = b.get("discord_webhook_url")
+            if u and "localhost" in u:
+                return self.send(422, {"message": "Validation failed.", "errors": {"discord_webhook_url": ["The URL %s points to a private address." % u]}})
+            rest = {k: v for k, v in b.items() if k != "discord_webhook_url"}
+            notif.update(rest)
+            seq("notify PATCH discord %s url=%s" % (json.dumps(rest, sort_keys=True, separators=(",", ":")),
+                "ok" if u == WEBHOOK else "absent" if u is None else "other"))
+            # with a read:sensitive token the response carries the URL: the lib must never print it
+            return self.send(200, {"message": "Notification settings updated.", "data": notif | {"discord_webhook_url": u}})
         if p.startswith("/s3-storages/"):
             u = p.split("/")[2]; storages[u].update({k: v for k, v in b.items() if k not in ("key", "secret")})
             seq("s3 PATCH %s creds=%s" % (u, "ok" if (b.get("key"), b.get("secret")) == (S3_KEY, S3_SECRET) else "bad"))
@@ -440,9 +459,44 @@ S3_ENV="$HOME/nope.env" s3run db_fetch_from_s3 db-pg /data/x/y.dmp
 check "fetch without creds refused" "$rc:$out" "1:no S3 credentials: $HOME/nope.env is missing (phase 06 step 1)"
 check "fetch without creds: no ssh" "$(cat "$HOME/seq.log")" ""
 
+# alerts (R06a): Coolify notifications to Discord; the webhook URL is handled like the S3 keys
+NE="$HOME/.config/vps-setup/notify.env"; WH=https://discord.com/api/webhooks/1/wh-SECRET-abc
+OFF6="deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached"
+: > "$HOME/seq.log"
+s3run notify_setup
+check "alerts: missing notify.env refused" "$rc:$out" "1:no notification webhook: $NE is missing (phase 06 step 2)"
+( umask 022; printf 'DISCORD_WEBHOOK_URL=%s\n' "$WH" > "$NE" )
+s3run notify_setup
+check "alerts: notify.env mode 644 refused" "$rc:$out" "1:refusing $NE: mode 644, must be 600 (chmod 600 $NE)"
+check "alerts: nothing sent while refused" "$(cat "$HOME/seq.log")" ""
+( umask 077; printf 'OTHER=1\n' > "$HOME/empty.env" )
+NOTIFY_ENV="$HOME/empty.env" s3run notify_setup
+check "alerts: notify.env without the URL refused" "$rc:$out" "1:$HOME/empty.env needs a DISCORD_WEBHOOK_URL= line"
+s3run notify_setup telegram
+check "alerts: other channels refused" "$rc:$out" "1:notification channel 'telegram' is not supported; Discord is the one way (phase 06 step 2)"
+chmod 600 "$NE"
+s3run notify_status
+check "alerts: status before setup" "$rc:$out" "1:discord: disabled, 0/6 alert events on (off: $OFF6)"
+s3run notify_setup
+check "alerts setup rc" "$rc" "0"
+check "alerts setup: exact body, URL from notify.env" "$(cat "$HOME/seq.log")" 'notify PATCH discord {"backup_failure_discord_notifications":true,"deployment_failure_discord_notifications":true,"discord_enabled":true,"discord_ping_enabled":true,"restart_limit_reached_discord_notifications":true,"server_disk_usage_discord_notifications":true,"server_reachable_discord_notifications":true,"server_unreachable_discord_notifications":true} url=ok'
+check "alerts setup: output" "$out" "discord: enabled, 6/6 alert events on
+Next: Coolify -> Notifications -> Discord -> Send test notification (the API has no test call)."
+check "alerts setup: state" "$(state_get ALERTS)" "discord"
+first=$out; : > "$HOME/seq.log"
+s3run notify_setup
+check "alerts setup again: same body, same output" "$rc:$(cut -d' ' -f1-3 "$HOME/seq.log"):$out" "0:notify PATCH discord:$first"
+s3run notify_status
+check "alerts: status after setup" "$rc:$out" "0:discord: enabled, 6/6 alert events on"
+( umask 077; printf 'DISCORD_WEBHOOK_URL=https://localhost/api/webhooks/2/wh-SECRET-bad\n' > "$HOME/bad.env" )
+NOTIFY_ENV="$HOME/bad.env" s3run notify_setup
+check "alerts: 422 shows Coolify's message without the URL" "$rc:$out" "1:Coolify refused the discord settings (HTTP 422): Validation failed.; discord_webhook_url: The URL <webhook URL> points to a private address.
+Check the webhook URL in $HOME/bad.env (phase 06 step 2) and run this again."
+check "alerts: 422 keeps the state" "$(state_get ALERTS)" "discord"
+
 # the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
-leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
-check "s3 creds in no argv and no output" "${leaks:-none}" "none"
+leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
+check "s3 creds and webhook URL in no argv and no output" "${leaks:-none}" "none"
 check "argv log was written" "$(grep -c '^jq ' "$HOME/argv.log" | awk '{print ($1 > 10) ? "yes" : "no"}')" "yes"
 PATH=${PATH#"$HOME/argvbin:"}; unset TMPDIR BACKUP_POLL_SECONDS
 
