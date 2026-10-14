@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-screen health check of the server, Coolify, apps, certificates and backups.
+# One-screen health check of the server, Coolify, apps, certificates, backups and alerts.
 # Run from anywhere on YOUR machine: ./status.sh
 # Exit code: 0 all OK, 1 something needs attention (WARN or FAIL), 2 server or Coolify API unreachable.
 # Read-only: it never changes anything and never prints tokens or deploy logs.
@@ -238,6 +238,27 @@ else
       offsite "$name" "$s3ids" "$s3all"
     done <<<"$dbs"
   fi
+
+  # --- Alerts: Coolify notification channels of the token's team (NOTIFY_EVENTS from lib.sh) ---
+  section "Alerts"
+  full='' partial='' readable=0
+  for ch in $NOTIFY_CHANNELS; do
+    # "on <events off>" or "off"; email has no email_enabled, its senders are smtp/resend [verify].
+    r=$(api "/notifications/$ch" | jq -er --arg ch "$ch" --arg ev "$NOTIFY_EVENTS" '
+      objects | . as $o
+      | if ($o["\($ch)_enabled"] // ($ch == "email" and ($o.smtp_enabled == true or $o.resend_enabled == true))) == true
+        then "on " + ([$ev | split(" ")[] | select($o["\(.)_\($ch)_notifications"] != true)] | join(" "))
+        else "off" end' 2>/dev/null) || continue
+    readable=1
+    case $r in
+      "on ") full="$full${full:+, }$ch" ;;
+      on\ *) partial="$partial${partial:+; }$ch on but ${r#on } off" ;;
+    esac
+  done
+  if [ -n "$full" ]; then line OK "alerts" "$full: on, alert events on"
+  elif [ -n "$partial" ]; then line WARN "alerts" "$partial"
+  elif [ "$readable" = 1 ]; then line WARN "alerts" "none (no notification channel enabled; phase 06 step 2)"
+  else line WARN "alerts" "n/a (could not read)"; fi
 fi
 
 echo

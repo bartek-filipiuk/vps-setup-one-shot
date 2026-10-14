@@ -37,6 +37,7 @@ class H(BaseHTTPRequestHandler):
         if p == ["databases"]: return pick(s.get("dbs"))
         if len(p) == 3 and p[0] == "databases" and p[2] == "backups": return pick(s.get("backups", {}).get(p[1]))
         if len(p) == 5 and p[4] == "executions": return pick(s.get("execs", {}).get(p[3]))
+        if len(p) == 2 and p[0] == "notifications": return pick(s.get("notif", {}).get(p[1]))
         self.send(404, {"message": "Not found."})
 HTTPServer(("127.0.0.1", port), H).serve_forever()
 EOF
@@ -82,8 +83,13 @@ BASE=$(jq -n --arg d "$(ago 2)" --arg b "$(ago_tz 5)" '{
   backups: {d1: [{uuid: "b1", enabled: true, frequency: "0 2 * * *", last_execution_at: null, save_s3: true,
     executions: [{uuid: "e0", status: "success", created_at: $b, finished_at: null, s3_uploaded: true}]}]},
   execs: {b1: {executions: [{uuid: "e1", status: "success", created_at: $b, finished_at: null,
-    filename: "/data/coolify/backups/pg-dump.dmp", message: "Backup done", size: 1234, s3_uploaded: true}]}}
-}')
+    filename: "/data/coolify/backups/pg-dump.dmp", message: "Backup done", size: 1234, s3_uploaded: true}]}},
+  notif: {
+    discord: ({id: 1, team_id: 0, discord_enabled: true, discord_ping_enabled: true, status_change_discord_notifications: false}
+      + ([$ev | split(" ")[] | {key: "\(.)_discord_notifications", value: true}] | from_entries)),
+    telegram: {id: 2, team_id: 0, telegram_enabled: false, deployment_failure_telegram_notifications: true},
+    email: {id: 3, team_id: 0, smtp_enabled: false, resend_enabled: false, use_instance_email_settings: false}}
+}' --arg ev "deployment_failure backup_failure server_unreachable server_reachable server_disk_usage restart_limit_reached")
 
 # run JQ_FILTER [jq args...] -> sets $out and $rc from status.sh on the patched scenario
 run() {
@@ -170,6 +176,18 @@ expect "local only" 1 '^WARN +off-site starter-db +local only \(no backup schedu
 has "local only: local backup line unchanged" "$out" '^OK +backup starter-db +last success 5h ago$'
 run '.backups.d1 = []'
 check "no schedule: no off-site line on top of the FAIL" "$(grep -c 'off-site' <<<"$out")" "0"
+
+# alerts: Coolify notification channels; the six failure events of NOTIFY_EVENTS must be on
+run .
+has "all green: alerts" "$out" '^OK +alerts +discord: on, alert events on$'
+expect "alerts: discord off" 1 '^WARN +alerts +none \(no notification channel enabled; phase 06 step 2\)$' '.notif.discord.discord_enabled = false'
+expect "alerts: event missing" 1 '^WARN +alerts +discord on but backup_failure server_disk_usage off$' \
+  '.notif.discord.backup_failure_discord_notifications = false | del(.notif.discord.server_disk_usage_discord_notifications)'
+expect "alerts: another channel fully on" 0 '^OK +alerts +telegram: on, alert events on$' \
+  '.notif.telegram = (.notif.discord | with_entries(.key |= sub("discord"; "telegram"))) | .notif.discord.discord_enabled = false'
+expect "alerts: email through SMTP" 1 '^WARN +alerts +email on but deployment_failure .* off$' '.notif.discord.discord_enabled = false | .notif.email.smtp_enabled = true'
+expect "alerts: all 404" 1 '^WARN +alerts +n/a \(could not read\)$' 'del(.notif)'
+expect "alerts: unreadable" 1 '^WARN +alerts +n/a \(could not read\)$' '.notif = {discord: [1], telegram: "x"}'
 
 expect "latest unreachable" 0 '^OK +version +4\.3\.23 \(latest unknown\)' 'del(.latest)'
 expect "patch behind" 0 '^OK +version +4\.3\.23 \(latest release 4\.3\.30\)' '.latest.tag_name = "v4.3.30"'
