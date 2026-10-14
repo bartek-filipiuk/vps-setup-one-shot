@@ -63,6 +63,6 @@ curl -sf --max-time 10 "https://$AD/api/health" | grep -q '"db":"ok"' && ok "htt
 [ -f "$(state_get APP_DIR)/.coolify.env" ] && ok ".coolify.env written" || { bad ".coolify.env missing in $(state_get APP_DIR)"; next phases/05-starter.md; }
 
 echo "06 handover"
-[ -f "$HOME/.config/vps-setup/SERVER.md" ] && [ "$(state_get HANDOVER_DONE)" = 1 ] && ok "SERVER.md written, backups and alerts decided" || { bad "handover not done"; next phases/06-handover.md; }
+[ -f "$HOME/.config/vps-setup/SERVER.md" ] && [ "$(state_get HANDOVER_DONE)" = 1 ] && ok "SERVER.md written, handover closed" || { bad "handover not done"; next phases/06-handover.md; }
 
 printf '\nALL DONE. To deploy another app: read PREPARE-APP.md\n'

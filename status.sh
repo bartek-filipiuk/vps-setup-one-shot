@@ -255,7 +255,7 @@ else
       on\ *) partial="$partial${partial:+; }$ch on but ${r#on } off" ;;
     esac
   done
-  if [ -n "$full" ]; then line OK "alerts" "$full: on, alert events on"
+  if [ -n "$full" ]; then line OK "alerts" "$full: on, alert events on (delivery not checked)"
   elif [ -n "$partial" ]; then line WARN "alerts" "$partial"
   elif [ "$readable" = 1 ]; then line WARN "alerts" "none (no notification channel enabled; phase 06 step 2)"
   else line WARN "alerts" "n/a (could not read)"; fi

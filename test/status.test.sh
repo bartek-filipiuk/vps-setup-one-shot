@@ -179,11 +179,11 @@ check "no schedule: no off-site line on top of the FAIL" "$(grep -c 'off-site' <
 
 # alerts: Coolify notification channels; the seven alert events of NOTIFY_EVENTS must be on
 run .
-has "all green: alerts" "$out" '^OK +alerts +discord: on, alert events on$'
+has "all green: alerts" "$out" '^OK +alerts +discord: on, alert events on \(delivery not checked\)$'
 expect "alerts: discord off" 1 '^WARN +alerts +none \(no notification channel enabled; phase 06 step 2\)$' '.notif.discord.discord_enabled = false'
 expect "alerts: event missing" 1 '^WARN +alerts +discord on but backup_failure server_disk_usage off$' \
   '.notif.discord.backup_failure_discord_notifications = false | del(.notif.discord.server_disk_usage_discord_notifications)'
-expect "alerts: another channel fully on" 0 '^OK +alerts +telegram: on, alert events on$' \
+expect "alerts: another channel fully on" 0 '^OK +alerts +telegram: on, alert events on \(delivery not checked\)$' \
   '.notif.telegram = (.notif.discord | with_entries(.key |= sub("discord"; "telegram"))) | .notif.discord.discord_enabled = false'
 expect "alerts: email through SMTP" 1 '^WARN +alerts +email on but status_change deployment_failure .* off$' '.notif.discord.discord_enabled = false | .notif.email.smtp_enabled = true'
 expect "alerts: all 404" 1 '^WARN +alerts +n/a \(could not read\)$' 'del(.notif)'

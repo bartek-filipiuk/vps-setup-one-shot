@@ -519,6 +519,8 @@ notify_setup() {
       | join("; ")' 2>/dev/null)
     url=$(notify_cred "$key")
     [ -n "$url" ] && msg=${msg//"$url"/<webhook URL>}
+    # Coolify may quote the URL normalised (case, trailing slash): blank any webhook URL left.
+    msg=$(sed -E 's#https?://[^ ;"]*webhooks[^ ;"]*#<webhook URL>#g' <<<"$msg")
     if [ -n "$code" ]; then
       echo "Coolify refused the $ch settings (HTTP $code): ${msg:-no message}" >&2
     else
