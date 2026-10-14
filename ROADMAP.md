@@ -42,10 +42,12 @@ Rules that apply to every item:
   backup and whether it succeeded. Non-zero exit when something needs attention.
   Done when: every line is backed by a real check on the harness server and on a production server.
   (Code and fake-API tests done; not run on a server yet.)
-- **R06 Alerts that reach a phone.** Coolify's notifications (deploy failed, backup failed, server
-  unreachable) wired to email, Telegram or Discord; an external uptime check per app domain through
-  Uptime Kuma run as a Coolify service, with its public status page. Done when: the harness stops
-  the starter container and an alert arrives within five minutes.
+- **R06a Alerts that reach a phone.** Coolify's own notifications (deploy failed, backup failed,
+  server unreachable and back, disk usage, container restart limit) sent to a Discord channel, set
+  up in phase 06 from one webhook URL the user pastes into their own terminal; `status.sh` says
+  whether a channel is on with those events. Done when: the harness stops the starter container
+  and a Discord message arrives within five minutes.
+  (Code and fake-API tests done; not run on a server yet.)
 
 ## Next
 
@@ -62,6 +64,10 @@ Rules that apply to every item:
 - **R10 `SERVICES.md`: self-host the tools in one prompt.** n8n, Plausible or Umami, Uptime Kuma,
   Forgejo, Minio and the other Coolify one-click services, each with a domain, HTTPS, backups and a
   line in `status.sh`. Done when: three services deploy in the harness with backups verified.
+- **R06b Uptime checks with a status page.** Uptime Kuma run as a Coolify service, with an uptime
+  check per app domain and its public status page. Depends on R10: one-click services cannot get a
+  custom domain through the API (`references/coolify-api.md`). Done when: the harness stops the
+  starter app, Kuma marks it down, and the status page on its own domain shows it.
 - **R12 Handover pack.** `HANDOVER.md` produces what a client or colleague needs to take over a
   project or a server: a Coolify team invite with the right role, a scoped token where Coolify
   supports it, `SERVER.md` for that project, DNS and repo ownership steps, and the checklist that
@@ -111,7 +117,7 @@ Rules that apply to every item:
 
 - **R21 Preview deployment per pull request**, if Coolify's GitHub App source becomes drivable
   without the UI.
-- **R22 A status page per client**, from the Uptime Kuma pages in R06, with the client's domain.
+- **R22 A status page per client**, from the Uptime Kuma pages in R06b, with the client's domain.
 - **R23 Secrets vault on the user's machine** (`age` or `sops`) with a rotation runbook.
 - **R24 Starter variants:** the same plumbing with auth and transactional mail; a cron-and-queue
   worker example as a second app from the same repo.

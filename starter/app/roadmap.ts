@@ -12,12 +12,13 @@ const en: { lanes: Record<LaneKey, Item[]>; shipped: Shipped[] } = {
       { id: "R01", name: "Staged test harness", value: "On every pull request, the checks that need no server: the shell library tests, shellcheck, and a syntax check of the shell blocks in the phases. A full run on a throwaway server only on demand and before releases. A fully unattended run needs the Coolify admin registration and API token steps automated and a fresh hostname per run (Let's Encrypt limits), which depends on DNS through the API.", done: "The checks run on every pull request and one on-demand full run went green." },
       { id: "R04", name: "Off-site backups and a restore drill", value: "Database backups to any S3-compatible storage, set up during handover. A runbook that restores one database from a chosen backup.", done: "The harness backs up, destroys the database, restores it, and the data is back. (Code and fake-API tests done; not run on a server yet.)" },
       { id: "R03", name: "status.sh: one screen", value: "Server reachable, disk and memory, pending reboot, Coolify version, every app with its last deploy, days to certificate expiry, last backup and whether it worked.", done: "Every line is backed by a real check, on the test server and on a production one. (Code and fake-API tests done; not run on a server yet.)" },
-      { id: "R06", name: "Alerts that reach a phone", value: "Coolify's own notifications wired to email, Telegram or Discord, plus an external uptime check per app with a public status page.", done: "The harness stops an app and an alert arrives within five minutes." },
+      { id: "R06a", name: "Alerts that reach a phone", value: "Coolify's own notifications (deploy failed, backup failed, server unreachable, disk usage, restart limit) sent to a Discord channel, set up during handover from one webhook URL. Status says whether alerts are on.", done: "The harness stops the app and a Discord message arrives within five minutes. (Code and fake-API tests done; not run on a server yet.)" },
     ],
     next: [
       { id: "R07", name: "Safe deploys", value: "Database dump before every deploy, the rollback point printed, a runbook that reverts to the previous image and restores the dump if needed.", done: "A broken commit is deployed, rolled back, and the app is healthy with its data. (Code and fake-API tests done; not run on a server yet.)" },
       { id: "R05", name: "DOCTOR.md: my app is down", value: "From a symptom (site down, deploy failed, 502, certificate error, server unreachable) to a fix, or to an honest \"this needs a human because\".", done: "Five symptoms broken on purpose in the harness; the runbook reaches the right fix for each." },
       { id: "R10", name: "SERVICES.md: self-host the tools", value: "n8n, Plausible or Umami, Uptime Kuma, Forgejo, Minio and the other one-click services, each with a domain, HTTPS, backups and a line in status.", done: "Three services deploy in the harness with backups verified." },
+      { id: "R06b", name: "Uptime checks with a status page", value: "Uptime Kuma as a Coolify service: an uptime check per app and a public status page. Comes after self-hosted services, because one-click services cannot get a custom domain through the API.", done: "The harness stops the app, Kuma marks it down, and the status page on its own domain shows it." },
       { id: "R12", name: "Handover pack", value: "Everything a client or colleague needs to take over a project or a server: a team invite with the right role, the server summary, DNS and repo ownership, and the checklist that removes your own access.", done: "A second user, with only the pack, deploys a change." },
     ],
     later: [
@@ -33,7 +34,7 @@ const en: { lanes: Record<LaneKey, Item[]>; shipped: Shipped[] } = {
     ],
     ideas: [
       { id: "R21", name: "Preview deployment per pull request", value: "If Coolify's GitHub App source becomes drivable without the UI." },
-      { id: "R22", name: "A status page per client", value: "From the uptime monitor, on the client's domain." },
+      { id: "R22", name: "A status page per client", value: "From the uptime monitor in R06b, on the client's domain." },
       { id: "R23", name: "Secrets vault on your machine", value: "age or sops, with a rotation runbook." },
       { id: "R24", name: "Starter variants", value: "The same plumbing with auth and transactional mail; a worker example as a second app from the same repo." },
     ],
@@ -52,12 +53,13 @@ const pl: typeof en = {
       { id: "R01", name: "Testy etapami", value: "Przy każdym pull requeście sprawdzenia, które nie potrzebują serwera: testy biblioteki shella, shellcheck i kontrola składni bloków shella z faz. Pełny przebieg na jednorazowym serwerze tylko na żądanie i przed wydaniem. Przebieg w pełni bez człowieka wymaga zautomatyzowania rejestracji admina i tokenu API w Coolify oraz nowej nazwy hosta przy każdym przebiegu (limity Let's Encrypt), a to zależy od DNS przez API.", done: "Sprawdzenia działają przy każdym pull requeście i jeden pełny przebieg na żądanie przeszedł na zielono." },
       { id: "R04", name: "Backupy poza serwerem i ćwiczenie restore", value: "Backupy bazy do dowolnego storage zgodnego z S3, ustawiane przy przekazaniu. Runbook, który przywraca jedną bazę z wybranego backupu.", done: "Test robi backup, niszczy bazę, przywraca ją i dane wracają. (Kod i testy na udawanym API gotowe; jeszcze nieuruchomione na serwerze.)" },
       { id: "R03", name: "status.sh: jeden ekran", value: "Serwer odpowiada, dysk i pamięć, oczekujący restart, wersja Coolify, każda apka z ostatnim deployem, dni do wygaśnięcia certyfikatu, ostatni backup i czy się udał.", done: "Każda linia oparta na prawdziwym sprawdzeniu, na serwerze testowym i produkcyjnym. (Kod i testy na udawanym API gotowe; jeszcze nieuruchomione na serwerze.)" },
-      { id: "R06", name: "Alerty, które docierają na telefon", value: "Powiadomienia Coolify podpięte do maila, Telegrama albo Discorda, plus zewnętrzny monitor dostępności każdej apki z publiczną stroną statusu.", done: "Test zatrzymuje apkę i alert przychodzi w ciągu pięciu minut." },
+      { id: "R06a", name: "Alerty, które docierają na telefon", value: "Powiadomienia Coolify (deploy padł, backup padł, serwer nie odpowiada, zajętość dysku, limit restartów) wysyłane na kanał Discorda, ustawiane przy przekazaniu z jednego adresu webhooka. Status mówi, czy alerty są włączone.", done: "Test zatrzymuje apkę i wiadomość na Discordzie przychodzi w ciągu pięciu minut. (Kod i testy na udawanym API gotowe; jeszcze nieuruchomione na serwerze.)" },
     ],
     next: [
       { id: "R07", name: "Bezpieczne deploye", value: "Dump bazy przed każdym deployem, wypisany punkt powrotu, runbook, który wraca do poprzedniego obrazu i w razie potrzeby przywraca dump.", done: "Zepsuty commit wchodzi, zostaje cofnięty, a apka działa ze swoimi danymi. (Kod i testy na udawanym API gotowe; jeszcze nieuruchomione na serwerze.)" },
       { id: "R05", name: "DOCTOR.md: moja apka nie działa", value: "Od objawu (strona nie działa, deploy padł, 502, błąd certyfikatu, serwer nie odpowiada) do naprawy albo do uczciwego „tu potrzebny człowiek, bo”.", done: "Pięć objawów wywołanych celowo w teście; runbook dochodzi do właściwej naprawy każdego." },
       { id: "R10", name: "SERVICES.md: własne narzędzia jednym promptem", value: "n8n, Plausible albo Umami, Uptime Kuma, Forgejo, Minio i inne usługi one-click, każda z domeną, HTTPS, backupem i linią w statusie.", done: "Trzy usługi wdrożone w teście, backupy sprawdzone." },
+      { id: "R06b", name: "Monitor dostępności ze stroną statusu", value: "Uptime Kuma jako usługa w Coolify: monitor dostępności każdej apki i publiczna strona statusu. Po własnych usługach, bo usługi one-click nie dostaną własnej domeny przez API.", done: "Test zatrzymuje apkę, Kuma oznacza ją jako niedostępną, a strona statusu na własnej domenie to pokazuje." },
       { id: "R12", name: "Pakiet przekazania", value: "Wszystko, czego klient albo współpracownik potrzebuje, żeby przejąć projekt lub serwer: zaproszenie do zespołu z właściwą rolą, podsumowanie serwera, własność DNS i repo, i checklista odcinająca Twój dostęp.", done: "Druga osoba, mając tylko pakiet, wdraża zmianę." },
     ],
     later: [
@@ -73,7 +75,7 @@ const pl: typeof en = {
     ],
     ideas: [
       { id: "R21", name: "Podgląd dla każdego pull requesta", value: "Jeśli źródło GitHub App w Coolify da się ustawić bez klikania." },
-      { id: "R22", name: "Strona statusu dla każdego klienta", value: "Z monitora dostępności, na domenie klienta." },
+      { id: "R22", name: "Strona statusu dla każdego klienta", value: "Z monitora dostępności z R06b, na domenie klienta." },
       { id: "R23", name: "Sejf na sekrety na Twoim komputerze", value: "age albo sops, z runbookiem rotacji." },
       { id: "R24", name: "Warianty startera", value: "Ta sama instalacja z logowaniem i mailem transakcyjnym; przykład workera jako druga apka z tego samego repo." },
     ],
