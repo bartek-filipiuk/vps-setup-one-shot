@@ -59,6 +59,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 - `~/.config/vps-setup/state` keeps what cannot be checked from outside (IP, domains, resource IDs,
   a few "you confirmed this" flags).
 - `~/.config/coolify/config` holds the API URL and token (mode 600).
+- `deploy_and_wait` (in `lib.sh`) prints the rollback point (the running commit), dumps the
+  app's Postgres on the server (`/root/db-dumps/<DB_UUID>/`, newest ten kept) and only then
+  deploys; a failed dump means no deploy. It ends with the exact rollback commands.
+  `ROLLBACK.md` goes back to the previous image through Coolify's rollback and restores the dump
+  only if a migration broke the data.
 - `status.sh` prints one screen: server (ssh, disk, memory, pending reboot), Coolify version vs
   the latest release, every app with its status, last deploy and days to certificate expiry, and
   the last backup of every database. A Coolify release a minor version or more ahead is a warning.
@@ -88,6 +93,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   live Coolify 4.3.23 (`references/coolify-api.md`). On macOS it needs `gtimeout`
   (`brew install coreutils`) for the certificate checks; without it they are skipped with a
   warning. The script's macOS date fallback has not been run on a Mac.
+- Safe deploys (R07: dump and rollback point in `deploy_and_wait`, `rollback_and_wait`,
+  `db_restore`, `ROLLBACK.md`) are tested against a fake Coolify API and a stubbed `ssh` only
+  (`test/lib.test.sh`) and have **not been run on a real server yet**. The GET endpoints they
+  read were checked on a live Coolify 4.3.23; the rollback, stop and start POST calls come from
+  the 4.3.23 OpenAPI document and are marked `[verify]` in `references/coolify-api.md`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 

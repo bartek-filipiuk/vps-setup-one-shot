@@ -52,6 +52,7 @@ Rules that apply to every item:
   `ROLLBACK.md` reverts to the previous image and restores the dump if needed; migration guidance
   in `PREPARE-APP.md` (expand, then contract). Done when: the harness deploys a broken commit,
   rolls back, and the app is healthy with its data.
+  (Code and fake-API tests done; not run on a server yet.)
 - **R05 `DOCTOR.md`: "my app is down".** From a symptom (site down, deploy failed, 502, certificate
   error, server unreachable) through `status.sh`, deployment logs, container logs, disk and DNS to
   a fix from `references/` or an honest "this needs a human because X".
