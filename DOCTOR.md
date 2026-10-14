@@ -51,7 +51,7 @@ Run each step, write down what it says, then go to the symptom in step 2.
    capi GET "/deployments/applications/$A" | jq -r '.deployments[:3][] | "\(.status)\t\(.commit[0:8])\t\(.created_at)\t\(.deployment_uuid // "?")"'
    ```
 
-4. The containers on the server (the app's container names start with its UUID **[verify]**):
+4. The containers on the server (the app's container is named `<APP_UUID>-<digits>`, checked 2026-10-14 on a 4.3.23 server):
 
    ```
    . ./lib.sh; A=$(state_get APP_UUID)
