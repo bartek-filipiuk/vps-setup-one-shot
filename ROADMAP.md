@@ -61,6 +61,7 @@ Rules that apply to every item:
   a fix from `references/` or an honest "this needs a human because X".
   Done when: the five symptoms have harness fixtures that break the server on purpose, and the
   runbook reaches the right fix for each.
+  (Runbook done; fixtures not run on a server yet.)
 - **R10 `SERVICES.md`: self-host the tools in one prompt.** n8n, Plausible or Umami, Uptime Kuma,
   Forgejo, Minio and the other Coolify one-click services, each with a domain, HTTPS, backups and a
   line in `status.sh`. Done when: three services deploy in the harness with backups verified.

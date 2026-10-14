@@ -18,7 +18,7 @@ Checked against Coolify 4.3.23 on 2026-10-09 unless marked **[verify]**.
 | `GET/POST/DELETE /applications/{uuid}/envs[/{env_uuid}]` | environment variables | POST body `{key, value, is_preview:false}` |
 | `POST /deploy?uuid={app}` | trigger a deploy | returns `deployments[0].deployment_uuid`; `GET` answers 405 since 4.3 |
 | `GET /deployments/{uuid}` | poll | `status`: `queued`, `in_progress`, `finished`, `failed`, `cancelled-by-user`; `logs` is a JSON string of `[{output, hidden}]` |
-| `GET /applications/{uuid}/logs?lines=100` | runtime logs | |
+| `GET /applications/{uuid}/logs?lines=100` | runtime logs (`app_logs`, `DOCTOR.md`) | `{"logs": "<one string, lines joined by newlines>"}`, verified live 2026-10-14 on 4.3.23 (GET). From the 4.3.23 source: `lines` defaults to 100, at most 10000; 400 `{"message":"Application is not running."}` when no container runs **[verify]** |
 
 Read-only calls used by `status.sh`, verified 2026-10-13 on 4.3.23 (GET, response shapes as below).
 
