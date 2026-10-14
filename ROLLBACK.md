@@ -22,7 +22,8 @@ database dump: /root/db-dumps/<DB_UUID>/<UTC time>.dump
 and records both in the state file: `state_get ROLLBACK_COMMIT`, `state_get LAST_DUMP`. The
 rollback point is the commit of the last **finished** deployment, which is what was running
 before this deploy. The dump is a `pg_dump` in custom format, taken on the server before the
-deploy started; the newest ten per database are kept.
+deploy started (mode 600, after a check that the disk has room for it); the newest ten per
+database are kept.
 
 Two different problems, two different fixes:
 
@@ -73,13 +74,16 @@ server"), rebuild that commit instead: pin the app to it, deploy, unpin.
 
 ```
 . ./lib.sh; A=$(state_get APP_UUID); C=$(state_get ROLLBACK_COMMIT)
-capi PATCH "/applications/$A" "$(jq -n --arg c "$C" '{git_commit_sha:$c}')" >/dev/null && DEPLOY_SKIP_DUMP=1 deploy_and_wait "$A"
+capi PATCH "/applications/$A" "$(jq -n --arg c "$C" '{git_commit_sha:$c}')" >/dev/null && ROLLBACK_MODE=1 deploy_and_wait "$A"
 capi PATCH "/applications/$A" '{"git_commit_sha":"HEAD"}' >/dev/null && echo "app follows HEAD again"
 ```
 
-`DEPLOY_SKIP_DUMP=1` because the dump from before the bad deploy is the one that matters; a new
-dump now would capture the broken state. Run the second line even if the deploy fails,
-otherwise the next push would build the old commit.
+`ROLLBACK_MODE=1` makes `deploy_and_wait` leave `ROLLBACK_COMMIT` alone (a normal deploy would
+overwrite it with the newest finished deployment, which is the bad commit) and take no dump (the
+dump from before the bad deploy is the one that matters; a new one would capture the broken
+state). `C` always comes from `state_get ROLLBACK_COMMIT`, so a second attempt rolls back to the
+same good version. Run the second line even if the deploy fails, otherwise the next push would
+build the old commit.
 
 ## 3. Check
 
@@ -117,9 +121,24 @@ the listing only if the user says so.
 capi POST "/applications/$A/start" >/dev/null && sleep 15 && echo "app: $(capi GET "/applications/$A" | jq -r .status)"
 ```
 
-`db_restore` is all or nothing (`pg_restore --single-transaction`): on an error nothing changes
-and it prints why. The app's own migrations may run again on start; after step 2 that is the
-old version's migrations, which the dump already contains, so they are no-ops.
+`db_restore` refuses while the app is `running*` (`RESTORE_WITH_APP_RUNNING=1` overrides, for a
+database the app in the state does not own). It is all or nothing (`pg_restore
+--single-transaction --clean --if-exists`): on an error nothing changes and it prints why.
+
+What `--clean` does not do: it drops only what the dump recreates. A table or column that the bad
+deploy's migration **added** survives the restore, and the migration bookkeeping table goes back
+to the dump's state, so the newer code would try to run that migration again (and fail on
+"already exists"). Two ways out:
+
+- Fine for most apps: the rolled-back version ignores the extra objects; the fix-forward
+  migration is written to cope (`IF NOT EXISTS`, or a new migration name).
+- A clean slate: `RESTORE_WIPE=yes db_restore ...` runs `DROP SCHEMA public CASCADE; CREATE
+  SCHEMA public;` before the restore. Everything in `public` is gone first, including objects the
+  dump does not know. If `pg_restore` then fails, the database is empty until a retry (same dump
+  or another one) succeeds. Only with the user's explicit yes to that sentence.
+
+The app's own migrations may run again on start; after step 2 that is the old version's
+migrations, which the dump already contains, so they are no-ops.
 
 Check the data the way phase 05 step 7 does, with the table that matters to this app:
 
