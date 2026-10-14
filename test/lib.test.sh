@@ -190,11 +190,12 @@ cat > "$HOME/fakebin/docker" <<'STUB'
 echo "docker $*" >> "$HOME/docker.log"
 case "$*" in
   "run --rm --env-file "*)
-    # mc in a container: $4 env file, $6 DIR:/out, $7 image, ${10} source, ${11} /out/NAME
+    # mc in a container: $4 env file, $6 DIR:/out, $9 image, ${12} source, ${13} /out/NAME
     want="MC_HOST_s3=https://AKFAKEKEY123:s3SeCrEt%2Fx%2By%3Dz%7Cw@fsn1.your-objectstorage.com"
     if [ "$(cat "$4")" = "$want" ]; then echo "envfile ok $(stat -c %a "$4")" >> "$HOME/envcheck.log"; else echo "envfile bad" >> "$HOME/envcheck.log"; fi
     [ "${FAKE_MC_FAIL:-0}" = 1 ] && { echo "mc: <ERROR> Object does not exist." >&2; exit 1; }
-    printf 'PGDMP fake object %s\n' "${10}" > "${6%:/out}/${11#/out/}" ;;
+    printf 'PGDMP fake object %s\n' "${12}" > "${6%:/out}/${13#/out/}" ;;
+  "images "*) [ "${FAKE_NO_HELPER:-0}" = 1 ] || printf '%s\n' ghcr.io/coollabsio/coolify-helper:1.0.9 ghcr.io/coollabsio/coolify-helper:1.0.17 ;;
   "ps -q -f name="*) [ "${FAKE_NO_CONTAINER:-0}" = 1 ] || echo cid ;;
   *pg_database_size*) echo "${FAKE_DB_SIZE:-4096}" ;;
   *" pg_dump "*) [ "${FAKE_PG_DUMP_FAIL:-0}" = 1 ] && exit 1; [ "${FAKE_PG_DUMP_EMPTY:-0}" = 1 ] && exit 0; printf 'PGDMP fake dump: %s\n' "$*" ;;
@@ -419,7 +420,7 @@ got="$HOME/dumps/db-pg/s3-pg-dump-app-1760000001.dmp"
 check "fetch rc:output" "$rc:$out" "0:$got $(stat -c %s "$got" 2>/dev/null)"
 check "fetch file mode 600" "$(stat -c %a "$got")" "600"
 check "fetch: mc got the creds from a 600 env file" "$(cat "$HOME/envcheck.log")" "envfile ok 600"
-has "fetch: mc copies bucket/key without the leading slash" "$(cat "$HOME/docker.log")" "^docker run --rm --env-file $HOME/srvtmp/[^ ]+ -v $HOME/dumps/db-pg:/out minio/mc:RELEASE[^ ]+ --quiet cp s3/my-backups/data/coolify/backups/databases/root/db-pg/pg-dump-app-1760000001\.dmp /out/s3-pg-dump-app-1760000001\.dmp$"
+has "fetch: mc copies bucket/key without the leading slash" "$(cat "$HOME/docker.log")" "^docker run --rm --env-file $HOME/srvtmp/[^ ]+ -v $HOME/dumps/db-pg:/out --entrypoint mc ghcr\.io/coollabsio/coolify-helper:1\.0\.17 --quiet cp s3/my-backups/data/coolify/backups/databases/root/db-pg/pg-dump-app-1760000001\.dmp /out/s3-pg-dump-app-1760000001\.dmp$"
 has "fetch: creds travel in the ssh stdin" "$(cat "$HOME/ssh.stdin")" '^MC_HOST_s3=https://AKFAKEKEY123:'
 check "fetch: env file deleted" "$(ls -A "$HOME/srvtmp")" ""
 s3run db_restore db-pg "$got"
@@ -429,6 +430,11 @@ FAKE_MC_FAIL=1 s3run db_fetch_from_s3 db-pg /data/x/pg-dump-app-2.dmp
 check "fetch failure rc" "$rc" "1"
 has "fetch failure message" "$out" '^download of s3/my-backups/data/x/pg-dump-app-2\.dmp failed$'
 check "fetch failure: no file, env file deleted" "$(find "$HOME/dumps/db-pg" -name '*pg-dump-app-2*' | wc -l):$(ls -A "$HOME/srvtmp")" "0:"
+FAKE_NO_HELPER=1 s3run db_fetch_from_s3 db-pg /data/x/pg-dump-app-3.dmp
+check "fetch without a coolify-helper image" "$rc:$out" "1:no coolify-helper image on the server; set MC_IMAGE"
+: > "$HOME/docker.log"
+MC_IMAGE=my/mc:1 s3run db_fetch_from_s3 db-pg /data/x/pg-dump-app-4.dmp
+has "fetch: MC_IMAGE overrides the helper" "$(cat "$HOME/docker.log")" " --entrypoint mc my/mc:1 --quiet cp "
 : > "$HOME/seq.log"
 S3_ENV="$HOME/nope.env" s3run db_fetch_from_s3 db-pg /data/x/y.dmp
 check "fetch without creds refused" "$rc:$out" "1:no S3 credentials: $HOME/nope.env is missing (phase 06 step 1)"

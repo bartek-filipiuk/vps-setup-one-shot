@@ -62,9 +62,11 @@ not yet exercised **[verify]**.
 Where the files go: Coolify uploads with `mc` to `<bucket>/<execution filename without the
 leading slash>`. A Postgres backup without `dump_all` is `pg_dump --format=custom`, so
 `db_restore` (`pg_restore`) takes it as it is; with `dump_all` it is a gzipped `pg_dumpall` and
-needs `psql` instead **[verify]**. `db_fetch_from_s3` downloads with `minio/mc` (tag pinned in
-`lib.sh`, `MC_IMAGE`) and `MC_HOST_s3=https://KEY:SECRET@host`, key and secret percent-encoded
-**[verify]**.
+needs `psql` instead **[verify]**. `db_fetch_from_s3` downloads with the `mc` inside the newest
+`ghcr.io/coollabsio/coolify-helper` image already on the server (the image Coolify itself uploads
+with; checked 2026-10-14 on a 4.3.23 server: `coolify-helper:1.0.17` has `/usr/bin/mc`; `minio/mc`
+is gone from Docker Hub), override with `MC_IMAGE`, and `MC_HOST_s3=https://KEY:SECRET@host`, key
+and secret percent-encoded **[verify]**.
 
 Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/events/manual`,
 a GitHub webhook with `content_type: json`, event `push`, and the app's

@@ -386,8 +386,9 @@ db_backup_list() {
   done
 }
 
-# Image used on the server to download from S3 (pinned; the entrypoint is mc) [verify].
-MC_IMAGE=${MC_IMAGE:-minio/mc:RELEASE.2024-11-21T17-21-54Z}
+# Image used on the server to run mc. Empty = the newest coolify-helper image already on the
+# server (Coolify uploads backups with the mc inside it; minio/mc is no longer on Docker Hub).
+MC_IMAGE=${MC_IMAGE:-}
 
 # db_fetch_from_s3 DB_UUID EXEC_FILENAME -> downloads one backup (the execution's filename, as
 # db_backup_list prints it) from the S3 storage in S3_STORAGE_UUID onto the server, into
@@ -420,11 +421,16 @@ EOF
     cat <<'EOF'
 dir=$4/$1; mkdir -p "$dir"; chmod 700 "$4" "$dir"
 f=$dir/s3-$3
-if docker run --rm --env-file "$envf" -v "$dir:/out" "$5" --quiet cp "s3/$2" "/out/s3-$3" >/dev/null && [ -s "$f" ]; then
+img=${5:-}
+if [ -z "$img" ]; then
+  img=$(docker images --format '{{.Repository}}:{{.Tag}}' ghcr.io/coollabsio/coolify-helper | sort -V | tail -n 1)
+  [ -n "$img" ] || { echo "no coolify-helper image on the server; set MC_IMAGE" >&2; exit 1; }
+fi
+if docker run --rm --env-file "$envf" -v "$dir:/out" --entrypoint mc "$img" --quiet cp "s3/$2" "/out/s3-$3" >/dev/null && [ -s "$f" ]; then
   chmod 600 "$f"; echo "$f $(stat -c %s "$f")"
 else
   rm -f "$f"; echo "download of s3/$2 failed" >&2; exit 1
 fi
 EOF
-  } | rssh "sh -s -- $(printf %q "$db") $(printf %q "$bucket/$obj") $(printf %q "$base") $(printf %q "$DUMP_DIR") $(printf %q "$MC_IMAGE")"
+  } | rssh "sh -s -- $(printf %q "$db") $(printf %q "$bucket/$obj") $(printf %q "$base") $(printf %q "$DUMP_DIR") $(printf %q "${MC_IMAGE:-}")"
 }
