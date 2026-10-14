@@ -34,7 +34,7 @@ first. S3 state:
 
 - `uploaded`: Coolify reported the copy in the bucket.
 - `unreported`: this Coolify does not report uploads and the run's message has no upload error.
-  Most likely in the bucket; step 3 proves it.
+  Not proof of a copy: runs from before S3 was attached look the same. Only step 3 proves it.
 - `upload-failed`, `not-uploaded`: not in the bucket. `local`: a schedule without S3. `-`: the
   run itself failed.
 

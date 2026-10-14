@@ -60,7 +60,8 @@ now=$(date +%s)
 # A run reached S3 when it succeeded and s3_uploaded is true. If the API does not return
 # s3_uploaded (4.3.23 was not seen returning it), the message decides instead: Coolify keeps the
 # status "success" when only the upload failed and writes "S3 upload failed" into the message.
-# The line then says that the upload was not reported. No schedule at all is the backup line's FAIL.
+# The line then says that the upload was not reported and is at most WARN. No schedule at all is
+# the backup line's FAIL.
 offsite() {
   local r h rep newest d m=OK
   if [ -z "$2" ]; then line WARN "off-site $1" "local only (no backup schedule copies to S3)"; return; fi
@@ -81,8 +82,11 @@ offsite() {
   fi
   d="last S3 copy ${h}h ago"
   [ "$newest" = failed ] && { d="$d; newest upload failed"; m=WARN; }
-  [ "$rep" = message ] && d="$d (upload not reported by API, from message)"
   [ "$h" -gt "$BACKUP_WARN_H" ] && m=WARN
+  # Without s3_uploaded a run with no upload error is not proof of a copy (runs from before S3
+  # was attached look the same), so this is never OK.
+  [ "$rep" = message ] && { d="newest run with no upload error ${h}h ago; S3 upload not reported by API, RESTORE.md step 3 proves it"; m=WARN
+    [ "$newest" = failed ] && d="$d; newest upload failed"; }
   line "$m" "off-site $1" "$d"
 }
 

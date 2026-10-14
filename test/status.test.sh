@@ -80,7 +80,7 @@ BASE=$(jq -n --arg d "$(ago 2)" --arg b "$(ago_tz 5)" '{
     {status: "failed", created_at: "2026-01-01T00:00:00.000000Z", finished_at: "2026-01-01T00:01:00.000000Z", commit: "old", application_name: "starter"}]}},
   dbs: [{uuid: "d1", name: "starter-db"}],
   backups: {d1: [{uuid: "b1", enabled: true, frequency: "0 2 * * *", last_execution_at: null, save_s3: true,
-    executions: [{uuid: "e0", status: "success", created_at: $b, finished_at: null}]}]},
+    executions: [{uuid: "e0", status: "success", created_at: $b, finished_at: null, s3_uploaded: true}]}]},
   execs: {b1: {executions: [{uuid: "e1", status: "success", created_at: $b, finished_at: null,
     filename: "/data/coolify/backups/pg-dump.dmp", message: "Backup done", size: 1234, s3_uploaded: true}]}}
 }')
@@ -157,14 +157,14 @@ expect "unknown date format" 1 '^WARN +backup starter-db +n/a \(could not read\)
 run .
 has "all green: off-site copy" "$out" '^OK +off-site starter-db +last S3 copy 5h ago$'
 expect "s3 copy 30h" 1 '^WARN +off-site starter-db +last S3 copy 30h ago$' '.execs.b1.executions[0].created_at = $t' --arg t "$(ago_tz 30)"
-expect "s3 newest upload failed" 1 '^WARN +off-site starter-db +last S3 copy 5h ago; newest upload failed \(upload not reported by API, from message\)$' \
+expect "s3 newest upload failed" 1 '^WARN +off-site starter-db +newest run with no upload error 5h ago; S3 upload not reported by API, RESTORE\.md step 3 proves it; newest upload failed$' \
   '.execs.b1.executions[0] |= del(.s3_uploaded) | .execs.b1.executions += [{uuid: "e2", status: "success", created_at: $t, finished_at: null,
     message: "Backup done. Warning: S3 upload failed: Access Denied"}]' --arg t "$(ago_tz 1)"
 has "s3 newest upload failed: local backup still OK" "$out" '^OK +backup starter-db +last success 1h ago$'
 expect "s3 upload never worked" 1 '^FAIL +off-site starter-db +no backup has reached S3; newest upload failed$' \
   '.execs.b1.executions[0] |= (del(.s3_uploaded) | .message = "Warning: S3 upload failed: InvalidAccessKeyId")'
 expect "s3_uploaded false" 1 '^FAIL +off-site starter-db +no backup has reached S3; newest upload failed$' '.execs.b1.executions[0].s3_uploaded = false'
-expect "s3_uploaded absent" 0 '^OK +off-site starter-db +last S3 copy 5h ago \(upload not reported by API, from message\)$' \
+expect "s3_uploaded absent: never OK" 1 '^WARN +off-site starter-db +newest run with no upload error 5h ago; S3 upload not reported by API, RESTORE\.md step 3 proves it$' \
   '.execs.b1.executions[0] |= del(.s3_uploaded)'
 expect "local only" 1 '^WARN +off-site starter-db +local only \(no backup schedule copies to S3\)$' '.backups.d1[0].save_s3 = false'
 has "local only: local backup line unchanged" "$out" '^OK +backup starter-db +last success 5h ago$'

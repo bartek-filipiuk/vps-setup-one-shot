@@ -33,9 +33,9 @@ The wording of the Console may differ **[verify]**:
 3. In their own terminal (it prompts for both keys, hidden; paste each and Enter):
 
 ```
-mkdir -p ~/.config/vps-setup && umask 077 && printf 'S3 access key: ' && read -rs K && echo &&
+( mkdir -p ~/.config/vps-setup && umask 077 && printf 'S3 access key: ' && read -rs K && echo &&
 printf 'S3 secret key: ' && read -rs S && echo &&
-printf 'S3_KEY=%s\nS3_SECRET=%s\n' "$K" "$S" > ~/.config/vps-setup/s3.env && chmod 600 ~/.config/vps-setup/s3.env && unset K S && echo saved
+printf 'S3_KEY=%s\nS3_SECRET=%s\n' "$K" "$S" > ~/.config/vps-setup/s3.env && chmod 600 ~/.config/vps-setup/s3.env && echo saved )
 ```
 
 The keys never go into the chat. The file stays after setup: a restore reads it to download a

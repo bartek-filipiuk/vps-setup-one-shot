@@ -423,7 +423,7 @@ dir=$4/$1; mkdir -p "$dir"; chmod 700 "$4" "$dir"
 f=$dir/s3-$3
 img=${5:-}
 if [ -z "$img" ]; then
-  img=$(docker images --format '{{.Repository}}:{{.Tag}}' ghcr.io/coollabsio/coolify-helper | sort -V | tail -n 1)
+  img=$(docker images --format '{{.Repository}}:{{.Tag}}' ghcr.io/coollabsio/coolify-helper | grep -E ':[0-9]' | sort -V | tail -n 1)
   [ -n "$img" ] || { echo "no coolify-helper image on the server; set MC_IMAGE" >&2; exit 1; }
 fi
 if docker run --rm --env-file "$envf" -v "$dir:/out" --entrypoint mc "$img" --quiet cp "s3/$2" "/out/s3-$3" >/dev/null && [ -s "$f" ]; then
