@@ -48,6 +48,19 @@ Never fix these by redeploying or re-saving the domain; Let's Encrypt limits fai
 | `there appears to be PostgreSQL data in: /var/lib/postgresql/data` | Postgres 18 image | recreate the database with `postgres:17-alpine` |
 | `function uuidv7() does not exist` | app expects Postgres 18 | add a plpgsql `uuidv7()` once, or generate UUIDs in the app |
 
+## App down (`DOCTOR.md`)
+
+Read-only checks first; every fix here needs the user's yes.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `502 Bad Gateway` from Traefik (plain text, not the app's page) | the app container exited or keeps restarting | `rssh "docker ps -a --filter name=<APP_UUID>"`, then `app_logs <APP_UUID>` or `rssh "docker logs --tail 100 <container>"`; fix the cause the log names, then deploy again (`DOCTOR.md` B) |
+| `502` while the container is `Up` | Coolify routes to `ports_exposes`, the app listens on another port | `capi GET /applications/<APP_UUID> \| jq -r .ports_exposes` must be the port in the app's log line ("listening on ..."); `capi PATCH /applications/<APP_UUID> '{"ports_exposes":"<port>"}'`, then deploy again |
+| `502` while the container is `Up` and the port is right | the container is not on the `coolify` Docker network, so the proxy cannot reach it | `rssh "docker inspect -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}' <container>"` must list `coolify`; a deploy through Coolify attaches it again **[verify]** |
+| `503` / `504` from Traefik | the app is up but unhealthy or too slow to answer (database down, long start) | `app_logs <APP_UUID>`; the database: `capi GET /databases/<DB_UUID> \| jq -r .status`; see "Build and deploy" for the `migrate` and health check rows |
+| deploys or dumps fail with `no space left on device`, `status.sh` disk FAIL | disk full: build cache, old images, dumps | `rssh "df -h /; docker system df; du -sh /root/db-dumps/* 2>/dev/null"`. Safe to clear with the user's yes: unused images (`rssh "docker image prune -a -f"`; a rollback can then only rebuild, `ROLLBACK.md` step 2) and build cache (`rssh "docker builder prune -f"`); dumps in `/root/db-dumps/` beyond the newest few (`deploy_and_wait` keeps ten). Never volumes, never `docker system prune --volumes` |
+| every domain on the server down, the panel too, `curl` code `000` or `connection refused` on 443 | `coolify-proxy` (Traefik) not running | `rssh "docker ps -a --filter name=coolify-proxy; docker logs --tail 50 coolify-proxy"`; with the user's yes: Coolify UI → **Servers** → localhost → **Proxy** → **Restart** **[verify]** (panel through the tunnel, phase 03 step 2), or `rssh "docker start coolify-proxy"`. A log line about port 80 or 443 in use: something else took the port, stop it first |
+
 ## Webhook
 
 | Symptom | Cause | Fix |
