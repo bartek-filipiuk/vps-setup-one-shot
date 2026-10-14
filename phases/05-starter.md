@@ -93,6 +93,11 @@ old version running if the new one cannot reach the database.
 . ./lib.sh; deploy_and_wait "$(state_get APP_UUID)"
 ```
 
+It first prints the rollback point (`none` on this first deploy) and dumps the database over
+`rssh` to `/root/db-dumps/<DB_UUID>/` on the server (empty now, but the path is proven), then
+deploys. From the second deploy on, it ends with the exact commands that go back to the previous
+version (`ROLLBACK.md`).
+
 On `failed`, read the log tail it prints and match it against `references/troubleshooting.md`.
 Fix the cause, then deploy again. Do not loop more than twice on the same error; explain it to
 the user instead.

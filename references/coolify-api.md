@@ -30,6 +30,18 @@ Read-only calls used by `status.sh`, verified 2026-10-13 on 4.3.23 (GET, respons
 | `GET /databases/{uuid}/backups` | scheduled backups of a database | array of `{uuid, enabled, frequency, last_execution_at (may be null), executions:[...]}` |
 | `GET /databases/{uuid}/backups/{backup_uuid}/executions` | backup runs | object `{executions:[...]}`; fields `uuid`, `status` (`success`), `created_at` like `2026-10-13T12:08:10+00:00` (offset, not `Z`), `finished_at` (null), `filename`, `message`, `size` |
 
+Safe deploys (`deploy_and_wait`, `rollback_and_wait`, `ROLLBACK.md`). GET calls verified
+2026-10-14 on 4.3.23; the POST calls are from the 4.3.23 `openapi.yaml` and not yet exercised **[verify]**.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /deployments/applications/{uuid}` | rollback point | the newest deployment with `status: finished` is what runs now; its `commit` is the full sha. `GET /applications/{uuid}` has `git_commit_sha`, but that is the configured ref (`HEAD`), not the running commit. Deployments also carry `rollback` (bool) and `commit_message` |
+| `GET /applications/{uuid}/rollback-images` | which images a rollback can use | `{current, images:[{tag, created_at, is_current}]}`; `tag` is the commit sha; `created_at` is server-local like `2026-10-13 17:52:17 +0200 CEST`; on 4.3.23 `current` was `null` and every `is_current` `false` even for the running commit, so do not rely on them; images pruned by Coolify's cleanup are missing |
+| `POST /applications/{uuid}/rollback {commit}` | redeploy an existing image, no rebuild | returns `{message, deployment_uuid}`, then poll `GET /deployments/{uuid}` **[verify]** |
+| `POST /applications/{uuid}/stop`, `POST /applications/{uuid}/start` | stop writes during a restore | return `{message}` **[verify]** |
+| `GET /databases/{uuid}` | dump parameters | `database_type` (`standalone-postgresql`, `standalone-redis`, ...), `image`, `postgres_user`, `postgres_db`; also `postgres_password`, never print the whole object |
+| `POST /databases/{uuid}/backups` | create a **scheduled** backup | there is no call that runs a database backup on demand on 4.3.23 (`.../storages/{uuid}/backups/run` exists, but only for persistent-volume backups), so `db_dump` runs `pg_dump` in the container over `rssh` and keeps the files in `/root/db-dumps/<DB_UUID>/` |
+
 Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/events/manual`,
 a GitHub webhook with `content_type: json`, event `push`, and the app's
 `manual_webhook_secret_github` as the secret. Deliveries return 200 and trigger a deploy.

@@ -43,6 +43,8 @@ Write a summary the user can keep. No secrets in it.
 ## Everyday
 
 - Deploy: git push to main (or Coolify UI -> app -> Deploy)
+- Risky deploy (migrations): cd $(state_get SETUP_DIR) && . ./lib.sh && deploy_and_wait $(state_get APP_UUID)  (dumps the database first, prints the rollback point)
+- Bad deploy: $(state_get SETUP_DIR)/ROLLBACK.md (previous image via Coolify rollback, dumps in /root/db-dumps/ on the server)
 - Logs: Coolify UI -> app -> Logs
 - Health: $(state_get SETUP_DIR)/status.sh (one screen; exit 0 = all OK)
 - Panel access if the domain breaks: ssh -N -L 8000:localhost:8000 root@$(state_get VPS_IP), then http://localhost:8000

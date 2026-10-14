@@ -82,6 +82,24 @@ Use `$SETUP_DIR/starter/Dockerfile` as the model. Lessons already paid for:
   `package.json`, copy `prisma/`, and start with `prisma migrate deploy && node server.js`.
 - `.env.example` listing every variable (names and comments, no real values).
 
+### Migrations: expand, then contract
+
+A deploy can be rolled back to the previous image in a minute (`ROLLBACK.md`); a migration
+that dropped a column cannot. So every schema change ships in two deploys, and the old code
+must keep working with the new schema in between:
+
+1. **Expand** (deploy 1): add the new column, table or index, nullable or with a default; write
+   to both old and new places if the data moves; backfill in batches, not in the migration
+   transaction. The previous version still runs against this schema, so a rollback is safe.
+2. **Contract** (deploy 2, after deploy 1 has been live and quiet): remove the old column,
+   add `NOT NULL`, drop the fallback code. Only now a rollback would need the dump.
+
+Rename = add the new column, copy, switch reads, drop the old one later. Never rename or drop
+in the same deploy that introduces the replacement. Large tables: create indexes
+`CONCURRENTLY` outside a transaction (Drizzle: a custom SQL migration; Prisma: `--create-only`
+and edit). Say which of the two steps a migration is in `DEPLOY.md`, and deploy both with
+`deploy_and_wait` so a dump exists before each.
+
 ## 4. Prove it locally
 
 ```
@@ -142,12 +160,16 @@ Write the classic keys too, so `coolify-deploy`-style tools work in this repo:
 
 ## 6. Deploy and verify
 
-`deploy_and_wait "$(state_get APP_UUID)"`, then wait for HTTPS and a healthy health route as in
-phase 05 step 5. The user clicks through the app's main flow on the real domain.
+`deploy_and_wait "$(state_get APP_UUID)"` (with `VPS_STATE=.coolify.env`, so it finds `DB_UUID`
+and dumps this app's database first; an app without a database prints `database dump: none`),
+then wait for HTTPS and a healthy health route as in phase 05 step 5. The user clicks through
+the app's main flow on the real domain.
 
 ## 7. Finish DEPLOY.md
 
 Update `DEPLOY.md` with what is now true: URL, how deploys happen (push to `main` or manual),
 variable names (never values), where data lives, backups (same choice as in SETUP phase 06, for
-this database), rollback (Coolify → app → **Rollback**, pick an earlier image), and anything that
-was flagged and left open. Show the user the summary.
+this database), rollback (`$SETUP_DIR/ROLLBACK.md`: `deploy_and_wait` prints the rollback point
+and dumps the database to `/root/db-dumps/<DB_UUID>/` on the server before every deploy; a push
+to `main` deploys without the dump), and anything that was flagged and left open. Show the user
+the summary.

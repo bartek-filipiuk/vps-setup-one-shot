@@ -7,8 +7,9 @@ the Next.js starter app only.)
 ## Layout
 
 `SETUP.md` (entry point the user's agent reads), `phases/` (00–06, one file per step),
-`PREPARE-APP.md` (moving an existing app onto the server), `lib.sh` (state file, Coolify API
-helpers, deploy and wait), `verify.sh` (reads the real server state and says which phase is next), `status.sh` (one-screen
+`PREPARE-APP.md` (moving an existing app onto the server), `ROLLBACK.md` (back to the previous
+version after a bad deploy), `lib.sh` (state file, Coolify API helpers, deploy with dump and
+rollback point, rollback, restore), `verify.sh` (reads the real server state and says which phase is next), `status.sh` (one-screen
 health check, read-only),
 `references/` (Coolify API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `test/` (checks that need no server), `ROADMAP.md` (the plan,
@@ -40,8 +41,8 @@ ids R01…, mirrored in `starter/app/roadmap.ts`).
 - `shellcheck lib.sh verify.sh status.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins);
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
-  every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md` and
-  `PREPARE-APP.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
+  every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md`,
+  `PREPARE-APP.md` and `ROLLBACK.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
   `json`, ...). `bash test/extract-blocks.test.sh` is its self-test and must print `ALL PASSED`.
 - Shellcheck exclusions. Scripts: only `.shellcheckrc` (`shell=bash`, `disable=SC2015,SC1091`),
   default severity. Doc blocks: the same `.shellcheckrc` (passed with `--rcfile`) plus

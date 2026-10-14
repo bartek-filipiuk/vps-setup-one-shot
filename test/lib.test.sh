@@ -9,11 +9,16 @@ export DEPLOY_POLL_SECONDS=0
 PORT=$((20000 + RANDOM % 10000))
 fails=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected [$3] got [$2]"; fails=$((fails + 1)); fi; }
+# has NAME OUTPUT REGEX: OUTPUT has a line matching REGEX
+has() { if grep -qE "$3" <<<"$2"; then echo "ok   $1"; else echo "FAIL $1: no line matching [$3] in:"; echo "     ${2//$'\n'/$'\n'     }"; fails=$((fails + 1)); fi; }
 
-python3 - "$PORT" <<'EOF' &
+python3 - "$PORT" "$HOME/seq.log" <<'EOF' &
 import json, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 polls = {}
+SHA = "e4d273e858b3da0acefd09f4724d2073f3d5fab0"
+def seq(line):
+    with open(sys.argv[2], "a") as f: f.write(line + "\n")
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body):
@@ -31,10 +36,29 @@ class H(BaseHTTPRequestHandler):
             except OSError: return
         if p.startswith("/deploy?uuid="):
             return self.send(405, {"message": "This endpoint has changed to a POST request."})
+        if p.startswith("/deployments/applications/"):
+            a = p.split("/")[3]
+            if a == "first": return self.send(200, {"count": 0, "deployments": []})
+            return self.send(200, {"count": 3, "deployments": [
+                {"deployment_uuid": "d-pr", "status": "finished", "commit": "1111111111111111111111111111111111111111", "pull_request_id": 7},
+                {"deployment_uuid": "d-old2", "status": "failed", "commit": "ffffffffffffffffffffffffffffffffffffffff", "pull_request_id": 0},
+                {"deployment_uuid": "d-old1", "status": "finished", "commit": SHA, "pull_request_id": 0}]})
+        if p.startswith("/applications/") and p.count("/") == 2:
+            a = p.split("/")[2]
+            return self.send(200, {"uuid": a, "status": "exited:unhealthy" if a == "stopped-app" else "running:healthy"})
+        if p.endswith("/rollback-images"):
+            a = p.split("/")[2]
+            imgs = [{"tag": SHA, "created_at": "2026-10-13 17:52:17 +0200 CEST", "is_current": False}] if a == "good" else []
+            return self.send(200, {"current": None, "images": imgs})
+        if p == "/databases/db-pg":
+            return self.send(200, {"uuid": "db-pg", "database_type": "standalone-postgresql", "image": "postgres:17-alpine",
+                                   "postgres_user": "app", "postgres_db": "app", "postgres_password": "pw-SECRET-123"})
+        if p == "/databases/db-redis":
+            return self.send(200, {"uuid": "db-redis", "database_type": "standalone-redis", "image": "redis:7.2"})
         if p.startswith("/deployments/"):
             d = p.split("/")[2]; polls[d] = polls.get(d, 0) + 1
             if polls[d] < 3: return self.send(200, {"status": "in_progress"})
-            if d == "d-good": return self.send(200, {"status": "finished"})
+            if d in ("d-good", "d-first"): return self.send(200, {"status": "finished"})
             logs = [{"output": "step 1", "hidden": False}, {"output": "secret internals", "hidden": True},
                     {"output": "npm ERR! missing script: build", "hidden": False}]
             return self.send(200, {"status": "failed", "logs": json.dumps(logs)})
@@ -42,8 +66,12 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         p = self.path.removeprefix("/api/v1")
         if p.startswith("/deploy?uuid="):
+            seq("deploy " + p.split("=")[1])
             return self.send(200, {"deployments": [{"deployment_uuid": "d-" + p.split("=")[1]}]})
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if p.endswith("/rollback"):
+            seq("rollback " + p.split("/")[2] + " " + json.loads(body)["commit"])
+            return self.send(200, {"message": "Rollback deployment queued.", "deployment_uuid": "d-good"})
         self.send(201, {"echo": json.loads(body)})
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 EOF
@@ -85,13 +113,163 @@ got=$(grep -Ev '^[[:space:]]*(#|$)' "$HOME/.env.production" | while IFS='=' read
 done | paste -sd ';' -)
 check "env upload loop" "$got" "API_KEY=a=b c;SMTP_PASS=x|y"
 
-# deploy_and_wait: success, and failure with visible logs only
+# deploy_and_wait: rollback point, dump over a stubbed ssh, deploy, rollback instructions.
+# The ssh stub logs the remote command and runs it locally with `sh` (as rssh would on the server)
+# with a fake docker on PATH; SSH_STUB_FAIL=1 makes it fail like a dead server. Dumps land in
+# $HOME/dumps (DUMP_DIR) instead of /root/db-dumps.
+mkdir -p "$HOME/bin" "$HOME/fakebin"
+cat > "$HOME/bin/ssh" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" > "$HOME/ssh.args"; cat > "$HOME/ssh.stdin"
+echo ssh >> "$HOME/seq.log"
+[ "${SSH_STUB_FAIL:-0}" = 1 ] && { echo "ssh: connect to host 203.0.113.9 port 22: Connection refused" >&2; exit 255; }
+cmd=${*#*root@203.0.113.9 }
+PATH="$HOME/fakebin:$PATH" sh -c "$cmd" < "$HOME/ssh.stdin"
+STUB
+cat > "$HOME/fakebin/docker" <<'STUB'
+#!/bin/sh
+echo "docker $*" >> "$HOME/docker.log"
+case "$*" in
+  "ps -q -f name="*) [ "${FAKE_NO_CONTAINER:-0}" = 1 ] || echo cid ;;
+  *pg_database_size*) echo "${FAKE_DB_SIZE:-4096}" ;;
+  *" pg_dump "*) [ "${FAKE_PG_DUMP_FAIL:-0}" = 1 ] && exit 1; [ "${FAKE_PG_DUMP_EMPTY:-0}" = 1 ] && exit 0; printf 'PGDMP fake dump: %s\n' "$*" ;;
+  *pg_restore*) cat >/dev/null; [ "${FAKE_PG_RESTORE_FAIL:-0}" = 1 ] && { echo "pg_restore: error: fake" >&2; exit 1; }; echo "pg_restore done" ;;
+  *"drop schema public"*) echo "wiped" ;;
+  *) echo "fake docker: unexpected $*" >&2; exit 2 ;;
+esac
+STUB
+chmod +x "$HOME/bin/ssh" "$HOME/fakebin/docker"
+PATH="$HOME/bin:$PATH"; export PATH
+state_set VPS_IP 203.0.113.9
+DUMP_DIR=$HOME/dumps
+SHA=e4d273e858b3da0acefd09f4724d2073f3d5fab0
+DUMPRE="$HOME/dumps/db-pg/[0-9]{8}T[0-9]{6}Z\.dump"
+
+# success with a Postgres database: dump before deploy, rollback point and commands printed
+state_set DB_UUID db-pg; : > "$HOME/seq.log"; : > "$HOME/docker.log"
 out=$(deploy_and_wait good 2>&1); rc=$?
 check "deploy success rc" "$rc" "0"
+has "deploy prints rollback point" "$out" "^rollback point: commit $SHA \(image on the server\)$"
+has "deploy prints dump path" "$out" "^database dump: $DUMPRE$"
+check "dump runs before the deploy" "$(paste -sd ' ' "$HOME/seq.log")" "ssh deploy good"
+case "$(cat "$HOME/ssh.args")" in *"root@203.0.113.9 sh -s -- db-pg app app 10 $HOME/dumps"*) check "dump ssh command" ok ok ;; *) check "dump ssh command" "$(cat "$HOME/ssh.args")" "... root@203.0.113.9 sh -s -- db-pg app app 10 $HOME/dumps" ;; esac
+has "dump: exact container match" "$(cat "$HOME/docker.log")" '^docker ps -q -f name=\^/\?db-pg\$$'
+has "dump: size checked before pg_dump" "$(paste -sd ' ' "$HOME/docker.log")" "pg_database_size.*pg_dump -U app -d app -Fc"
+d1=$(state_get LAST_DUMP)
+check "dump file exists with content" "$(test -s "$d1" && echo yes)" "yes"
+check "dump file mode 600, dir 700" "$(stat -c %a "$d1"):$(stat -c %a "$HOME/dumps/db-pg"):$(stat -c %a "$HOME/dumps")" "600:700:700"
+has "success prints rollback command" "$out" "^  \. \./lib\.sh; rollback_and_wait good $SHA$"
+has "success prints restore command" "$out" "^  only if a migration broke the data: db_restore db-pg $DUMPRE$"
+check "state records rollback point" "$(state_get ROLLBACK_COMMIT)" "$SHA"
+case "$out$(cat "$HOME/ssh.args" "$HOME/ssh.stdin")" in *SECRET*|*"abc=def"*) check "no secrets in deploy output or ssh command" leaked none ;; *) check "no secrets in deploy output or ssh command" ok ok ;; esac
+
+# dump failure aborts before the deploy (dead server, pg_dump error, empty dump, no container, full disk)
+: > "$HOME/seq.log"
+out=$(SSH_STUB_FAIL=1 deploy_and_wait good 2>&1); rc=$?
+check "dump failure rc" "$rc" "1"
+has "dump failure says nothing deployed" "$out" "database dump failed; nothing was deployed"
+check "dump failure: no deploy call" "$(paste -sd ' ' "$HOME/seq.log")" "ssh"
+sleep 1; out=$(FAKE_PG_DUMP_FAIL=1 db_dump db-pg 2>&1); rc=$?
+check "pg_dump error rc" "$rc" "1"; has "pg_dump error message" "$out" "^pg_dump failed for database db-pg$"
+sleep 1; out=$(FAKE_PG_DUMP_EMPTY=1 db_dump db-pg 2>&1); rc=$?
+check "empty dump rc" "$rc" "1"
+check "failed dumps leave no file behind" "$(find "$HOME/dumps/db-pg" -name '*.dump' | wc -l)" "1"
+out=$(FAKE_NO_CONTAINER=1 db_dump db-pg 2>&1); rc=$?
+check "no container rc:msg" "$rc:$out" "1:no running container for database db-pg"
+: > "$HOME/docker.log"
+out=$(FAKE_DB_SIZE=9000000000000000 db_dump db-pg 2>&1); rc=$?
+check "full disk rc" "$rc" "1"; has "full disk message" "$out" "^not enough disk for a dump of app: database 9000000000000000 bytes, free [0-9]+ bytes, need 18000001073741824 \(2 x size \+ 1 GiB\)$"
+case "$(cat "$HOME/docker.log")" in *pg_dump*) check "full disk: pg_dump not run" ran "not run" ;; *) check "full disk: pg_dump not run" ok ok ;; esac
+out=$(DUMP_KEEP=0 db_dump db-pg 2>&1); check "DUMP_KEEP=0 refused" "$?:$out" "1:DUMP_KEEP must be an integer >= 1, got '0'"
+out=$(DUMP_KEEP=abc db_dump db-pg 2>&1); check "DUMP_KEEP=abc refused" "$?:$out" "1:DUMP_KEEP must be an integer >= 1, got 'abc'"
+
+# retention: DUMP_KEEP=2 prunes to one old dump before dumping, so two remain
+sleep 1; DUMP_KEEP=2 db_dump db-pg >/dev/null 2>&1; sleep 1; DUMP_KEEP=2 db_dump db-pg >/dev/null 2>&1
+check "retention keeps DUMP_KEEP dumps" "$(find "$HOME/dumps/db-pg" -name '*.dump' | wc -l)" "2"
+check "retention keeps the newest" "$(test -e "$d1" || echo pruned)" "pruned"
+
+# DEPLOY_SKIP_DUMP=1 is the explicit way around a dump that cannot be taken
+: > "$HOME/seq.log"
+out=$(SSH_STUB_FAIL=1 DEPLOY_SKIP_DUMP=1 deploy_and_wait good 2>&1); rc=$?
+check "skip dump rc" "$rc" "0"
+has "skip dump is said" "$out" "^database dump: skipped \(DEPLOY_SKIP_DUMP=1\)$"
+check "skip dump: no ssh" "$(paste -sd ' ' "$HOME/seq.log")" "deploy good"
+
+# ROLLBACK_MODE=1 (rebuild fallback in ROLLBACK.md): no dump, ROLLBACK_COMMIT untouched
+state_set ROLLBACK_COMMIT 0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0; : > "$HOME/seq.log"
+out=$(ROLLBACK_MODE=1 deploy_and_wait good 2>&1); rc=$?
+check "rollback mode rc" "$rc" "0"
+check "rollback mode keeps ROLLBACK_COMMIT" "$(state_get ROLLBACK_COMMIT)" "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0"
+has "rollback mode says so" "$out" "^rollback point: kept at 0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0 \(ROLLBACK_MODE=1\)$"
+has "rollback mode prints the kept rollback command" "$out" "^  \. \./lib\.sh; rollback_and_wait good 0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0$"
+check "rollback mode: no ssh" "$(paste -sd ' ' "$HOME/seq.log")" "deploy good"
+
+# only Postgres can be dumped; a Redis DB_UUID is refused before anything deploys
+state_set DB_UUID db-redis; : > "$HOME/seq.log"
+out=$(deploy_and_wait good 2>&1); rc=$?
+check "redis dump refused rc" "$rc" "1"
+has "redis dump refused message" "$out" "only standalone-postgresql is supported"
+check "redis: no ssh, no deploy" "$(cat "$HOME/seq.log")" ""
+
+# no database in the state: deploy goes ahead and says so
+sed -i '/^DB_UUID=/d' "$VPS_SETUP_STATE"; : > "$HOME/seq.log"
+out=$(deploy_and_wait good 2>&1); rc=$?
+check "no DB_UUID rc" "$rc" "0"
+has "no DB_UUID is said" "$out" "^database dump: none \(no DB_UUID in "
+check "no DB_UUID: no ssh" "$(paste -sd ' ' "$HOME/seq.log")" "deploy good"
+
+# first deploy ever: no rollback point, no rollback command
+out=$(deploy_and_wait first 2>&1); rc=$?
+check "first deploy rc" "$rc" "0"
+has "first deploy: no rollback point" "$out" "^rollback point: none \(no finished deployment yet\)$"
+case "$out" in *rollback_and_wait*) check "first deploy: no rollback command" shown none ;; *) check "first deploy: no rollback command" ok ok ;; esac
+
+# failure: visible logs only, image gone from the server, rollback instructions
+state_set DB_UUID db-pg; sleep 1
 out=$(deploy_and_wait bad 2>&1); rc=$?
 check "deploy failure rc" "$rc" "1"
 case "$out" in *"missing script: build"*) check "failure shows log" ok ok ;; *) check "failure shows log" "$out" "log tail";; esac
 case "$out" in *"secret internals"*) check "hidden lines skipped" shown hidden ;; *) check "hidden lines skipped" ok ok ;; esac
+has "failure: image not on server noted" "$out" "^rollback point: commit $SHA \(image not on the server; a rollback rebuilds it\)$"
+has "failure prints rollback command" "$out" "^Deployment d-bad failed\. Back to the previous version \(ROLLBACK\.md\):$"
+has "failure prints rollback_and_wait" "$out" "^  \. \./lib\.sh; rollback_and_wait bad $SHA$"
+has "failure prints db_restore" "$out" "^  only if a migration broke the data: db_restore db-pg $DUMPRE$"
+check "rollback point skips pull-request previews" "$(rollback_point good)" "$SHA"
+
+# rollback_and_wait posts the commit and waits
+: > "$HOME/seq.log"
+out=$(rollback_and_wait good "$SHA" 2>&1); rc=$?
+check "rollback rc" "$rc" "0"
+has "rollback queued" "$out" "^rollback deployment d-good queued \(to commit $SHA\)$"
+check "rollback posts the commit" "$(cat "$HOME/seq.log")" "rollback good $SHA"
+
+# db_restore: refused while the app runs, pg_restore all or nothing, wipe only on RESTORE_WIPE=yes
+dump=$(state_get LAST_DUMP)
+state_set APP_UUID good; : > "$HOME/docker.log"
+out=$(db_restore db-pg "$dump" 2>&1); rc=$?
+check "restore refused while app runs" "$rc:$out" "1:db_restore: app good is running:healthy; stop it first (ROLLBACK.md step 4) or set RESTORE_WITH_APP_RUNNING=1"
+check "restore refused: nothing ran" "$(cat "$HOME/docker.log")" ""
+sed -i '/^APP_UUID=/d' "$VPS_SETUP_STATE"
+out=$(db_restore db-pg "$dump" 2>&1); rc=$?
+check "restore refused without APP_UUID" "$rc" "1"; has "restore without APP_UUID message" "$out" "^db_restore: no APP_UUID in .*RESTORE_WITH_APP_RUNNING=1$"
+state_set APP_UUID stopped-app
+out=$(db_restore db-pg "$dump" 2>&1); rc=$?
+check "restore rc:output" "$rc:$out" "0:pg_restore done
+restored $dump into app"
+case "$(cat "$HOME/ssh.args")" in *"sh -s -- db-pg app app $dump no"*) check "restore ssh command" ok ok ;; *) check "restore ssh command" "$(cat "$HOME/ssh.args")" "... sh -s -- db-pg app app $dump no" ;; esac
+has "restore is all or nothing" "$(cat "$HOME/docker.log")" "^docker exec -i cid pg_restore -U app -d app --single-transaction --clean --if-exists --no-owner --no-privileges$"
+case "$(cat "$HOME/docker.log")" in *"drop schema"*) check "restore: no wipe by default" wiped "not wiped" ;; *) check "restore: no wipe by default" ok ok ;; esac
+: > "$HOME/docker.log"
+out=$(RESTORE_WIPE=yes db_restore db-pg "$dump" 2>&1); rc=$?
+check "restore with wipe rc" "$rc" "0"
+has "restore with wipe drops the schema first" "$(paste -sd ' ' "$HOME/docker.log")" "psql -U app -d app -v ON_ERROR_STOP=1 -qc drop schema public cascade; create schema public; docker exec -i cid pg_restore"
+has "restore with wipe says so" "$out" "^schema public wiped in app$"
+out=$(RESTORE_WITH_APP_RUNNING=1 FAKE_PG_RESTORE_FAIL=1 db_restore db-pg "$dump" 2>&1); rc=$?
+check "restore failure rc" "$rc" "1"; has "restore failure shows pg_restore error" "$out" "^pg_restore: error: fake$"
+case "$out" in *"restored "*) check "restore failure: no success line" shown none ;; *) check "restore failure: no success line" ok ok ;; esac
+out=$(db_restore db-pg "$HOME/dumps/db-pg/missing.dump" 2>&1); rc=$?
+check "restore missing dump" "$rc:$out" "1:dump not found or empty: $HOME/dumps/db-pg/missing.dump"
+sed -i '/^VPS_IP=/d; /^DB_UUID=/d; /^APP_UUID=/d; /^ROLLBACK_COMMIT=/d; /^LAST_DUMP=/d' "$VPS_SETUP_STATE"
 
 # verify.sh picks the right phase
 mkdir -p "$HOME/.ssh" && touch "$HOME/.ssh/id_ed25519.pub"
