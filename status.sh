@@ -56,6 +56,36 @@ semver() { local v=${1#v}; v=${v%%-*}; case $v in *[!0-9.]*|'') ;; *) tr '.' ' '
 
 now=$(date +%s)
 
+# offsite NAME S3_SCHEDULE_IDS EXECUTIONS_JSON -> the "off-site" line of one database.
+# A run reached S3 when it succeeded and s3_uploaded is true. If the API does not return
+# s3_uploaded (4.3.23 was not seen returning it), the message decides instead: Coolify keeps the
+# status "success" when only the upload failed and writes "S3 upload failed" into the message.
+# The line then says that the upload was not reported. No schedule at all is the backup line's FAIL.
+offsite() {
+  local r h rep newest d m=OK
+  if [ -z "$2" ]; then line WARN "off-site $1" "local only (no backup schedule copies to S3)"; return; fi
+  if ! r=$(jq -er --argjson now "$now" "$JQ_EPOCH"'
+      map(select(.status == "success")
+        | . + {t: ((.finished_at // .created_at) | epoch), rep: has("s3_uploaded"),
+               up: (if has("s3_uploaded") then .s3_uploaded == true
+                    else ((.message // "") | test("S3 upload failed") | not) end)})
+      | sort_by(.t) as $a | ($a | map(select(.up)) | last) as $c
+      | (if ($a | last) == null or ($a | last).up then "ok" else "failed" end) as $n
+      | if $c == null then "none \($n)"
+        else "\((($now - $c.t) / 3600) | floor) \($n) \(if $c.rep then "reported" else "message" end)" end' <<<"$3" 2>/dev/null); then
+    line WARN "off-site $1" "n/a (could not read)"; return
+  fi
+  read -r h newest rep <<<"$r"
+  if [ "$h" = none ]; then
+    line FAIL "off-site $1" "no backup has reached S3$([ "$newest" = failed ] && echo "; newest upload failed")"; return
+  fi
+  d="last S3 copy ${h}h ago"
+  [ "$newest" = failed ] && { d="$d; newest upload failed"; m=WARN; }
+  [ "$rep" = message ] && d="$d (upload not reported by API, from message)"
+  [ "$h" -gt "$BACKUP_WARN_H" ] && m=WARN
+  line "$m" "off-site $1" "$d"
+}
+
 # --- Server: one ssh round-trip ---
 section "Server"
 srv=$("$STATUS_SSH" 'sh -s' 2>/dev/null <<'EOF'
@@ -174,14 +204,17 @@ else
         line WARN "backup $name" "n/a (could not read)"; continue
       fi
       if [ -z "$ids" ]; then line FAIL "backup $name" "none (no backup schedule)"; continue; fi
+      # Schedules that also copy to S3 (save_s3), for the off-site line.
+      s3ids=$(jq -r 'map(select(.save_s3 == true) | .uuid | strings) | join(" ")' <<<"$scheds")
       # Executions per schedule ({executions:[...]}); the copy embedded in the schedule as fallback.
-      all='[]' readfail=0
+      all='[]' s3all='[]' readfail=0
       for id in $ids; do
         if ! ex=$(api "/databases/$uuid/backups/$id/executions" | jq -ce '.executions | arrays' 2>/dev/null) &&
            ! ex=$(jq -ce --arg id "$id" '.[] | select(.uuid == $id) | .executions | arrays' <<<"$scheds" 2>/dev/null); then
           readfail=1; break
         fi
         all=$(jq -c --argjson a "$ex" '. + $a' <<<"$all")
+        case " $s3ids " in *" $id "*) s3all=$(jq -c --argjson a "$ex" '. + $a' <<<"$s3all") ;; esac
       done
       # finished_at is null on real executions, so created_at is the time of the run.
       if [ "$readfail" = 1 ] || ! last=$(jq -er --argjson now "$now" "$JQ_EPOCH"'
@@ -198,6 +231,7 @@ else
           else line OK "backup $name" "last success ${h}h ago"; fi ;;
         *) line FAIL "backup $name" "last backup ${last% *} (${last##* }h ago)" ;;
       esac
+      offsite "$name" "$s3ids" "$s3all"
     done <<<"$dbs"
   fi
 fi
