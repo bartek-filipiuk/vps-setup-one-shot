@@ -1,10 +1,11 @@
 # 06 Handover
 
 **Done when** the user has decided on backups (both options below explained, their choice
-applied), `~/.config/vps-setup/SERVER.md` exists, and `HANDOVER_DONE=1` is recorded.
+applied) and on alerts (Discord set up, or declined), `~/.config/vps-setup/SERVER.md` exists,
+and `HANDOVER_DONE=1` is recorded.
 
-Tell the user: "It works. Last part: backups, a one-page summary of your server, and how to
-deploy your next app."
+Tell the user: "It works. Last part: backups, alerts on your phone, a one-page summary of your
+server, and how to deploy your next app."
 
 ## 1. Backups (user decides, you apply)
 
@@ -79,7 +80,55 @@ and continue with the attach command above.
 Record the choice: `state_set BACKUPS "s3,hetzner"` (or whatever they chose: `s3`, `hetzner`,
 or `none`).
 
-## 2. SERVER.md (you)
+## 2. Alerts (user creates a Discord webhook, you apply)
+
+Say this plainly: right now nobody is told when a deploy or a backup fails or the server goes
+down. Coolify can post that into a Discord channel, which their phone shows as a notification.
+Discord is the one way this guide sets up. If they do not use Discord, record
+`. ./lib.sh; state_set ALERTS none` and tell them `./status.sh` will keep a warning on the
+`alerts` line; they can add another channel by hand in Coolify (**Notifications**).
+
+### 2a. Discord webhook (user, in Discord)
+
+The wording of Discord may differ **[verify]**:
+
+1. In a server they own (or a new one), pick or create a channel such as `#alerts`.
+2. **Server Settings** → **Integrations** → **Webhooks** → **New Webhook**, name it `Coolify`,
+   choose that channel → **Copy Webhook URL**.
+3. In their own terminal (it prompts for the URL, hidden; paste it and Enter):
+
+```
+( mkdir -p ~/.config/vps-setup && umask 077 && printf 'Discord webhook URL: ' && read -rs U && echo &&
+printf 'DISCORD_WEBHOOK_URL=%s\n' "$U" > ~/.config/vps-setup/notify.env && chmod 600 ~/.config/vps-setup/notify.env && echo saved )
+```
+
+The URL never goes into the chat: anyone who has it can post into their channel. If it leaks,
+they delete the webhook in Discord, create a new one, run this command again and you run 2b
+again.
+
+### 2b. Turn on Coolify's notifications (you)
+
+```
+. ./lib.sh; notify_setup discord
+```
+
+This turns on Discord in Coolify with the URL from `notify.env` and these events: app stopped
+or restarted (Coolify's "status change"), deployment failed, backup failed, server unreachable
+and reachable again, disk usage high, and container restart limit reached. Successful deploys
+and backups stay quiet. Expect
+`discord: enabled, 7/7 alert events on`; it records `ALERTS=discord`. A `Coolify refused`
+message quotes Coolify's reason (usually a mistyped URL): the user runs the 2a command again,
+then you run 2b again.
+
+Then the user proves the path to their phone: in Coolify, **Notifications** → **Discord** →
+**Send test notification** **[verify]** (the API has no test call). They tell you whether the
+message arrived. If not: the webhook was deleted or points to another channel; redo 2a and 2b.
+
+`./status.sh` now has an `alerts` line. The full drill (stop the app's container, an alert
+arrives within five minutes) is what the harness run of R06a will prove; it has not been run
+on a server yet. Do not stop the user's app to try it.
+
+## 3. SERVER.md (you)
 
 Write a summary the user can keep. No secrets in it.
 
@@ -92,6 +141,7 @@ Write a summary the user can keep. No secrets in it.
 - Starter app: https://$(state_get APP_DOMAIN), repo $(state_get GH_REPO), local copy $(state_get APP_DIR)
 - Push-to-deploy: $(state_get WEBHOOK)
 - Backups: $(state_get BACKUPS) $(b=$(state_get S3_BUCKET); [ -n "$b" ] && echo "(S3 bucket $b, S3 keys in ~/.config/vps-setup/s3.env, mode 600)")
+- Alerts: $(state_get ALERTS) $([ "$(state_get ALERTS)" = discord ] && echo "(Coolify notifications to a Discord webhook, URL in ~/.config/vps-setup/notify.env, mode 600; Coolify UI -> Notifications)")
 - Coolify UUIDs: project $(state_get PROJECT_UUID), app $(state_get APP_UUID), database $(state_get DB_UUID)
 - API config (contains the token, mode 600): ~/.config/coolify/config
 - Setup state: ~/.config/vps-setup/state
@@ -104,6 +154,7 @@ Write a summary the user can keep. No secrets in it.
 - Restore the database from an off-site backup: $(state_get SETUP_DIR)/RESTORE.md
 - Logs: Coolify UI -> app -> Logs
 - Health: $(state_get SETUP_DIR)/status.sh (one screen; exit 0 = all OK)
+- Alerts: the Discord channel; check the Coolify settings: cd $(state_get SETUP_DIR) && . ./lib.sh && notify_status
 - Panel access if the domain breaks: ssh -N -L 8000:localhost:8000 root@$(state_get VPS_IP), then http://localhost:8000
 
 ## Deploy another app
@@ -114,6 +165,7 @@ In that app's repo, tell your agent: Read $(state_get SETUP_DIR)/PREPARE-APP.md 
 
 - Hetzner: hcloud server delete $(state_get SERVER_NAME); hcloud firewall delete vps-setup-fw; hcloud ssh-key delete vps-setup
 - Hetzner Object Storage (if used): delete the bucket $(state_get S3_BUCKET) and the vps-setup S3 credentials in the Console (billed until then)
+- Discord (if used): delete the Coolify webhook (Server Settings -> Integrations -> Webhooks)
 - DNS: delete the A records for $(state_get COOLIFY_DOMAIN) and $(state_get APP_DOMAIN)
 - GitHub (optional): gh repo delete $(state_get GH_REPO)
 EOF
@@ -122,7 +174,7 @@ chmod 600 "$f"; echo "written: $f"
 
 Show the user the file.
 
-## 3. Close
+## 4. Close
 
 `. ./lib.sh; state_set HANDOVER_DONE 1`, then `./verify.sh` should print `ALL DONE`.
 

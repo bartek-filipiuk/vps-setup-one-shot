@@ -10,7 +10,7 @@ the Next.js starter app only.)
 `PREPARE-APP.md` (moving an existing app onto the server), `ROLLBACK.md` (back to the previous
 version after a bad deploy), `RESTORE.md` (a database back from an off-site S3 backup), `lib.sh`
 (state file, Coolify API helpers, deploy with dump and rollback point, rollback, restore,
-S3 storage and off-site backups), `verify.sh` (reads the real server state and says which phase is next), `status.sh` (one-screen
+S3 storage and off-site backups, Coolify notifications to Discord), `verify.sh` (reads the real server state and says which phase is next), `status.sh` (one-screen
 health check, read-only),
 `references/` (Coolify API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `test/` (checks that need no server), `ROADMAP.md` (the plan,

@@ -54,4 +54,4 @@ cannot be checked from outside (IP, domains, resource UUIDs, and a few "user con
 | `phases/03-coolify.md` | install Coolify, register the admin through an SSH tunnel |
 | `phases/04-domain.md` | Coolify on its own HTTPS domain, API token |
 | `phases/05-starter.md` | GitHub repo from `starter/`, Postgres, app, push-to-deploy |
-| `phases/06-handover.md` | backups, `SERVER.md`, teardown, what to do next |
+| `phases/06-handover.md` | backups, alerts, `SERVER.md`, teardown, what to do next |
