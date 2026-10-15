@@ -89,7 +89,12 @@ class H(BaseHTTPRequestHandler):
             imgs = [{"tag": SHA, "created_at": "2026-10-13 17:52:17 +0200 CEST", "is_current": False}] if a == "good" else []
             return self.send(200, {"current": None, "images": imgs})
         if p == "/databases/db-pg":
-            return self.send(200, {"uuid": "db-pg", "database_type": "standalone-postgresql", "image": "postgres:17-alpine",
+            return self.send(200, {"uuid": "db-pg", "name": "starter-db", "database_type": "standalone-postgresql", "image": "postgres:17-alpine",
+                                   "postgres_user": "app", "postgres_db": "app", "postgres_password": "pw-SECRET-123"})
+        if p.startswith("/databases/db-pg1") or p == "/databases/db-latest":   # db-pg16, db-pg18 (R14), image by name
+            u = p.split("/")[2]
+            return self.send(200, {"uuid": u, "name": u + "-db", "database_type": "standalone-postgresql",
+                                   "image": "postgres:latest" if u == "db-latest" else "postgres:%s-alpine" % u[5:],
                                    "postgres_user": "app", "postgres_db": "app", "postgres_password": "pw-SECRET-123"})
         if p == "/databases/db-redis":
             return self.send(200, {"uuid": "db-redis", "database_type": "standalone-redis", "image": "redis:7.2"})
@@ -512,6 +517,69 @@ check "restore failure rc" "$rc" "1"; has "restore failure shows pg_restore erro
 case "$out" in *"restored "*) check "restore failure: no success line" shown none ;; *) check "restore failure: no success line" ok ok ;; esac
 out=$(db_restore db-pg "$HOME/dumps/db-pg/missing.dump" 2>&1); rc=$?
 check "restore missing dump" "$rc:$out" "1:dump not found or empty: $HOME/dumps/db-pg/missing.dump"
+
+# Postgres major upgrade (R14): db_major, pg_image_major, the plan, the explicit restore target
+check "db_major 17" "$(db_major db-pg 2>&1)" "17"
+check "db_major 16" "$(db_major db-pg16 2>&1)" "16"
+out=$(db_major db-latest 2>&1); rc=$?
+check "db_major postgres:latest" "$rc:$out" "1:no Postgres major version in the image tag: 'postgres:latest'"
+out=$(db_major db-redis 2>&1); rc=$?
+check "db_major redis" "$rc:$out" "1:db-redis is standalone-redis; only standalone-postgresql is supported"
+out=$(db_major '../x' 2>&1); rc=$?
+check "db_major bad uuid" "$rc:$out" "1:not a Coolify uuid: '../x'"
+got=""; for i in postgres:17-alpine postgres:16.4 registry.example.com:5000/postgres:18 postgres:18.0-bookworm; do got="$got $(pg_image_major "$i")"; done
+check "pg_image_major tags" "$got" " 17 16 18 18"
+got=""; for i in postgres postgres:latest postgres@sha256:abc ''; do pg_image_major "$i" >/dev/null 2>&1 && got="$got $i"; done
+check "pg_image_major refuses tags without a major" "${got:-none}" "none"
+
+state_set PROJECT_UUID proj-1; state_set APP_UUID stopped-app; state_set DB_UUID db-pg
+: > "$HOME/seq.log"
+out=$(pg_major_upgrade_plan db-pg 18 2>&1); rc=$?
+check "plan rc" "$rc" "0"
+has "plan: old database" "$out" '^old: +db-pg +starter-db +postgres:17-alpine +user app, database app +\(Postgres 17\)$'
+has "plan: new database" "$out" '^new: +starter-db-pg18 +postgres:18-alpine +user app, database app, new password$'
+has "plan: where" "$out" '^ +project proj-1, environment production, server s2$'
+has "plan: app" "$out" '^app: +stopped-app '
+has "plan: explicit restore target" "$out" 'RESTORE_FROM_DB=db-pg db_restore <NEW_UUID> <dump>'
+has "plan: Postgres 18 quirk" "$out" '^warning: Postgres 18\+ '
+check "plan: DB_UUID matches, no note" "$(grep -c '^note:' <<<"$out")" "0"
+check "plan: read-only (no POST, PATCH, DELETE, ssh)" "$(cat "$HOME/seq.log")" ""
+case "$out" in *SECRET*) check "plan: no password" leaked none ;; *) check "plan: no password" ok ok ;; esac
+out=$(pg_major_upgrade_plan db-pg16 17 2>&1); rc=$?
+check "plan 16 -> 17 rc" "$rc" "0"
+has "plan: other database than DB_UUID noted" "$out" '^note: +db-pg16 is not DB_UUID'
+check "plan 17: no Postgres 18 warning" "$(grep -c '^warning:' <<<"$out")" "0"
+for t in 17 16; do
+  out=$(pg_major_upgrade_plan db-pg "$t" 2>&1); rc=$?
+  check "plan refuses $t on 17" "$rc:$out" "1:database db-pg already runs Postgres 17; $t is not an upgrade (a downgrade needs a dump into a new database by hand)"
+done
+for t in x 18.1 -1 018 1000; do
+  out=$(pg_major_upgrade_plan db-pg "$t" 2>&1); rc=$?
+  check "plan refuses TARGET '$t'" "$rc:$out" "1:TARGET must be a major version like 18, got '$t'"
+done
+out=$(pg_major_upgrade_plan db-pg 2>&1); rc=$?
+check "plan usage" "$rc:$out" "1:usage: pg_major_upgrade_plan DB_UUID TARGET  (TARGET: a major version like 18)"
+out=$(pg_major_upgrade_plan db-redis 18 2>&1); rc=$?
+check "plan refuses redis" "$rc:$out" "1:db-redis is standalone-redis; only standalone-postgresql is supported"
+out=$(pg_major_upgrade_plan db-latest 18 2>&1); rc=$?
+check "plan refuses an image without a major" "$rc" "1"
+
+# db_restore: a dump of db-pg goes into another database only with RESTORE_FROM_DB, never into itself that way
+: > "$HOME/docker.log"
+out=$(db_restore db-pg18 "$dump" 2>&1); rc=$?
+check "restore into another db without RESTORE_FROM_DB refused" "$rc:$out" "1:db_restore: dump $dump belongs to database db-pg, not db-pg18; to restore it into another database on purpose (UPGRADE.md) set RESTORE_FROM_DB=db-pg"
+out=$(RESTORE_FROM_DB=db-pg db_restore db-pg "$dump" 2>&1); rc=$?
+check "upgrade restore into the old db refused" "$rc:$out" "1:db_restore: RESTORE_FROM_DB is the target db-pg itself; the target of an upgrade restore is the NEW database"
+out=$(RESTORE_FROM_DB=db-other db_restore db-pg18 "$dump" 2>&1); rc=$?
+check "RESTORE_FROM_DB must match the dump's database" "$rc:$out" "1:db_restore: dump $dump belongs to database db-pg, not RESTORE_FROM_DB=db-other"
+check "refused restores ran nothing" "$(cat "$HOME/docker.log")" ""
+out=$(RESTORE_FROM_DB=db-pg db_restore db-pg18 "$dump" 2>&1); rc=$?
+check "upgrade restore into the new db" "$rc:$out" "0:pg_restore done
+restored $dump into app"
+case "$(cat "$HOME/ssh.args")" in *"sh -s -- db-pg18 app app $dump no"*) check "upgrade restore: ssh targets the new db" ok ok ;; *) check "upgrade restore: ssh targets the new db" "$(cat "$HOME/ssh.args")" "... sh -s -- db-pg18 app app $dump no" ;; esac
+has "upgrade restore: container of the new db" "$(cat "$HOME/docker.log")" '^docker ps -q -f name=\^/\?db-pg18\$$'
+out=$(db_restore db-pg 2>&1); rc=$?
+check "restore usage" "$rc:$out" "1:usage: db_restore DB_UUID DUMP_PATH"
 # off-site backups (R04): S3 storage, schedule, backup now, list, fetch from S3, restore.
 # jq and curl are wrapped to log their argv, so a credential on any command line shows up in argv.log.
 mkdir -p "$HOME/argvbin" "$HOME/srvtmp"
