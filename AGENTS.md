@@ -15,9 +15,9 @@ project to a client, or a colleague joining, and removing the old access), `SERV
 (Coolify, Ubuntu and Postgres major versions, each with a backup first and a check after), `lib.sh`
 (state file, Coolify API helpers, deploy with dump and rollback point, rollback, restore, app logs,
 S3 storage and off-site backups, Coolify notifications to Discord, team members and stored keys,
-one-click services, Postgres major versions), `verify.sh` (reads the real server state and says which phase is next), `status.sh` (one-screen
+one-click services, Postgres major versions, DNS records through the Cloudflare API), `verify.sh` (reads the real server state and says which phase is next), `status.sh` (one-screen
 health check, read-only),
-`references/` (Coolify API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
+`references/` (Coolify and Cloudflare API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `test/` (checks that need no server), `ROADMAP.md` (the plan,
 ids R01…, mirrored in `starter/app/roadmap.ts`).
 
