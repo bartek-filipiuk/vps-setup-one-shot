@@ -13,7 +13,7 @@ check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected 
 has() { if grep -qE "$3" <<<"$2"; then echo "ok   $1"; else echo "FAIL $1: no line matching [$3] in:"; echo "     ${2//$'\n'/$'\n'     }"; fails=$((fails + 1)); fi; }
 
 python3 - "$PORT" "$HOME/seq.log" <<'EOF' &
-import json, sys, time
+import json, re, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 polls = {}
 SHA = "e4d273e858b3da0acefd09f4724d2073f3d5fab0"
@@ -41,6 +41,51 @@ SERVICES = {"svc-umami": {"uuid": "svc-umami", "name": "umami", "service_type": 
     "databases": []}}
 # Discord settings as the live GET answers (no URL in it); PATCH accepts only these keys plus the URL.
 notif = {"id": 1, "team_id": 0, "discord_enabled": False, "discord_ping_enabled": False} | {e + "_discord_notifications": False for e in EVENTS}
+# Cloudflare API v4 (R18): the envelope {success, errors, messages, result}; zones and records in memory.
+CF_TOKEN = "FAKE-cf-token_000"
+ZONES = {"example.com": "0123456789abcdef0123456789abcdef", "example.org": "1123456789abcdef0123456789abcdef",
+         "deep.example.org": "2123456789abcdef0123456789abcdef"}
+cf_seq = [0]
+def rid():
+    cf_seq[0] += 1; return "%032x" % (0xabc000 + cf_seq[0])
+records = {"0123456789abcdef0123456789abcdef": [
+    {"id": rid(), "type": "CNAME", "name": "www.example.com", "content": "example.com", "proxied": True, "ttl": 1},
+    {"id": rid(), "type": "A", "name": "two.example.com", "content": "198.51.100.1", "proxied": False, "ttl": 1},
+    {"id": rid(), "type": "A", "name": "two.example.com", "content": "198.51.100.2", "proxied": False, "ttl": 300},
+    {"id": rid(), "type": "AAAA", "name": "v6.example.com", "content": "2001:db8::1", "proxied": False, "ttl": 1},
+    {"id": rid(), "type": "A", "name": "old.example.com", "content": "198.51.100.7", "proxied": True, "ttl": 1},
+    {"id": rid(), "type": "MX", "name": "old.example.com", "content": "mx.example.net", "proxied": False, "ttl": 1, "priority": 10}]}
+def cf(h, method):
+    from urllib.parse import urlsplit, parse_qs
+    u = urlsplit(h.path); p = u.path.removeprefix("/client/v4"); q = {k: v[0] for k, v in parse_qs(u.query).items()}
+    raw = h.rfile.read(int(h.headers.get("Content-Length", 0))) if method in ("POST", "PATCH") else b""
+    seq("cf %s %s%s%s" % (method, p, "?" + u.query if u.query else "",
+        " " + json.dumps(json.loads(raw), sort_keys=True, separators=(",", ":")) if raw else ""))
+    ok = lambda r: h.send(200, {"success": True, "errors": [], "messages": [], "result": r})
+    def err(code, c, m): return h.send(code, {"success": False, "errors": [{"code": c, "message": m}], "messages": [], "result": None})
+    auth = h.headers.get("Authorization", "")
+    if p == "/user/tokens/verify":
+        if auth == "Bearer FAKE-cf-expired": return ok({"id": "t1", "status": "expired"})
+        if auth != "Bearer " + CF_TOKEN: return err(401, 1000, "Invalid API Token")
+        return ok({"id": "t1", "status": "active"})
+    if auth != "Bearer " + CF_TOKEN: return err(403, 10000, "Authentication error")
+    if p == "/zones" and method == "GET":
+        n = q.get("name", "")
+        return ok([{"id": ZONES[n], "name": n, "status": "pending" if n == "example.org" else "active"}] if n in ZONES else [])
+    m = re.match(r"^/zones/([0-9a-f]{32})/dns_records(?:/([0-9a-f]{32}))?$", p)
+    if not m or m.group(1) not in ZONES.values(): return err(404, 7003, "Could not route to %s, perhaps your object identifier is invalid?" % p)
+    rs = records.setdefault(m.group(1), [])
+    if method == "GET":
+        if q.get("name") == "busy.example.com": return err(429, 971, "Please wait and consider throttling your request speed")
+        return ok([r for r in rs if r["name"] == q.get("name") and r["type"] == q.get("type", r["type"])])
+    b = json.loads(raw) if raw else {}
+    if method == "POST":
+        r = {"id": rid(), "proxied": False, "ttl": 1} | b; rs.append(r); return ok(r)
+    if method == "PATCH":
+        for r in rs:
+            if r["id"] == m.group(2): r.update(b); return ok(r)
+        return err(404, 81044, "Record does not exist.")
+    return err(405, 10000, "method not allowed in the fake")
 def seq(line):
     with open(sys.argv[2], "a") as f: f.write(line + "\n")
 def executions(b):
@@ -58,6 +103,7 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers()
         self.wfile.write(json.dumps(body).encode())
     def do_GET(self):
+        if self.path.startswith("/client/v4/"): return cf(self, "GET")
         if self.headers.get("Authorization") != "Bearer 3|abc=def":
             return self.send(401, {"message": "Unauthenticated."})
         p = self.path.removeprefix("/api/v1")
@@ -133,6 +179,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"status": "failed", "logs": json.dumps(logs)})
         self.send(404, {"message": "not found"})
     def do_POST(self):
+        if self.path.startswith("/client/v4/"): return cf(self, "POST")
         p = self.path.removeprefix("/api/v1")
         if p.startswith("/deploy?uuid="):
             seq("deploy " + p.split("=")[1])
@@ -167,6 +214,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"message": "Rollback deployment queued.", "deployment_uuid": "d-good"})
         self.send(201, {"echo": json.loads(body)})
     def do_PATCH(self):
+        if self.path.startswith("/client/v4/"): return cf(self, "PATCH")
         p = self.path.removeprefix("/api/v1")
         b = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
         if p == "/notifications/discord":
@@ -199,6 +247,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"message": "Backup updated."})
         self.send(404, {"message": "not found"})
     def do_DELETE(self):
+        if self.path.startswith("/client/v4/"): return cf(self, "DELETE")
         p = self.path.removeprefix("/api/v1")
         seq("DELETE " + p)
         if p.startswith("/services/"): return self.send(200, {"message": "Deletion request queued."})
@@ -720,9 +769,100 @@ check "alerts: 422 shows Coolify's message without the URL" "$rc:$out" "1:Coolif
 Check the webhook URL in $HOME/bad.env (phase 06 step 2) and run this again."
 check "alerts: 422 keeps the state" "$(state_get ALERTS)" "discord"
 
+# DNS through the Cloudflare API (R18): fake API under /client/v4 on the same server
+CFE="$HOME/.config/vps-setup/cloudflare.env"; CFT=FAKE-cf-token_000
+export CF_API="http://127.0.0.1:$PORT/client/v4"
+Z=0123456789abcdef0123456789abcdef
+state_set DOMAIN app.sub.example.com
+: > "$HOME/seq.log"
+s3run cf_check
+check "cf: missing cloudflare.env refused" "$rc:$out" "1:no Cloudflare token: $CFE is missing (phase 00, question 6)"
+( umask 022; printf 'CF_API_TOKEN=%s\n' "$CFT" > "$CFE" )
+s3run cf_check
+check "cf: cloudflare.env mode 644 refused" "$rc:$out" "1:refusing $CFE: mode 644, must be 600 (chmod 600 $CFE)"
+chmod 600 "$CFE"
+CF_ENV="$HOME/empty.env" s3run cf_check
+check "cf: file without the token line refused" "$rc:$out" "1:$HOME/empty.env needs a CF_API_TOKEN= line"
+( umask 077; printf 'CF_API_TOKEN=abc"def\n' > "$HOME/cfq.env" )
+CF_ENV="$HOME/cfq.env" s3run cf_check
+check "cf: token with a quote refused" "$rc:$out" "1:CF_API_TOKEN in $HOME/cfq.env has characters a Cloudflare token does not have; write it again (phase 00, question 6)"
+check "cf: nothing sent while refused" "$(cat "$HOME/seq.log")" ""
+( umask 077; printf 'CF_API_TOKEN=FAKE-cf-invalid\n' > "$HOME/cfbad.env"; printf 'CF_API_TOKEN=FAKE-cf-expired\n' > "$HOME/cfexp.env" )
+CF_ENV="$HOME/cfbad.env" s3run cf_check
+check "cf: invalid token, Cloudflare's code and message" "$rc:$out" "1:Cloudflare refused GET /user/tokens/verify (HTTP 401):
+  1000: Invalid API Token
+The Cloudflare token does not work; create a new one (phase 00, question 6)"
+CF_ENV="$HOME/cfexp.env" s3run cf_check
+check "cf: expired token" "$rc:$out" "1:Cloudflare token is expired, not active; create a new one (phase 00, question 6)"
+: > "$HOME/seq.log"
+s3run cf_check
+check "cf check: longest suffix that is a zone" "$rc:$out" "0:Cloudflare token active; zone example.com ($Z), status active"
+check "cf check: tried the suffixes, longest first" "$(cat "$HOME/seq.log")" "cf GET /user/tokens/verify
+cf GET /zones?name=app.sub.example.com
+cf GET /zones?name=sub.example.com
+cf GET /zones?name=example.com"
+check "cf check: state" "$(state_get CF_ZONE_ID) $(state_get CF_ZONE)" "$Z example.com"
+state_set DOMAIN x.deep.example.org
+s3run cf_check
+check "cf check: a sub-zone wins over its parent" "$rc:$out" "0:Cloudflare token active; zone deep.example.org (2123456789abcdef0123456789abcdef), status active"
+state_set DOMAIN shop.example.org
+s3run cf_check
+check "cf check: zone not active is a warning" "$rc:$out" "0:Cloudflare token active; zone example.org (1123456789abcdef0123456789abcdef), status pending
+warning: zone example.org is pending, not active: its records do not resolve until the domain's name servers are Cloudflare's"
+state_set DOMAIN example.net
+s3run cf_check
+check "cf check: zone not found" "$rc:$out" "1:no Cloudflare zone for example.net that this token can read; the token must be for the zone of example.net (Zone Read, DNS Edit)"
+check "cf check: state keeps the last zone found" "$(state_get CF_ZONE)" "example.org"
+state_set DOMAIN example.com; s3run cf_check
+check "cf check back on example.com" "$rc" "0"
+
+: > "$HOME/seq.log"
+s3run dns_set_a app.example.com 203.0.113.10
+check "dns create" "$rc:$out" "0:app.example.com: A created -> 203.0.113.10 (DNS only, TTL auto)"
+check "dns create: one lookup, one POST, DNS only" "$(cat "$HOME/seq.log")" "cf GET /zones/$Z/dns_records?name=app.example.com&per_page=100
+cf POST /zones/$Z/dns_records {\"comment\":\"vps-setup\",\"content\":\"203.0.113.10\",\"name\":\"app.example.com\",\"proxied\":false,\"ttl\":1,\"type\":\"A\"}"
+: > "$HOME/seq.log"
+s3run dns_set_a app.example.com 203.0.113.10
+check "dns again: unchanged, nothing written" "$rc:$out:$(grep -c -v ' GET ' "$HOME/seq.log")" "0:app.example.com: A unchanged (203.0.113.10, DNS only):0"
+: > "$HOME/seq.log"
+s3run dns_set_a old.example.com 203.0.113.10
+check "dns update: old IP and proxy said" "$rc:$out" "0:old.example.com: A updated 198.51.100.7 -> 203.0.113.10 (DNS only, proxy was on)"
+has "dns update: PATCH with proxied false" "$(cat "$HOME/seq.log")" "^cf PATCH /zones/$Z/dns_records/[0-9a-f]{32} \{\"content\":\"203\.0\.113\.10\",\"proxied\":false\}$"
+: > "$HOME/seq.log"
+s3run dns_set_a www.example.com 203.0.113.10
+check "dns CNAME refused" "$rc:$out" "1:www.example.com is a CNAME to example.com; an A record cannot sit next to it. Nothing changed. If the CNAME is not needed, the user deletes it in Cloudflare (DNS -> Records), then run this again."
+s3run dns_set_a two.example.com 203.0.113.10
+check "dns two A refused" "$rc:$out" "1:two.example.com has 2 A records; nothing changed. The user keeps one (or deletes all) in Cloudflare (DNS -> Records), then run this again:
+  A 198.51.100.1 proxied false
+  A 198.51.100.2 proxied false"
+check "dns refusals sent no write" "$(grep -c -v ' GET ' "$HOME/seq.log")" "0"
+s3run dns_set_a v6.example.com 203.0.113.10
+check "dns AAAA: rc 2 after the A is set" "$rc:$out" "2:v6.example.com: A created -> 203.0.113.10 (DNS only, TTL auto)
+warning: v6.example.com also has an AAAA record (2001:db8::1); IPv6 visitors and the certificate go there. The user deletes it in Cloudflare (DNS -> Records); this script never deletes records."
+s3run dns_set_a busy.example.com 203.0.113.10
+check "dns 429 said as the rate limit" "$rc:$out" "1:Cloudflare rate limit (HTTP 429 on GET /zones/$Z/dns_records?name=busy.example.com&per_page=100): at most 1200 requests per 5 minutes; wait 5 minutes, then run it again"
+: > "$HOME/seq.log"
+s3run dns_set_a 'a b.example.com' 203.0.113.10
+check "dns bad name refused" "$rc:$out" "1:not a host name: 'a b.example.com' (lower case, like app.example.com)"
+s3run dns_set_a app.example.com 203.0.113.256
+check "dns bad IP refused" "$rc:$out" "1:not an IPv4 address: '203.0.113.256'"
+s3run dns_set_a app.example.com 2001:db8::2
+check "dns IPv6 refused" "$rc:$out" "1:not an IPv4 address: '2001:db8::2'"
+s3run dns_set_a app.example.net 203.0.113.10
+check "dns name outside the zone refused" "$rc:$out" "1:app.example.net is not in the Cloudflare zone example.com"
+check "dns: bad input sent nothing" "$(cat "$HOME/seq.log")" ""
+s3run dns_list old.example.com
+check "dns list" "$rc:$out" "0:$(printf 'type\tcontent\tproxied\tttl\nA\t203.0.113.10\tfalse\t1\nMX\tmx.example.net\tfalse\t1')"
+s3run dns_list nothing.example.com
+check "dns list, no records" "$rc:$out" "0:no records for nothing.example.com"
+check "cf: never a DELETE" "$(grep -c '^cf DELETE' "$HOME/seq.log")" "0"
+check "cf: body temp files deleted" "$(ls -A "$HOME/srvtmp")" ""
+has "cf: token handed to curl on stdin" "$(cat "$HOME/argv.log")" '^curl .* -K - .*/client/v4/user/tokens/verify$'
+unset CF_API
+
 # the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
-leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
-check "s3 creds and webhook URL in no argv and no output" "${leaks:-none}" "none"
+leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
+check "s3 creds, webhook URL and Cloudflare tokens in no argv and no output" "${leaks:-none}" "none"
 check "argv log was written" "$(grep -c '^jq ' "$HOME/argv.log" | awk '{print ($1 > 10) ? "yes" : "no"}')" "yes"
 PATH=${PATH#"$HOME/argvbin:"}; unset TMPDIR BACKUP_POLL_SECONDS
 
