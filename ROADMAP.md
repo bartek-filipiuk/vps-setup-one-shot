@@ -74,6 +74,7 @@ Rules that apply to every item:
   supports it, `SERVER.md` for that project, DNS and repo ownership steps, and the checklist that
   removes the original developer's access. Done when: a second user, with only the pack, deploys a
   change in the harness.
+  (Runbook and read-only helpers done; not run on a server yet.)
 
 ## Later
 

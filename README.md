@@ -83,6 +83,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   symptoms (site down, deploy failed, 502/503/504, certificate error, server unreachable) with
   its fix from `references/`, `ROLLBACK.md` or `RESTORE.md`, or an honest "this needs a human".
   Nothing changes without your yes.
+- `HANDOVER.md` hands a whole server or one project to a client, or adds a colleague: the
+  Coolify invite and role, each person's own API token, `SERVER.md` with who holds what, repo
+  transfer and a new webhook secret, DNS, a table of every secret with how to rotate it, and the
+  checklist that removes the developer's access (SSH key last, never the only one). Coolify cannot
+  isolate one project inside a team; the file says so and offers the ways around it.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
   `/api/health` checking the database, a non-root multi-stage Docker image.
 
@@ -128,6 +133,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   (`test/lib.test.sh`) and have **not been run on a real server yet**; the five symptoms have
   not been broken on purpose on a server. `GET /applications/{uuid}/logs` was checked on a live
   Coolify 4.3.23; its "not running" answer comes from the source and is marked `[verify]`.
+- `HANDOVER.md` (R12), `team_members` and `ssh_keys_list` are tested against a fake Coolify API
+  only (`test/lib.test.sh`) and have **not been run on a real server yet**; no server has been
+  handed over with it. `GET /team/members` and `GET /security/keys` were checked on a live
+  Coolify 4.3.23; invites, roles and tokens have no API, so those parts come from the source and
+  are marked `[verify]`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
