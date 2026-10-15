@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-screen health check of the server, Coolify, apps, services, certificates, backups and alerts.
+# One-screen health check of the server (updates, reboot), Coolify, apps, services, certificates,
+# backups, Postgres major versions and alerts.
 # Run from anywhere on YOUR machine: ./status.sh
 # Exit code: 0 all OK, 1 something needs attention (WARN or FAIL), 2 server or Coolify API unreachable.
 # Read-only: it never changes anything and never prints tokens or deploy logs.
@@ -14,7 +15,7 @@ STATUS_LATEST_URL=${STATUS_LATEST_URL:-https://api.github.com/repos/coollabsio/c
 STATUS_TIMEOUT=${STATUS_TIMEOUT:-$(command -v timeout || command -v gtimeout || echo none)}
 export CAPI_MAX_TIME=15   # per Coolify API call, read by capi in lib.sh
 
-DISK_WARN=85 DISK_FAIL=95 CERT_WARN=14 CERT_FAIL=3 BACKUP_WARN_H=26
+DISK_WARN=85 DISK_FAIL=95 CERT_WARN=14 CERT_FAIL=3 BACKUP_WARN_H=26 REBOOT_WARN_D=7 PG_MIN_MAJOR=17
 
 attention=0 unreachable=0
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -125,7 +126,11 @@ section "Server"
 srv=$("$STATUS_SSH" 'sh -s' 2>/dev/null <<'EOF'
 df -P / | awk 'NR==2 {print "disk", $5+0}'
 free -m | awk '/^Mem:/ {print "mem", $3, $2}'
-if [ -f /var/run/reboot-required ]; then echo "reboot yes"; else echo "reboot no"; fi
+if [ -f /var/run/reboot-required ]; then echo "reboot yes"; echo "reboot_since $(stat -c %Y /var/run/reboot-required)"; else echo "reboot no"; fi
+# apt-check (update-notifier-common) prints "<updates>;<security updates>" on stderr.
+if [ -x /usr/lib/update-notifier/apt-check ]; then
+  /usr/lib/update-notifier/apt-check 2>&1 >/dev/null | awk -F';' 'NF >= 2 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print "updates", $1, $2}'
+else echo "updates none-check"; fi
 EOF
 ); rc=$?
 if [ "$rc" -ne 0 ] || [ -z "$srv" ]; then
@@ -140,11 +145,26 @@ else
   else line OK "disk /" "${disk}% used"; fi
   mem=$(awk '$1=="mem" {print $2 " / " $3 " MB used"}' <<<"$srv")
   line OK "memory" "${mem:-n/a}"
+  # Days since /var/run/reboot-required appeared (its mtime), empty when unknown.
+  since=$(awk '$1=="reboot_since" && $2 ~ /^[0-9]+$/ {print $2}' <<<"$srv")
+  rdays=${since:+$(( (now - since) / 86400 ))}
   case $(awk '$1=="reboot" {print $2}' <<<"$srv") in
     no) line OK "reboot" "not required" ;;
-    yes) line WARN "reboot" "required (kernel or library update)" ;;
+    yes) line WARN "reboot" "required (kernel or library update)${rdays:+, pending $rdays days}" ;;
     *) line WARN "reboot" "n/a" ;;
   esac
+  # Ubuntu package updates (UPGRADE.md, Ubuntu): security updates waiting, or a reboot pending
+  # more than REBOOT_WARN_D days, is due. unattended-upgrades installs security updates daily.
+  read -r _ upd sec <<<"$(awk '$1=="updates"' <<<"$srv")"
+  if [ "${upd:-}" = none-check ]; then line OK "updates" "n/a (no apt-check on the server)"
+  elif [ -z "${sec:-}" ]; then line WARN "updates" "n/a (could not read)"
+  else
+    mark=OK d="$upd pending, $sec security"
+    [ "$upd" = 0 ] && d="none pending"
+    [ "$sec" -gt 0 ] && { mark=WARN; d="$d (security updates not installed yet; UPGRADE.md, Ubuntu)"; }
+    [ -n "$rdays" ] && [ "$rdays" -gt "$REBOOT_WARN_D" ] && { mark=WARN; d="$d; reboot pending $rdays days (UPGRADE.md, Ubuntu)"; }
+    line "$mark" "updates" "$d"
+  fi
 fi
 
 # --- Coolify ---
@@ -167,7 +187,7 @@ else
   if [ -z "$latest" ]; then line OK "version" "$version (latest unknown)"
   elif [ "$latest" = "$version" ]; then line OK "version" "$version (latest)"
   elif [ -n "${i2:-}" ] && [ -n "${l2:-}" ] && { [ "$l1" -gt "$i1" ] || { [ "$l1" -eq "$i1" ] && [ "$l2" -gt "$i2" ]; }; }; then
-    line WARN "version" "$version, latest release $latest (minor or major update behind)"
+    line WARN "version" "$version, latest release $latest (minor or major update behind; UPGRADE.md, Coolify)"
   else line OK "version" "$version (latest release $latest)"; fi
 
   # --- Apps ---
@@ -232,7 +252,7 @@ else
 
   # --- Backups ---
   section "Backups"
-  if ! dbs=$(api /databases | jq -c '.[] | {uuid, name}' 2>/dev/null); then
+  if ! dbs=$(api /databases | jq -c '.[] | {uuid, name, image: (.image // ""), type: (.database_type // "")}' 2>/dev/null); then
     line WARN "databases" "n/a (could not read databases)"
   elif [ -z "$dbs" ]; then
     line OK "databases" "none"
@@ -274,6 +294,23 @@ else
       esac
       offsite "$name" "$s3ids" "$s3all"
     done <<<"$dbs"
+
+    # --- Postgres major versions (UPGRADE.md, Postgres); other databases are skipped ---
+    section "Postgres"
+    pgs=0
+    while IFS= read -r db; do
+      name=$(jq -r .name <<<"$db"); img=$(jq -r .image <<<"$db"); type=$(jq -r .type <<<"$db")
+      case $type in
+        standalone-postgresql) ;;
+        '') case ${img##*/} in postgres:*|postgres) ;; *) continue ;; esac ;;
+        *) continue ;;
+      esac
+      pgs=1
+      if ! major=$(pg_image_major "$img" 2>/dev/null); then line WARN "postgres $name" "n/a (no major version in image '${img:-none}')"
+      elif [ "$major" -lt "$PG_MIN_MAJOR" ]; then line WARN "postgres $name" "$major ($img), major upgrade due (UPGRADE.md, Postgres)"
+      else line OK "postgres $name" "$major ($img)"; fi
+    done <<<"$dbs"
+    [ "$pgs" = 1 ] || line OK "postgres" "none"
   fi
 
   # --- Alerts: Coolify notification channels of the token's team (NOTIFY_EVENTS from lib.sh) ---

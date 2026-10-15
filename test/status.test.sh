@@ -55,7 +55,12 @@ cat >/dev/null
 [ "${FAKE_SSH_RC:-0}" = 0 ] || exit "$FAKE_SSH_RC"
 echo "disk ${FAKE_DISK:-40}"
 echo "mem 1200 3800"
-echo "reboot ${FAKE_REBOOT:-no}"
+if [ -n "${FAKE_REBOOT_SINCE:-}" ]; then   # days since /var/run/reboot-required appeared
+  echo "reboot yes"; echo "reboot_since $(( $(date +%s) - FAKE_REBOOT_SINCE * 86400 - 60 ))"
+else echo "reboot ${FAKE_REBOOT:-no}"; fi
+# apt-check counts; FAKE_UPDATES=missing: no apt-check on the server
+if [ "${FAKE_UPDATES:-0}" = missing ]; then echo "updates none-check"
+else echo "updates ${FAKE_UPDATES:-0} ${FAKE_SECURITY:-0}"; fi
 STUB
 # Fake openssl: s_client prints a placeholder cert, x509 turns it into an expiry FAKE_CERT_DAYS from now.
 cat > "$HOME/bin/fake-openssl" <<'STUB'
@@ -83,7 +88,7 @@ BASE=$(jq -n --arg d "$(ago 2)" --arg b "$(ago_tz 5)" '{
   services: [{uuid: "s1", name: "umami", service_type: "umami", status: "running:healthy",
     applications: [{uuid: "sa1", name: "umami", fqdn: "https://stats.example.test", status: "running:healthy", restart_limit_reached: false}],
     databases: [{uuid: "sd1", name: "postgresql", status: "running:healthy", is_public: false}]}],
-  dbs: [{uuid: "d1", name: "starter-db"}],
+  dbs: [{uuid: "d1", name: "starter-db", database_type: "standalone-postgresql", image: "postgres:17-alpine"}],
   backups: {d1: [{uuid: "b1", enabled: true, frequency: "0 2 * * *", last_execution_at: null, save_s3: true,
     executions: [{uuid: "e0", status: "success", created_at: $b, finished_at: null, s3_uploaded: true}]}]},
   execs: {b1: {executions: [{uuid: "e1", status: "success", created_at: $b, finished_at: null,
@@ -126,6 +131,24 @@ check "no ANSI colors when piped" "$(grep -c $'\033' <<<"$out")" "0"
 FAKE_DISK=90 expect "disk 90" 1 '^WARN +disk / +90% used'
 FAKE_DISK=97 expect "disk 97" 1 '^FAIL +disk / +97% used'
 FAKE_REBOOT=yes expect "reboot" 1 '^WARN +reboot +required'
+
+# Ubuntu updates and Postgres majors (R14): due dates for UPGRADE.md
+run .
+has "all green: updates none" "$out" '^OK +updates +none pending$'
+has "all green: postgres 17" "$out" '^OK +postgres starter-db +17 \(postgres:17-alpine\)$'
+FAKE_UPDATES=12 expect "updates without security" 0 '^OK +updates +12 pending, 0 security$'
+FAKE_UPDATES=12 FAKE_SECURITY=3 expect "security updates" 1 '^WARN +updates +12 pending, 3 security \(security updates not installed yet; UPGRADE\.md, Ubuntu\)$'
+FAKE_UPDATES=missing expect "apt-check missing" 0 '^OK +updates +n/a \(no apt-check on the server\)$'
+FAKE_REBOOT_SINCE=8 expect "reboot pending 8 days" 1 '^WARN +updates +none pending; reboot pending 8 days \(UPGRADE\.md, Ubuntu\)$'
+has "reboot pending 8 days: reboot line" "$out" '^WARN +reboot +required \(kernel or library update\), pending 8 days$'
+FAKE_REBOOT_SINCE=2 expect "reboot pending 2 days" 1 '^OK +updates +none pending$'
+has "reboot pending 2 days: reboot line still WARN" "$out" '^WARN +reboot +required \(kernel or library update\), pending 2 days$'
+expect "postgres 16" 1 '^WARN +postgres starter-db +16 \(postgres:16-alpine\), major upgrade due \(UPGRADE\.md, Postgres\)$' '.dbs[0].image = "postgres:16-alpine"'
+expect "postgres 18" 0 '^OK +postgres starter-db +18 \(postgres:18-alpine\)$' '.dbs[0].image = "postgres:18-alpine"'
+expect "postgres latest" 1 "^WARN +postgres starter-db +n/a \\(no major version in image 'postgres:latest'\\)$" '.dbs[0].image = "postgres:latest"'
+expect "non-postgres skipped" 0 '^OK +postgres +none$' '.dbs[0] += {database_type: "standalone-redis", image: "redis:7.2"}'
+check "non-postgres: no line for it" "$(grep -c '^[A-Z]* *postgres starter-db' <<<"$out")" "0"
+expect "no database_type: image decides" 0 '^OK +postgres starter-db +17 ' '.dbs[0] |= del(.database_type)'
 
 expect "app exited" 1 '^FAIL +app starter +exited:unhealthy' '.apps[0].status = "exited:unhealthy"'
 expect "app degraded" 1 '^FAIL +app starter +degraded' '.apps[0].status = "degraded:unhealthy"'
@@ -216,7 +239,7 @@ expect "alerts: unreadable" 1 '^WARN +alerts +n/a \(could not read\)$' '.notif =
 
 expect "latest unreachable" 0 '^OK +version +4\.3\.23 \(latest unknown\)' 'del(.latest)'
 expect "patch behind" 0 '^OK +version +4\.3\.23 \(latest release 4\.3\.30\)' '.latest.tag_name = "v4.3.30"'
-expect "minor behind" 1 '^WARN +version +4\.3\.23, latest release 4\.4\.0' '.latest.tag_name = "v4.4.0"'
+expect "minor behind" 1 '^WARN +version +4\.3\.23, latest release 4\.4\.0 \(minor or major update behind; UPGRADE\.md, Coolify\)$' '.latest.tag_name = "v4.4.0"'
 expect "major behind" 1 '^WARN +version +4\.3\.23, latest release 5\.0\.1' '.latest.tag_name = "v5.0.1"'
 
 FAKE_SSH_RC=255 expect "ssh down" 2 '^FAIL +ssh +server unreachable'
