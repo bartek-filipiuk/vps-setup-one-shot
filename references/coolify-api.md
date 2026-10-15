@@ -110,6 +110,27 @@ the subject "Coolify: {resource} has been stopped", and `Container/ContainerRest
 it too; there is no separate container-stopped notification. So `NOTIFY_EVENTS` includes it, or
 the R06a drill (stop the app, a message arrives) gets nothing. Not yet seen on a server **[verify]**.
 
+Services (R10: `service_create`, `service_status`, `service_delete`, the `status.sh` Services
+section, `SERVICES.md`). The two `GET` calls were verified live on 4.3.23 on 2026-10-15;
+everything else is from the 4.3.23 source and not yet exercised **[verify]**.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /services` | every service (`service_status`, `status.sh`) | array of `{uuid, name, description, service_type, status, server_status, applications:[...], databases:[...], environment_id, server_id, ...}` (live GET). `applications[]`: `uuid, name, human_name, fqdn, url, image, status, exposes, ports, is_force_https_enabled, restart_count, restart_limit_reached, last_online_at`; `databases[]`: `uuid, name, image, status, is_public, public_port` |
+| `GET /services/{uuid}` | one service | the same object plus `environment` (live GET) |
+| `POST /services {type, name, project_uuid, server_uuid, environment_name, instant_deploy, urls}` | create a one-click service with its domain (`service_create`) | `urls: [{name: <compose service name>, url: "https://domain"}]` sets that application's `fqdn`; returns `{uuid, domains:[...]}`; `instant_deploy:true` starts it. A domain in use is a 409 `{message, conflicts:[...]}` unless `force_domain_override:true` (never sent); validation errors are a 422 `{message, errors}`; on either error Coolify deletes the new service again **[verify]** |
+| `PATCH /services/{uuid}` | `name, description, instant_deploy, docker_compose_raw, urls, force_domain_override` | not used yet **[verify]** |
+| `PATCH /services/{uuid}/applications/{app_uuid} {url}` | change the domain of one application of a service | not used yet **[verify]** |
+| `DELETE /services/{uuid}?delete_volumes=true` | remove a service (`service_delete`, only with `--yes`) | `delete_volumes` defaults to true: the data goes with it **[verify]** |
+| `POST /services/{uuid}/start`, `/stop`, `/restart` | lifecycle | not used yet **[verify]** |
+| `PUT`/`POST /services/{uuid}/storages/{storage_uuid}/backups[/run]` | volume backups of a service | not used yet; `SERVICES.md` step 5 **[verify]** |
+| (none) | scheduled backups of a database inside a service | `/databases/{uuid}/backups` covers standalone databases only; UI only **[verify]** |
+
+One-click templates on 4.3.23 (source): `umami` (umami + postgresql, `SERVICE_URL_UMAMI_3000`),
+`n8n` (also `n8n-with-postgresql`), `uptime-kuma`, `forgejo` (Git over SSH on host port
+`22222`). `minio` and `plausible` are in Coolify's ignored templates, so not one-click; MinIO
+works only as `docker_compose_raw` and is not supported here yet.
+
 Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/events/manual`,
 a GitHub webhook with `content_type: json`, event `push`, and the app's
 `manual_webhook_secret_github` as the secret. Deliveries return 200 and trigger a deploy.
@@ -122,8 +143,10 @@ a GitHub webhook with `content_type: json`, event `push`, and the app's
 - **`is_build_time` is rejected on POST.** Mark build variables in the UI afterwards.
 - **Postgres 18 fails to start** on Coolify's volume layout (`/var/lib/postgresql/data`); use
   `postgres:17-alpine` **[verify on newer Coolify]**.
-- **Compose resources and one-click services cannot get a custom domain via the API** (it reverts
-  to `*.sslip.io`). Anything that needs a domain is an application.
+- **Custom domains for compose resources and one-click services.** An older Coolify was seen
+  reverting a domain set through the API to `*.sslip.io`. On 4.3.23 the source shows
+  `POST /services` with `urls` setting the domain (`service_create`, table above); not yet seen
+  on a server **[verify]**. Your own apps still go in as applications (phase 05, `PREPARE-APP.md`).
 - **Persistent storage has no API.** Add volumes in the UI: app → **Persistent Storage**.
 - **Never set a database `is_public:true`** to reach it from your laptop. Use
   `rssh "docker exec <db_uuid> psql ..."` or an SSH tunnel to the container's IP on the

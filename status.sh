@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-screen health check of the server, Coolify, apps, certificates, backups and alerts.
+# One-screen health check of the server, Coolify, apps, services, certificates, backups and alerts.
 # Run from anywhere on YOUR machine: ./status.sh
 # Exit code: 0 all OK, 1 something needs attention (WARN or FAIL), 2 server or Coolify API unreachable.
 # Read-only: it never changes anything and never prints tokens or deploy logs.
@@ -55,6 +55,7 @@ JQ_EPOCH='def epoch:
 semver() { local v=${1#v}; v=${v%%-*}; case $v in *[!0-9.]*|'') ;; *) tr '.' ' ' <<<"$v" ;; esac; }
 
 now=$(date +%s)
+certs_skipped=0   # set by certs once the "no timeout command" warning is shown
 
 # offsite NAME S3_SCHEDULE_IDS EXECUTIONS_JSON -> the "off-site" line of one database.
 # A run reached S3 when it succeeded and s3_uploaded is true. If the API does not return
@@ -88,6 +89,35 @@ offsite() {
   [ "$rep" = message ] && { d="newest run with no upload error ${h}h ago; S3 upload not reported by API, RESTORE.md step 3 proves it"; m=WARN
     [ "$newest" = failed ] && d="$d; newest upload failed"; }
   line "$m" "off-site $1" "$d"
+}
+
+# certs FQDNS -> one "cert <host>" line per https:// URL in a comma-separated fqdn list (apps
+# and services): days to expiry of the certificate the host serves on 443.
+certs() {
+  local url host end e days
+  # shellcheck disable=SC2016 # $f in the jq filter below is a jq variable
+  while IFS= read -r url; do
+    case $url in https://*) ;; *) continue ;; esac
+    host=${url#https://}; host=${host%%/*}
+    case $host in
+      \[*) line OK "cert $host" "n/a (IPv6 address)"; continue ;;
+      *) host=${host%%:*} ;;
+    esac
+    [ -n "$host" ] || continue
+    if [ "$STATUS_TIMEOUT" = none ]; then
+      [ "$certs_skipped" = 1 ] || line WARN "cert checks" "skipped: no timeout command (brew install coreutils)"
+      certs_skipped=1; continue
+    fi
+    end=$("$STATUS_TIMEOUT" 10 "$STATUS_OPENSSL" s_client -connect "$host:443" -servername "$host" </dev/null 2>/dev/null |
+      "$STATUS_OPENSSL" x509 -noout -enddate 2>/dev/null | sed -n 's/^notAfter=//p')
+    if [ -z "$end" ] || ! e=$(epoch_of "$end"); then
+      line FAIL "cert $host" "unreachable or no certificate"; continue
+    fi
+    days=$(( (e - now) / 86400 ))
+    if [ "$days" -lt "$CERT_FAIL" ]; then line FAIL "cert $host" "expires in $days days"
+    elif [ "$days" -lt "$CERT_WARN" ]; then line WARN "cert $host" "expires in $days days"
+    else line OK "cert $host" "$days days left"; fi
+  done < <(jq -rn --arg f "$1" '$f | split(",") | .[] | gsub("^\\s+|\\s+$"; "") | select(. != "")')
 }
 
 # --- Server: one ssh round-trip ---
@@ -142,7 +172,6 @@ else
 
   # --- Apps ---
   section "Apps"
-  certs_skipped=0
   if ! apps=$(api /applications | jq -c '.[] | {uuid, name, status: (.status // "unknown"), fqdn: (.fqdn // "")}' 2>/dev/null); then
     line WARN "apps" "n/a (could not read applications)"
   elif [ -z "$apps" ]; then
@@ -168,29 +197,37 @@ else
       esac
       line "$mark" "app $name" "$st, last deploy: $dep"
 
-      while IFS= read -r url; do
-        case $url in https://*) ;; *) continue ;; esac
-        host=${url#https://}; host=${host%%/*}
-        case $host in
-          \[*) line OK "cert $host" "n/a (IPv6 address)"; continue ;;
-          *) host=${host%%:*} ;;
-        esac
-        [ -n "$host" ] || continue
-        if [ "$STATUS_TIMEOUT" = none ]; then
-          [ "$certs_skipped" = 1 ] || line WARN "cert checks" "skipped: no timeout command (brew install coreutils)"
-          certs_skipped=1; continue
-        fi
-        end=$("$STATUS_TIMEOUT" 10 "$STATUS_OPENSSL" s_client -connect "$host:443" -servername "$host" </dev/null 2>/dev/null |
-          "$STATUS_OPENSSL" x509 -noout -enddate 2>/dev/null | sed -n 's/^notAfter=//p')
-        if [ -z "$end" ] || ! e=$(epoch_of "$end"); then
-          line FAIL "cert $host" "unreachable or no certificate"; continue
-        fi
-        days=$(( (e - now) / 86400 ))
-        if [ "$days" -lt "$CERT_FAIL" ]; then line FAIL "cert $host" "expires in $days days"
-        elif [ "$days" -lt "$CERT_WARN" ]; then line WARN "cert $host" "expires in $days days"
-        else line OK "cert $host" "$days days left"; fi
-      done < <(jq -r '.fqdn | split(",") | .[] | gsub("^\\s+|\\s+$"; "") | select(. != "")' <<<"$app")
+      certs "$(jq -r .fqdn <<<"$app")"
     done <<<"$apps"
+  fi
+
+  # --- Services: Coolify one-click services (SERVICES.md) ---
+  section "Services"
+  # Per service: status, the fqdns of its applications, the applications at the restart limit.
+  if ! svcs=$(api /services | jq -c 'if type == "array" then .[] else error("not a list") end
+      | {name: (.name // "?"), status: (.status // "unknown"),
+         fqdn: ([.applications[]? | .fqdn // "" | select(. != "")] | join(",")),
+         limit: ([.applications[]? | select(.restart_limit_reached == true) | .name // "?"] | join(", "))}' 2>/dev/null); then
+    line WARN "services" "n/a (could not read services)"
+  elif [ -z "$svcs" ]; then
+    line OK "services" "none"
+  else
+    while IFS= read -r svc; do
+      name=$(jq -r .name <<<"$svc"); st=$(jq -r .status <<<"$svc")
+      fqdn=$(jq -r .fqdn <<<"$svc"); limit=$(jq -r .limit <<<"$svc")
+      # running:unknown is a template without a health check, as for apps.
+      case $st in
+        running:unhealthy|degraded*) mark=WARN ;;
+        running*) mark=OK ;;
+        starting*|restarting*) mark=WARN ;;
+        *) mark=FAIL ;;
+      esac
+      d=$st
+      [ -n "$fqdn" ] && d="$d, ${fqdn//,/, }"
+      [ -n "$limit" ] && { mark=FAIL; d="$d, restart limit reached: $limit"; }
+      line "$mark" "service $name" "$d"
+      certs "$fqdn"
+    done <<<"$svcs"
   fi
 
   # --- Backups ---

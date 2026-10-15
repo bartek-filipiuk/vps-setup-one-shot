@@ -276,6 +276,116 @@ ssh_keys_list() {
   jq -r '.[]? | [(.uuid // ""), (.name // ""), (.fingerprint // ""), (if .is_git_related then "yes" else "no" end)] | @tsv' <<<"$r"
 }
 
+# --- self-hosted tools: Coolify one-click services (R10, SERVICES.md) ---
+
+# The one-click templates this guide supports on Coolify 4.3.23. In each of them the compose
+# service that serves the web UI has the template's name, so that is the default for the
+# domain [verify]. A new type is one more word here, after a run on a server.
+SERVICE_TYPES="umami n8n uptime-kuma forgejo"
+
+# service_valid_uuid UUID -> 0 for a Coolify-style uuid (letters, digits, - and _), so it is safe
+# in an API path.
+service_valid_uuid() {
+  case ${1:-} in ''|*[!A-Za-z0-9_-]*) echo "not a Coolify uuid: '${1:-}'" >&2; return 1 ;; esac
+}
+
+# service_create TYPE NAME DOMAIN [COMPOSE_SERVICE] -> creates the one-click service TYPE named
+# NAME in the setup's project (PROJECT_UUID), environment production, with https://DOMAIN on
+# COMPOSE_SERVICE (default: TYPE), and starts it (instant_deploy). Records
+# SERVICE_<NAME>_UUID (upper case, - as _). On a domain conflict (409) or a validation error
+# (422) Coolify deletes the new service again [verify]; the reason is printed, nothing to clean up.
+service_create() {
+  local type=${1:-} name=${2:-} domain svc=${4:-${1:-}} project server body res code msg key uuid
+  domain=$(tr '[:upper:]' '[:lower:]' <<<"${3:-}")
+  [ -n "$type" ] && [ -n "$name" ] && [ -n "$domain" ] ||
+    { echo "usage: service_create TYPE NAME DOMAIN [COMPOSE_SERVICE]  (TYPE: $SERVICE_TYPES)" >&2; return 1; }
+  case " $SERVICE_TYPES " in
+    *" $type "*) ;;
+    *) echo "service type '$type' is not supported; one of: $SERVICE_TYPES (SERVICES.md)" >&2; return 1 ;;
+  esac
+  case $name in
+    ''|-*|*[!a-z0-9-]*) echo "service name must be lower-case letters, digits and dashes, got '$name'" >&2; return 1 ;;
+  esac
+  case $domain in
+    *[!a-z0-9.-]*|.*|*.|*..*|-*|*.-*|*-.*|*-) domain=x ;;
+    *.*) [ "${#domain}" -le 253 ] || domain=x ;;
+    *) domain=x ;;
+  esac
+  [ "$domain" != x ] ||
+    { echo "not a domain name: '${3:-}' (the host only, like stats.example.com, no https://)" >&2; return 1; }
+  case $svc in ''|*[!a-z0-9_-]*) echo "not a compose service name: '$svc'" >&2; return 1 ;; esac
+  key=SERVICE_$(tr 'a-z-' 'A-Z_' <<<"$name")_UUID
+  if [ -n "$(state_get "$key")" ]; then
+    echo "service $name already recorded as $key=$(state_get "$key"); pick another name, or service_delete it first. Nothing was created." >&2; return 1
+  fi
+  project=$(state_get PROJECT_UUID)
+  [ -n "$project" ] || { echo "service_create: no PROJECT_UUID in $VPS_STATE (phase 05)" >&2; return 1; }
+  server=$(coolify_server) && [ -n "$server" ] || { echo "service_create: no Coolify server found (phase 04 step 4)" >&2; return 1; }
+  body=$(jq -n --arg t "$type" --arg n "$name" --arg p "$project" --arg s "$server" --arg c "$svc" --arg u "https://$domain" \
+    '{type:$t, name:$n, project_uuid:$p, server_uuid:$s, environment_name:"production",
+      instant_deploy:true, urls:[{name:$c, url:$u}]}') || return 1
+  if ! res=$(capi POST /services "$body" 2>&1); then
+    # capi's error is "HTTP <code> POST /services: <body>"
+    code=$(sed -n '1s/^HTTP \([0-9]*\) .*/\1/p' <<<"$res")
+    msg=$(sed '1s/^HTTP [0-9]* [A-Z]* [^ ]*: //' <<<"$res")
+    case $code in
+      409)
+        msg=$(jq -r '[.conflicts[]? | "\(.resource_name // .resource_uuid // "another resource")\(if .resource_type then " (\(.resource_type))" else "" end)"]
+          | unique | join(", ")' <<<"$msg" 2>/dev/null)
+        echo "domain $domain is already used by ${msg:-another resource in Coolify}; pick another domain or free this one first. Nothing was created." >&2 ;;
+      422)
+        msg=$(jq -r '[.message // empty] + [(.errors // {}) | to_entries[]
+          | "\(.key): \(.value | if type == "array" then join(" ") else tostring end)"] | join("; ")' <<<"$msg" 2>/dev/null)
+        echo "Coolify refused the service (HTTP 422): ${msg:-no message}. Nothing was created." >&2 ;;
+      *) echo "$res" >&2 ;;
+    esac
+    return 1
+  fi
+  uuid=$(jq -r '.uuid // empty' <<<"$res")
+  [ -n "$uuid" ] || { echo "no uuid in the response to POST /services" >&2; return 1; }
+  state_set "$key" "$uuid"
+  echo "service $name ($type) created: $uuid, recorded as $key"
+  echo "domain: $(jq -r '[.domains[]? | if type == "string" then . else (.url // .domain // tostring) end] | join(", ")
+    | if . == "" then "none in the answer" else . end' <<<"$res")"
+  echo "Coolify is pulling the images and starting it; next: the HTTPS wait (SERVICES.md step 4)."
+}
+
+# service_status [UUID] -> every service (or one) as TSV, read-only: kind (service, app, db),
+# service, name, status, fqdn, restart_limit (yes/no). The rows of a service follow its own row.
+service_status() {
+  local r
+  if [ -n "${1:-}" ]; then
+    service_valid_uuid "$1" || return 1
+    r=$(capi GET "/services/$1") || return 1
+  else
+    r=$(capi GET /services) || return 1
+  fi
+  printf 'kind\tservice\tname\tstatus\tfqdn\trestart_limit\n'
+  jq -r '(if type == "array" then .[] else . end) | (.name // "") as $s
+    | ["service", $s, $s, (.status // "unknown"), "", ""],
+      (.applications[]? | ["app", $s, (.name // ""), (.status // "unknown"), (.fqdn // ""),
+        (if .restart_limit_reached == true then "yes" else "no" end)]),
+      (.databases[]? | ["db", $s, (.name // ""), (.status // "unknown"), "", ""])
+    | @tsv' <<<"$r"
+}
+
+# service_delete UUID --yes -> deletes the service with its volumes (DELETE
+# /services/{uuid}?delete_volumes=true): its database and every file it stored are gone. Without
+# --yes it refuses and sends nothing; pass --yes only after the user said yes to exactly this.
+service_delete() {
+  local uuid=${1:-} r name
+  [ -n "$uuid" ] || { echo "usage: service_delete UUID --yes" >&2; return 1; }
+  service_valid_uuid "$uuid" || return 1
+  if [ "${2:-}" != --yes ]; then
+    echo "service_delete: refusing without --yes. This deletes service $uuid with its volumes: its database and files are gone for good. Ask the user, then: service_delete $uuid --yes" >&2
+    return 1
+  fi
+  r=$(capi GET "/services/$uuid") || return 1
+  name=$(jq -r '.name // "?"' <<<"$r")
+  capi DELETE "/services/$uuid?delete_volumes=true" >/dev/null || return 1
+  echo "service $name ($uuid) deleted with its volumes; Coolify removes the containers in the background"
+}
+
 # --- off-site backups: Coolify scheduled backups copied to S3-compatible storage (RESTORE.md) ---
 
 # S3 credentials: S3_KEY= and S3_SECRET= lines in S3_ENV (default ~/.config/vps-setup/s3.env,

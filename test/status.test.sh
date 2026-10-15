@@ -34,6 +34,7 @@ class H(BaseHTTPRequestHandler):
         if p == ["version"]: return pick(s.get("version"))
         if p == ["applications"]: return pick(s.get("apps"))
         if p[:2] == ["deployments", "applications"]: return pick(s.get("deploys", {}).get(p[2]))
+        if p == ["services"]: return pick(s.get("services"))
         if p == ["databases"]: return pick(s.get("dbs"))
         if len(p) == 3 and p[0] == "databases" and p[2] == "backups": return pick(s.get("backups", {}).get(p[1]))
         if len(p) == 5 and p[4] == "executions": return pick(s.get("execs", {}).get(p[3]))
@@ -79,6 +80,9 @@ BASE=$(jq -n --arg d "$(ago 2)" --arg b "$(ago_tz 5)" '{
   deploys: {a1: {count: 1, deployments: [
     {status: "finished", created_at: $d, finished_at: $d, commit: "abc123", application_name: "starter", logs: "SECRET-LOG-LINE"},
     {status: "failed", created_at: "2026-01-01T00:00:00.000000Z", finished_at: "2026-01-01T00:01:00.000000Z", commit: "old", application_name: "starter"}]}},
+  services: [{uuid: "s1", name: "umami", service_type: "umami", status: "running:healthy",
+    applications: [{uuid: "sa1", name: "umami", fqdn: "https://stats.example.test", status: "running:healthy", restart_limit_reached: false}],
+    databases: [{uuid: "sd1", name: "postgresql", status: "running:healthy", is_public: false}]}],
   dbs: [{uuid: "d1", name: "starter-db"}],
   backups: {d1: [{uuid: "b1", enabled: true, frequency: "0 2 * * *", last_execution_at: null, save_s3: true,
     executions: [{uuid: "e0", status: "success", created_at: $b, finished_at: null, s3_uploaded: true}]}]},
@@ -136,6 +140,27 @@ expect "deploy queued" 0 '^OK +app starter .*last deploy: queued' '.deploys.a1.d
 expect "no deploys yet" 0 '^OK +app starter .*last deploy: none$' '.deploys.a1 = {count: 0, deployments: []}'
 expect "deployments unreadable" 1 '^WARN +app starter .*last deploy: n/a \(could not read\)' '.deploys.a1 = {unexpected: 1}'
 expect "deployments 404" 1 '^WARN +app starter .*last deploy: n/a \(could not read\)' 'del(.deploys)'
+
+# services (R10): one line per service, its domains' certificates like the apps'
+run .
+has "all green: service" "$out" '^OK +service umami +running:healthy, https://stats\.example\.test$'
+has "all green: service cert" "$out" '^OK +cert stats\.example\.test +(59|60) days left'
+expect "service unhealthy" 1 '^WARN +service umami +running:unhealthy, https://stats\.example\.test$' '.services[0].status = "running:unhealthy"'
+expect "service degraded" 1 '^WARN +service umami +degraded:unhealthy' '.services[0].status = "degraded:unhealthy"'
+expect "service exited" 1 '^FAIL +service umami +exited, https://stats\.example\.test$' '.services[0].status = "exited"'
+expect "service starting" 1 '^WARN +service umami +starting' '.services[0].status = "starting"'
+expect "service plain running" 0 '^OK +service umami +running' '.services[0].status = "running"'
+expect "service no health check" 0 '^OK +service umami +running:unknown' '.services[0].status = "running:unknown"'
+expect "service restart limit" 1 '^FAIL +service umami +running:healthy, https://stats\.example\.test, restart limit reached: umami$' \
+  '.services[0].applications[0].restart_limit_reached = true'
+expect "service two domains" 0 '^OK +service umami +running:healthy, https://a\.example\.test, https://b\.example\.test$' \
+  '.services[0].applications[0].fqdn = "https://a.example.test,https://b.example.test"'
+has "service two domains: both certs" "$(grep -cE '^OK +cert [ab]\.example\.test' <<<"$out")" '^2$'
+expect "services none" 0 '^OK +services +none$' '.services = []'
+check "services none: no service cert" "$(grep -c 'stats\.example' <<<"$out")" "0"
+expect "services 404" 1 '^WARN +services +n/a \(could not read services\)$' 'del(.services)'
+expect "services unreadable" 1 '^WARN +services +n/a \(could not read services\)$' '.services = {unexpected: 1}'
+FAKE_CERT_DAYS=10 expect "service cert 10d" 1 '^WARN +cert stats\.example\.test +expires in (9|10) days'
 
 FAKE_CERT_DAYS=10 expect "cert 10d" 1 '^WARN +cert app\.example\.test +expires in (9|10) days'
 FAKE_CERT_DAYS=2 expect "cert 2d" 1 '^FAIL +cert app\.example\.test +expires in (1|2) days'
