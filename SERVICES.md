@@ -52,6 +52,16 @@ Ask which tool from the table, a short name for it (lower case, digits, dashes; 
 type) and its domain, a subdomain of theirs such as `stats.<DOMAIN>`. The user adds an **A**
 record for that name pointing at `VPS_IP`, and no AAAA record (as in phase 01, step 4).
 
+With `DNS_PROVIDER=cloudflare` you create the record instead (replace `<SERVICE_DOMAIN>`):
+
+```
+. ./lib.sh; dns_set_a "<SERVICE_DOMAIN>" "$(state_get VPS_IP)"
+```
+
+Expect `A created -> <ip>` (or `unchanged`), DNS only. `exit 1` (a CNAME or several A records)
+and `exit 2` (an AAAA record) are read as in phase 01, step 4: the user removes the extra record
+in Cloudflare.
+
 ## 2. DNS gate (you)
 
 A service created before DNS points at the server gets no certificate, and every retry counts
@@ -144,6 +154,7 @@ sentence, name the service, and wait for an explicit yes to exactly this. Then:
 ```
 
 Without `--yes` it refuses and sends nothing; never add `--yes` before the user's yes.
-`delete_volumes=true` is what removes the data. The user then deletes the A record of the
-domain, and, for Forgejo, the 22222 firewall rule if it was added
+`delete_volumes=true` is what removes the data. The A record stays: this guide never deletes
+DNS records (with `DNS_PROVIDER=cloudflare`, `. ./lib.sh; dns_list "<SERVICE_DOMAIN>"` shows it).
+The user deletes it in their DNS provider (Cloudflare: DNS → Records), and, for Forgejo, the 22222 firewall rule if it was added
 (`hcloud firewall delete-rule vps-setup-fw --direction in --protocol tcp --port 22222 --source-ips 0.0.0.0/0 --source-ips ::/0`).

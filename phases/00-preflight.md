@@ -2,6 +2,7 @@
 
 **Done when** `./verify.sh` shows all `00 preflight` checks green: tools installed, `gh` logged
 in, an SSH key exists, and PROVIDER, DOMAIN, COOLIFY_DOMAIN, APP_DOMAIN, APP_NAME are recorded.
+With `DNS_PROVIDER=cloudflare`, `cf_check` also passed (step 4a).
 
 Tell the user: "First I'll check your machine and ask a few questions once, so the rest runs
 without interruptions."
@@ -59,8 +60,40 @@ Always record the key and this repo's location (the absolute path, used later in
    `nbg1` (Nuremberg) or `hel1` (Helsinki) for Europe, `ash` (Ashburn) or `hil` (Hillsboro)
    for the US → `HCLOUD_LOCATION`. Phase 01 checks it is valid once `hcloud` is logged in.
    Skip when the server already exists.
+6. **DNS provider.** "Is the DNS of <DOMAIN> managed at Cloudflare?" (`dig +short NS <DOMAIN>`
+   ending in `ns.cloudflare.com` says yes.) Yes, and they want you to create the records →
+   `DNS_PROVIDER=cloudflare`, then step 4a. Anything else → `DNS_PROVIDER=other`: they add two
+   records by hand in phase 01.
 
 Example: `. ./lib.sh; state_set PROVIDER hetzner; state_set DOMAIN example.com`
+
+### 4a. Cloudflare token (user, then you; only for `DNS_PROVIDER=cloudflare`)
+
+The user creates a token that can edit DNS of this one zone and nothing else:
+dash.cloudflare.com → profile icon (top right) → **My Profile** → **API Tokens** → **Create
+Token** → template **Edit zone DNS** → **Use template** → under **Zone Resources** keep
+`Include` · `Specific zone` and pick the zone of <DOMAIN> → **Continue to summary** → **Create
+Token**. Cloudflare shows the token once. They write it into a file in their own terminal:
+
+```
+( mkdir -p ~/.config/vps-setup && umask 077 && printf 'Cloudflare API token: ' && read -rs T && echo &&
+printf 'CF_API_TOKEN=%s\n' "$T" > ~/.config/vps-setup/cloudflare.env && chmod 600 ~/.config/vps-setup/cloudflare.env && echo saved )
+```
+
+The token never goes into the chat. Then you check it and record the zone:
+
+```
+. ./lib.sh; cf_check
+```
+
+Expect `Cloudflare token active; zone <zone> (<id>), status active`. What else it can say:
+
+- `Invalid API Token`, `token is expired`, `token does not work`: they create a new token and
+  run the command above again.
+- `no Cloudflare zone for ...`: the token is for another zone, or the domain is not in this
+  Cloudflare account. A new token for the right zone, or `DNS_PROVIDER=other`.
+- `warning: zone ... is pending`: the domain's name servers are not Cloudflare's yet; records
+  made there do not resolve. The user finishes the move at their registrar, or `DNS_PROVIDER=other`.
 
 ## 5. Existing Coolify config
 

@@ -34,7 +34,8 @@ Read /path/to/vps-setup-one-shot/PREPARE-APP.md and prepare this app for deploym
 - A computer with macOS, Linux or Windows with WSL2, plus `git`. The agent installs the rest
   (`gh`, `jq`, `dig`, `hcloud`) after asking.
 - A GitHub account.
-- A domain where you can edit DNS records.
+- A domain where you can edit DNS records (at Cloudflare, the agent creates them with a token you
+  make for that one zone).
 - A Hetzner Cloud account (new accounts may need identity verification, which can take hours),
   a fresh Hetzner server you already have, or a fresh Ubuntu 24.04 server from any provider.
 
@@ -46,7 +47,8 @@ Delete the server and billing stops; `~/.config/vps-setup/SERVER.md` lists the t
 
 ## What you do vs. what the agent does
 
-You: create accounts, pay, add two DNS records, register the Coolify admin, create two API
+You: create accounts, pay, add two DNS records (or, with DNS at Cloudflare, create one DNS
+token instead), register the Coolify admin, create two API
 tokens (typed into your own terminal, never into the chat), choose backups (and, for off-site
 ones, create a storage bucket and its key pair), create a Discord webhook for alerts.
 
@@ -98,6 +100,9 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   the reboot window, and a Postgres major version moved into a new database with the old one
   kept for a way back. `status.sh` says when each is due: pending security updates or an old
   reboot, and the Postgres major of every database.
+- With DNS at Cloudflare, phase 01 and `SERVICES.md` create the A records through the
+  Cloudflare API (`dns_set_a` in `lib.sh`: DNS only, created or updated, never deleted) from a
+  token for that one zone; the `dig` check in phase 04 stays as the proof they resolve.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
   `/api/health` checking the database, a non-root multi-stage Docker image.
 
@@ -160,6 +165,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   have **not been run on a real server yet**; no Coolify, Ubuntu or Postgres upgrade has been
   done with them. The upgrade script, the missing upgrade API and the database calls come from
   the Coolify 4.3.23 source and docs and are marked `[verify]`.
+- DNS through the Cloudflare API (R18: `cf_check`, `dns_set_a`, `dns_list` in `lib.sh`, phase 00
+  step 4a, phase 01 step 4, `SERVICES.md`) is tested against a fake Cloudflare API only
+  (`test/lib.test.sh`) and has **not been run on a real server or a real Cloudflare zone yet**; no
+  record has been created with it. The calls come from the Cloudflare API documentation; the
+  answers not described there, and DNS only being required, are marked `[assumed]` in
+  `references/cloudflare-api.md`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
@@ -168,5 +179,5 @@ Tested with: Coolify 4.3.23, Ubuntu 24.04, Next.js 16.3, Postgres 17.
 ## Not included yet
 
 Staging/preview environments, uptime checks from outside with a status page (R06b), apps that
-are not Node.js, Git hosts other than GitHub, DNS automation. What comes next, in which order
+are not Node.js, Git hosts other than GitHub, DNS through the API for providers other than Cloudflare. What comes next, in which order
 and how we will know it is done: [ROADMAP.md](ROADMAP.md).

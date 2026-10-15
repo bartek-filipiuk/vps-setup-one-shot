@@ -94,8 +94,11 @@ Rules that apply to every item:
   success rate, disk growth, and what the servers cost this month. Ends with actions, each with a
   runbook. Done when: it runs on the harness server with no false positives on a clean setup.
 - **R18 DNS through the API.** Cloudflare first, then the providers users ask for: the agent
-  creates the records and the `dig` gate becomes a formality. Done when: a harness run on a
+  creates the records and the `dig` gate becomes a formality. Cloudflare: `cf_check`,
+  `dns_set_a`, `dns_list` in `lib.sh` with a one-zone "Edit zone DNS" token (phases 00 and 01,
+  `SERVICES.md`; A records DNS only, never deleted). Done when: a harness run on a
   Cloudflare-managed test domain needs no DNS click.
+  (Code and fake-API tests done; not run on a server yet.)
 - **R19 Agent packaging.** A Claude Code plugin (`/vps-setup`, `/vps-status`, `/vps-doctor`) and
   parity for Codex and Cursor through `AGENTS.md`; the markdown stays the source, a test diffs the
   two. Done when: the harness passes through the plugin and through plain markdown.

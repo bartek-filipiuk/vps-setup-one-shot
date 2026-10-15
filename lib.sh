@@ -755,3 +755,177 @@ notify_setup() {
   state_set ALERTS "$ch"
   echo "Next: Coolify -> Notifications -> $(notify_label "$ch") -> Send test notification (the API has no test call)."
 }
+
+# --- DNS through the Cloudflare API (R18, phases 00, 01, 04; references/cloudflare-api.md) ---
+
+# The token: a CF_API_TOKEN= line in CF_ENV (default ~/.config/vps-setup/cloudflare.env, mode
+# 600), typed in by the user (phase 00, question 6). An "Edit zone DNS" token for one zone. Read
+# with grep, never sourced, and never on a command line: curl reads the Authorization header from
+# a config on its stdin (-K -). CF_API is the base URL (tests point it at a fake API).
+cf_env_file() { echo "${CF_ENV:-$HOME/.config/vps-setup/cloudflare.env}"; }
+cf_cred() { grep -m1 "^$1=" "$(cf_env_file)" 2>/dev/null | cut -d= -f2-; }
+
+# cf_env_check -> 0 when cloudflare.env exists, is private and has a token line that looks like
+# a Cloudflare token (letters, digits, - and _ only, so it cannot break curl's config).
+cf_env_check() {
+  local f mode tok; f=$(cf_env_file)
+  [ -f "$f" ] || { echo "no Cloudflare token: $f is missing (phase 00, question 6)" >&2; return 1; }
+  mode=$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f")
+  case "$mode" in 600|400) ;; *) echo "refusing $f: mode $mode, must be 600 (chmod 600 $f)" >&2; return 1 ;; esac
+  tok=$(cf_cred CF_API_TOKEN)
+  [ -n "$tok" ] || { echo "$f needs a CF_API_TOKEN= line" >&2; return 1; }
+  case $tok in *[!A-Za-z0-9_-]*) echo "CF_API_TOKEN in $f has characters a Cloudflare token does not have; write it again (phase 00, question 6)" >&2; return 1 ;; esac
+}
+
+# cfapi METHOD /path [json-body] -> prints the response when Cloudflare says success:true.
+# Otherwise returns 1 and prints "code: message" for each error (never the raw body); HTTP 429
+# (the rate limit) is said as such. The body goes through a 600 temp file (curl's stdin carries
+# the token), deleted when the call ends. Each call gives up after CAPI_MAX_TIME seconds.
+cfapi() (
+  m=${1:-} p=${2:-} body=${3:-} tmp=
+  trap 'rm -f "$tmp"' EXIT
+  cf_env_check || exit 1
+  if [ -n "$body" ]; then
+    tmp=$(umask 077 && mktemp) || exit 1
+    printf '%s' "$body" > "$tmp"
+  fi
+  data=(); [ -n "$tmp" ] && data=(--data-binary "@$tmp")
+  out=$(printf 'header = "Authorization: Bearer %s"\n' "$(cf_cred CF_API_TOKEN)" |
+    curl -sS --max-time "${CAPI_MAX_TIME:-30}" -w '\n%{http_code}' -X "$m" -K - \
+      -H "Accept: application/json" -H "Content-Type: application/json" \
+      "${data[@]}" "${CF_API:-https://api.cloudflare.com/client/v4}$p") || exit 1
+  code=${out##*$'\n'}; out=${out%$'\n'*}
+  if [ "$code" = 429 ]; then
+    echo "Cloudflare rate limit (HTTP 429 on $m $p): at most 1200 requests per 5 minutes; wait 5 minutes, then run it again" >&2
+    exit 1
+  fi
+  if ! jq -e 'type == "object" and has("success")' >/dev/null 2>&1 <<<"$out"; then
+    echo "Cloudflare answered HTTP $code to $m $p without its JSON envelope" >&2; exit 1
+  fi
+  if [ "$(jq -r '.success' <<<"$out")" != true ]; then
+    echo "Cloudflare refused $m $p (HTTP $code):" >&2
+    jq -r '(.errors // [])[] | "  \(.code // "?"): \(.message // "no message")"' <<<"$out" >&2
+    exit 1
+  fi
+  printf '%s\n' "$out"
+)
+
+# cf_valid_name NAME -> 0 for a lower-case host name with at least two labels.
+cf_valid_name() {
+  local n=${1:-}
+  [ "${#n}" -le 253 ] && [[ $n =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
+    { echo "not a host name: '$n' (lower case, like app.example.com)" >&2; return 1; }
+}
+
+# cf_valid_ipv4 IP -> 0 for a dotted IPv4 address.
+cf_valid_ipv4() {
+  local ip=${1:-} o
+  if [[ $ip =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+    for o in "${BASH_REMATCH[@]:1}"; do
+      case $o in 0?*) echo "not an IPv4 address (leading zero): '$ip'" >&2; return 1 ;; esac
+      [ "$((10#$o))" -le 255 ] || { echo "not an IPv4 address: '$ip'" >&2; return 1; }
+    done
+    case ${BASH_REMATCH[1]} in 0|127) echo "not a public IPv4 address: '$ip'" >&2; return 1 ;; esac
+    return 0
+  fi
+  echo "not an IPv4 address: '$ip'" >&2; return 1
+}
+
+# The zone lives in the global setup state, also when VPS_STATE points at an app's .coolify.env
+# (PREPARE-APP): one domain, one zone, one token per server.
+
+# cf_check -> the token is active and can see the zone of DOMAIN (the longest suffix of DOMAIN
+# that is a zone in the account); records CF_ZONE_ID and CF_ZONE and prints both. A zone that
+# is not "active" (name servers not moved to Cloudflare yet) is a warning: its records do not
+# resolve until it is.
+cf_check() {
+  local VPS_STATE=$VPS_SETUP_STATE domain cand r st zone id zst
+  domain=$(state_get DOMAIN)
+  [ -n "$domain" ] || { echo "no DOMAIN in $VPS_STATE (phase 00, question 2)" >&2; return 1; }
+  cf_valid_name "$domain" || return 1
+  cf_env_check || return 1
+  r=$(cfapi GET /user/tokens/verify) || { echo "The Cloudflare token does not work; create a new one (phase 00, question 6)" >&2; return 1; }
+  st=$(jq -r '.result.status // "unknown"' <<<"$r")
+  [ "$st" = active ] || { echo "Cloudflare token is $st, not active; create a new one (phase 00, question 6)" >&2; return 1; }
+  cand=$domain
+  while :; do
+    r=$(cfapi GET "/zones?name=$cand") || return 1
+    id=$(jq -r --arg c "$cand" '[.result[]? | select(.name == $c)][0].id // empty' <<<"$r")
+    [ -n "$id" ] && break
+    case $cand in *.*.*) cand=${cand#*.} ;; *) cand= ; break ;; esac
+  done
+  [ -n "$cand" ] || { echo "no Cloudflare zone for $domain that this token can read; create an \"Edit zone DNS\" token for that zone (phase 00, question 6)" >&2; return 1; }
+  [[ $id =~ ^[0-9a-f]{32}$ ]] || { echo "unexpected zone id from Cloudflare: '$id'" >&2; return 1; }
+  zone=$cand; zst=$(jq -r --arg c "$cand" '[.result[]? | select(.name == $c)][0].status // "unknown"' <<<"$r")
+  state_set CF_ZONE_ID "$id"; state_set CF_ZONE "$zone"
+  echo "Cloudflare token active; zone $zone ($id), status $zst"
+  [ "$zst" = active ] || echo "warning: zone $zone is $zst, not active: its records do not resolve until the domain's name servers are Cloudflare's"
+  return 0
+}
+
+# cf_zone_of NAME -> the recorded zone id when NAME is the zone or inside it.
+cf_zone_of() {
+  local VPS_STATE=$VPS_SETUP_STATE z id; z=$(state_get CF_ZONE); id=$(state_get CF_ZONE_ID)
+  [ -n "$z" ] && [[ $id =~ ^[0-9a-f]{32}$ ]] || { echo "no Cloudflare zone recorded; run cf_check first (phase 00, question 6)" >&2; return 1; }
+  case $1 in "$z"|*."$z") echo "$id" ;; *) echo "$1 is not in the Cloudflare zone $z" >&2; return 1 ;; esac
+}
+
+# dns_list NAME -> every record of exactly NAME: type, content, proxied, ttl (1 = automatic).
+# Read-only.
+dns_list() {
+  local name=${1:-} z r
+  [ -n "$name" ] || { echo "usage: dns_list NAME" >&2; return 1; }
+  cf_valid_name "$name" || return 1
+  z=$(cf_zone_of "$name") || return 1
+  r=$(cfapi GET "/zones/$z/dns_records?name=$name&per_page=100") || return 1
+  if [ "$(jq '.result | length' <<<"$r")" = 0 ]; then echo "no records for $name"; return 0; fi
+  printf 'type\tcontent\tproxied\tttl\n'
+  jq -r '.result[] | [.type, .content, (.proxied // false | tostring), (.ttl | tostring)] | @tsv' <<<"$r"
+}
+
+# dns_set_a NAME IP -> makes NAME an A record to IP, DNS only (proxied false), TTL automatic:
+# creates it, leaves it when it already is that, or updates the one A record that differs. Refuses
+# (nothing sent) when NAME has a CNAME or several A records. Never deletes a record. Returns 2,
+# after the A record is right, when NAME also has an AAAA record: phase 01 wants none, the user
+# deletes it in Cloudflare.
+dns_set_a() {
+  local name=${1:-} ip=${2:-} z r n_a n_aaaa id old oldp res
+  [ -n "$name" ] && [ -n "$ip" ] || { echo "usage: dns_set_a NAME IPV4" >&2; return 1; }
+  cf_valid_name "$name" || return 1
+  cf_valid_ipv4 "$ip" || return 1
+  z=$(cf_zone_of "$name") || return 1
+  r=$(cfapi GET "/zones/$z/dns_records?name=$name&per_page=100") || return 1
+  if [ "$(jq '[.result[] | select(.type == "CNAME")] | length' <<<"$r")" != 0 ]; then
+    echo "$name is a CNAME to $(jq -r '[.result[] | select(.type == "CNAME")][0].content' <<<"$r"); an A record cannot sit next to it. Nothing changed. If the CNAME is not needed, the user deletes it in Cloudflare (DNS -> Records), then run this again." >&2
+    return 1
+  fi
+  n_a=$(jq '[.result[] | select(.type == "A")] | length' <<<"$r")
+  n_aaaa=$(jq '[.result[] | select(.type == "AAAA")] | length' <<<"$r")
+  if [ "$n_a" -gt 1 ]; then
+    echo "$name has $n_a A records; nothing changed. The user keeps one (or deletes all) in Cloudflare (DNS -> Records), then run this again:" >&2
+    jq -r '.result[] | select(.type == "A") | "  A \(.content) proxied \(.proxied // false)"' <<<"$r" >&2
+    return 1
+  fi
+  if [ "$n_a" = 0 ]; then
+    res=$(cfapi POST "/zones/$z/dns_records" "$(jq -n --arg n "$name" --arg ip "$ip" \
+      '{type:"A", name:$n, content:$ip, ttl:1, proxied:false, comment:"vps-setup"}')") || return 1
+    [ -n "$(jq -r '.result.id // empty' <<<"$res")" ] || { echo "no record id in Cloudflare's answer to the create" >&2; return 1; }
+    echo "$name: A created -> $ip (DNS only, TTL auto)"
+  else
+    id=$(jq -r '[.result[] | select(.type == "A")][0].id' <<<"$r")
+    old=$(jq -r '[.result[] | select(.type == "A")][0].content' <<<"$r")
+    oldp=$(jq -r '[.result[] | select(.type == "A")][0].proxied // false' <<<"$r")
+    if [ "$old" = "$ip" ] && [ "$oldp" = false ]; then
+      echo "$name: A unchanged ($ip, DNS only)"
+    else
+      [[ $id =~ ^[0-9a-f]{32}$ ]] || { echo "unexpected record id from Cloudflare: '$id'" >&2; return 1; }
+      cfapi PATCH "/zones/$z/dns_records/$id" "$(jq -n --arg ip "$ip" '{content:$ip, proxied:false}')" >/dev/null || return 1
+      echo "$name: A updated $old -> $ip (DNS only$([ "$oldp" = true ] && echo ", proxy was on"))"
+    fi
+  fi
+  if [ "$n_aaaa" != 0 ]; then
+    echo "warning: $name also has an AAAA record ($(jq -r '[.result[] | select(.type == "AAAA") | .content] | join(", ")' <<<"$r")); IPv6 visitors and the certificate go there. The user deletes it in Cloudflare (DNS -> Records); this script never deletes records." >&2
+    return 2
+  fi
+  return 0
+}

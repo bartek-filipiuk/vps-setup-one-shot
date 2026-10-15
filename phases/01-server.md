@@ -115,7 +115,25 @@ registered immediately after install. Record the IP: `state_set VPS_IP <ip>`.
 Expect Ubuntu 24.04, the core count and RAM they chose. "Host key verification failed" for a
 reused IP: `ssh-keygen -R <ip>` and retry.
 
-## 4. DNS now, so it propagates while we work (user)
+## 4. DNS now, so it propagates while we work
+
+### `DNS_PROVIDER=cloudflare` (you)
+
+```
+. ./lib.sh; IP=$(state_get VPS_IP)
+for h in "$(state_get COOLIFY_DOMAIN)" "$(state_get APP_DOMAIN)"; do dns_set_a "$h" "$IP"; echo "exit $?"; done
+```
+
+Each name prints `A created -> <ip>`, `A unchanged` or `A updated <old> -> <ip>`, always DNS only
+(grey cloud), and `exit 0`. Running it again changes nothing. It never deletes a record:
+
+- `exit 1` with `is a CNAME` or `has 2 A records`: nothing changed. Show the user the message;
+  they delete the record that should not be there in Cloudflare (DNS → Records), then run it again.
+- `exit 2` with `also has an AAAA record`: the A record is right, the AAAA must go (see below).
+  The user deletes it in Cloudflare (DNS → Records).
+- `Cloudflare rate limit (HTTP 429 ...)`: wait five minutes, run it again.
+
+### Any other DNS provider (user)
 
 In their DNS provider, create two **A** records pointing to the VPS IP:
 
