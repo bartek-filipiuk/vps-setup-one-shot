@@ -144,6 +144,7 @@ Write a summary the user can keep. No secrets in it.
 - Alerts: $(state_get ALERTS) $([ "$(state_get ALERTS)" = discord ] && echo "(Coolify notifications to a Discord webhook, URL in ~/.config/vps-setup/notify.env, mode 600; Coolify UI -> Notifications)")
 - Coolify UUIDs: project $(state_get PROJECT_UUID), app $(state_get APP_UUID), database $(state_get DB_UUID)
 - API config (contains the token, mode 600): ~/.config/coolify/config
+- DNS: $([ "$(state_get DNS_PROVIDER)" = cloudflare ] && echo "Cloudflare zone $(state_get CF_ZONE), A records through the API (token in ~/.config/vps-setup/cloudflare.env, mode 600); list a name: cd $(state_get SETUP_DIR) && . ./lib.sh && dns_list <name>" || echo "A records added by hand at the DNS provider")
 - Setup state: ~/.config/vps-setup/state
 
 ## Everyday
@@ -170,7 +171,7 @@ In that app's repo, tell your agent: Read $(state_get SETUP_DIR)/PREPARE-APP.md 
 - Hetzner: hcloud server delete $(state_get SERVER_NAME); hcloud firewall delete vps-setup-fw; hcloud ssh-key delete vps-setup
 - Hetzner Object Storage (if used): delete the bucket $(state_get S3_BUCKET) and the vps-setup S3 credentials in the Console (billed until then)
 - Discord (if used): delete the Coolify webhook (Server Settings -> Integrations -> Webhooks)
-- DNS: delete the A records for $(state_get COOLIFY_DOMAIN) and $(state_get APP_DOMAIN)
+- DNS: delete the A records for $(state_get COOLIFY_DOMAIN) and $(state_get APP_DOMAIN) $([ "$(state_get DNS_PROVIDER)" = cloudflare ] && echo "(Cloudflare: DNS -> Records; nothing here deletes them; then My Profile -> API Tokens -> delete the vps-setup token and rm ~/.config/vps-setup/cloudflare.env)")
 - GitHub (optional): gh repo delete $(state_get GH_REPO)
 EOF
 chmod 600 "$f"; echo "written: $f"

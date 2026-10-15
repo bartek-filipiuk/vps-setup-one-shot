@@ -20,7 +20,9 @@ done
 
 Both must show `A=<VPS_IP>` and an empty AAAA. If not, re-check the records with the user
 (phase 01, step 4). Typos and the Cloudflare orange cloud are the usual causes. Wait and re-check
-every minute; do not continue until both match.
+every minute; do not continue until both match. With `DNS_PROVIDER=cloudflare`, a wrong record is
+fixed by running the `dns_set_a` loop from phase 01 step 4 again (`dns_list <name>` shows what
+is there); this check stays, it is the proof that the records resolve.
 
 ## 2. Instance domain (user, through the tunnel)
 

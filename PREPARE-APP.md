@@ -124,7 +124,9 @@ Follow `$SETUP_DIR/phases/05-starter.md` steps 2 to 6 with these differences:
   gitignored first). Set `GH_REPO` from `gh repo view --json nameWithOwner -q .nameWithOwner`,
   `APP_NAME` from the repo name, `APP_DOMAIN` from the approved plan, `APP_DIR` to the repo path.
 - DNS: the user adds an A record for the new hostname pointing to the server IP (no AAAA, DNS
-  only on Cloudflare). Before the first deploy, this must print the server IP:
+  only on Cloudflare). With `DNS_PROVIDER=cloudflare` in `~/.config/vps-setup/state` you create
+  it: `dns_set_a "$(state_get APP_DOMAIN)" "$(VPS_STATE=$VPS_SETUP_STATE state_get VPS_IP)"`
+  (read its exit codes as in phase 01, step 4). Before the first deploy, this must print the server IP:
   `dig +short A "$(state_get APP_DOMAIN)" @1.1.1.1` (compare with `VPS_IP` in
   `~/.config/vps-setup/state`).
 - Naming: in `.coolify.env`, `COOLIFY_DOMAIN` means this app's URL (the classic format other

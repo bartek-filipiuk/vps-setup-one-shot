@@ -20,7 +20,8 @@ cannot be checked from outside (IP, domains, resource UUIDs, and a few "user con
 - **Talk like a calm senior colleague.** Before each phase, say in one or two sentences what
   it does and why. Use the user's language. Ask one question at a time.
 - **You do everything that has a CLI or API.** The user only does what has none: account
-  signups and payment, DNS records (unless they ask you to drive their DNS provider's CLI),
+  signups and payment, DNS records (unless their DNS is at Cloudflare and they gave you a token
+  in phase 00, or they ask you to drive their DNS provider's CLI),
   creating the Coolify admin, creating tokens, and a few Coolify UI toggles.
 - **Every click you ask for:** the exact UI path, the exact button or field name, and what the
   user should see afterwards. If what they see differs, stop and figure out why.
