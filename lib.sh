@@ -314,6 +314,10 @@ service_create() {
   [ "$domain" != x ] ||
     { echo "not a domain name: '${3:-}' (the host only, like stats.example.com, no https://)" >&2; return 1; }
   case $svc in ''|*[!a-z0-9_-]*) echo "not a compose service name: '$svc'" >&2; return 1 ;; esac
+  key=SERVICE_$(tr 'a-z-' 'A-Z_' <<<"$name")_UUID
+  if [ -n "$(state_get "$key")" ]; then
+    echo "service $name already recorded as $key=$(state_get "$key"); pick another name, or service_delete it first. Nothing was created." >&2; return 1
+  fi
   project=$(state_get PROJECT_UUID)
   [ -n "$project" ] || { echo "service_create: no PROJECT_UUID in $VPS_STATE (phase 05)" >&2; return 1; }
   server=$(coolify_server) && [ -n "$server" ] || { echo "service_create: no Coolify server found (phase 04 step 4)" >&2; return 1; }
@@ -337,7 +341,6 @@ service_create() {
     esac
     return 1
   fi
-  key=SERVICE_$(tr 'a-z-' 'A-Z_' <<<"$name")_UUID
   uuid=$(jq -r '.uuid // empty' <<<"$res")
   [ -n "$uuid" ] || { echo "no uuid in the response to POST /services" >&2; return 1; }
   state_set "$key" "$uuid"

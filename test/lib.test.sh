@@ -432,6 +432,10 @@ check "service_create: state" "$(state_get SERVICE_UMAMI_UUID)" "svc-new"
 service_create uptime-kuma my-kuma up.example.com uptime-kuma-app >/dev/null 2>&1
 has "service_create: compose service override, name to key" "$(cat "$HOME/seq.log")" '"urls":\[\{"name":"uptime-kuma-app","url":"https://up\.example\.com"\}\]'
 check "service_create: dashes in the state key" "$(state_get SERVICE_MY_KUMA_UUID)" "svc-new"
+: > "$HOME/seq.log"
+out=$(service_create umami umami other.example.com 2>&1); rc=$?
+check "service_create: a recorded name is refused" "$rc:$out" "1:service umami already recorded as SERVICE_UMAMI_UUID=svc-new; pick another name, or service_delete it first. Nothing was created."
+check "service_create: refused name sends nothing" "$(grep -c 'service POST' "$HOME/seq.log")" "0"
 out=$(service_create umami other taken.example.com 2>&1); rc=$?
 check "service_create 409" "$rc:$out" "1:domain taken.example.com is already used by starter (application); pick another domain or free this one first. Nothing was created."
 out=$(service_create forgejo git invalid.example.com 2>&1); rc=$?

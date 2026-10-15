@@ -148,6 +148,8 @@ has "all green: service cert" "$out" '^OK +cert stats\.example\.test +(59|60) da
 expect "service unhealthy" 1 '^WARN +service umami +running:unhealthy, https://stats\.example\.test$' '.services[0].status = "running:unhealthy"'
 expect "service degraded" 1 '^WARN +service umami +degraded:unhealthy' '.services[0].status = "degraded:unhealthy"'
 expect "service exited" 1 '^FAIL +service umami +exited, https://stats\.example\.test$' '.services[0].status = "exited"'
+expect "service starting" 1 '^WARN +service umami +starting' '.services[0].status = "starting"'
+expect "service plain running" 0 '^OK +service umami +running' '.services[0].status = "running"'
 expect "service no health check" 0 '^OK +service umami +running:unknown' '.services[0].status = "running:unknown"'
 expect "service restart limit" 1 '^FAIL +service umami +running:healthy, https://stats\.example\.test, restart limit reached: umami$' \
   '.services[0].applications[0].restart_limit_reached = true'

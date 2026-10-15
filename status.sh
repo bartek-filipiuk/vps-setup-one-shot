@@ -217,8 +217,9 @@ else
       fqdn=$(jq -r .fqdn <<<"$svc"); limit=$(jq -r .limit <<<"$svc")
       # running:unknown is a template without a health check, as for apps.
       case $st in
-        running:healthy|running:unknown) mark=OK ;;
         running:unhealthy|degraded*) mark=WARN ;;
+        running*) mark=OK ;;
+        starting*|restarting*) mark=WARN ;;
         *) mark=FAIL ;;
       esac
       d=$st
