@@ -17,6 +17,8 @@ log, explain the error to the user in plain words, and decide together. Do not l
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | install script exits early | apt lock (unattended-upgrades running) | wait 2 minutes, run it again; it is safe to re-run |
+| `upgrade.sh` (`UPGRADE.md` A step 3) stops with `no space left on device` or a failed image pull | disk full: old images, build cache, dumps | `rssh "df -h /; docker system df"`; free space as in "App down" (disk full row) with the user's yes, then run step 3 again |
+| `upgrade.sh` or `apt-get` says `Could not get lock /var/lib/dpkg/lock-frontend` | `unattended-upgrades` is installing updates | wait 2 minutes (`rssh "pgrep -a unattended"` shows it), run it again; never delete the lock file |
 | tunnel: `bind: Address already in use` | local 8000/6001/6002 taken | stop the local process using it |
 | panel shows "realtime connection lost" via the tunnel | 6001 not forwarded | include all three `-L` forwards |
 | "realtime connection lost" stays after the HTTPS domain is set | the browser still has the tunnel-era page open, or the proxy has not reloaded | hard-reload the panel on its domain; the docs say 6001/6002 are only needed for direct-IP access (coolify.io/docs/core/infrastructure/servers/firewall) |

@@ -83,6 +83,61 @@ db_pg_params() {
   jq -r '(.postgres_user // "postgres"), (.postgres_db // .postgres_user // "postgres")' <<<"$info"
 }
 
+# --- Postgres major versions (R14, UPGRADE.md), read-only ---
+
+# pg_image_major IMAGE -> the Postgres major version in an image's tag ("postgres:17-alpine",
+# "postgres:16.4", "registry:5000/postgres:18" -> 17, 16, 18). Fails when the tag has no number
+# in front (no tag, "latest", a digest): then the major cannot be told from the image.
+pg_image_major() {
+  local img=${1:-} tag m
+  tag=${img##*/}; tag=${tag%%@*}
+  case $tag in *:*) tag=${tag#*:} ;; *) tag= ;; esac
+  m=${tag%%[!0-9]*}
+  [ -n "$m" ] && [ "${#m}" -le 3 ] || { echo "no Postgres major version in the image tag: '$img'" >&2; return 1; }
+  echo "$((10#$m))"
+}
+
+# db_major DB_UUID -> the major version of a Coolify standalone Postgres, from its image
+# (GET /databases/{uuid}). Fails for other database types and for images like postgres:latest.
+db_major() {
+  local info type
+  service_valid_uuid "${1:-}" || return 1
+  info=$(capi GET "/databases/$1") || return 1
+  type=$(jq -r '.database_type // empty' <<<"$info")
+  [ "$type" = standalone-postgresql ] || { echo "$1 is ${type:-unknown}; only standalone-postgresql is supported" >&2; return 1; }
+  pg_image_major "$(jq -r '.image // empty' <<<"$info")"
+}
+
+# pg_major_upgrade_plan DB_UUID TARGET -> prints the plan for a major upgrade of that database
+# to Postgres TARGET (UPGRADE.md, Postgres): the old database, the new one to create next to it,
+# the app whose DATABASE_URL moves, and the commands, with the real uuids. Read-only. Exit 1
+# when TARGET is not a number, is not above the current major, or the database cannot be read.
+pg_major_upgrade_plan() {
+  local db=${1:-} target=${2:-} info cur name user dbname project server app
+  [ -n "$db" ] && [ -n "$target" ] || { echo "usage: pg_major_upgrade_plan DB_UUID TARGET  (TARGET: a major version like 18)" >&2; return 1; }
+  case $target in *[!0-9]*|0*) target=x ;; esac
+  [ "$target" != x ] && [ "${#target}" -le 3 ] || { echo "TARGET must be a major version like 18, got '${2:-}'" >&2; return 1; }
+  service_valid_uuid "$db" || return 1
+  cur=$(db_major "$db") || return 1
+  [ "$target" -gt "$cur" ] || { echo "database $db already runs Postgres $cur; $target is not an upgrade (a downgrade needs a dump into a new database by hand)" >&2; return 1; }
+  info=$(capi GET "/databases/$db") || return 1
+  name=$(jq -r '.name // "db"' <<<"$info")
+  user=$(jq -r '.postgres_user // "postgres"' <<<"$info"); dbname=$(jq -r '.postgres_db // .postgres_user // "postgres"' <<<"$info")
+  project=$(state_get PROJECT_UUID); app=$(state_get APP_UUID)
+  server=$(coolify_server 2>/dev/null)
+  echo "Postgres major upgrade plan (nothing has changed; UPGRADE.md, Postgres)"
+  echo "old:     $db  $name  $(jq -r '.image // "?"' <<<"$info")  user $user, database $dbname  (Postgres $cur)"
+  echo "new:     $name-pg$target  postgres:$target-alpine  user $user, database $dbname, new password"
+  echo "         project ${project:-<no PROJECT_UUID in $VPS_STATE>}, environment production, server ${server:-<unknown>}"
+  echo "app:     ${app:-<no APP_UUID in $VPS_STATE>}  (its DATABASE_URL moves from old to new)"
+  [ "$(state_get DB_UUID)" = "$db" ] || echo "note:    $db is not DB_UUID in $VPS_STATE ($(state_get DB_UUID)); make sure this is the app's database"
+  echo "steps:   1 user's yes  2 create new, wait running:healthy  3 stop the app  4 db_dump $db"
+  echo "         5 RESTORE_FROM_DB=$db db_restore <NEW_UUID> <dump>  6 DATABASE_URL -> new, deploy"
+  echo "         7 check data and health  8 state_set DB_UUID <NEW_UUID>; old stays stopped for rollback"
+  [ "$target" -ge 18 ] && echo "warning: Postgres 18+ on Coolify's volume layout may refuse to start (references/coolify-api.md, Known quirks); then stop, it needs a human"
+  return 0
+}
+
 # db_dump DB_UUID -> pg_dump (custom format) of a Coolify Postgres into
 # DUMP_DIR/<DB_UUID>/<UTC time>.dump on the server (mode 600); prints "<path> <bytes>".
 # Before dumping: prunes to DUMP_KEEP-1 (default 10) older dumps and refuses when the filesystem
@@ -121,8 +176,20 @@ EOF
 # schema first (everything gone, then the dump; if pg_restore then fails the database is
 # empty until the next attempt). Refuses while the app (APP_UUID in the state) is running,
 # unless RESTORE_WITH_APP_RUNNING=1.
+# The target is always the first argument. A dump from DUMP_DIR/<uuid>/ goes back only into that
+# database, unless RESTORE_FROM_DB=<uuid> says it comes from another one on purpose (a Postgres
+# major upgrade, UPGRADE.md); RESTORE_FROM_DB equal to the target is refused, so the old database
+# is never the target of an upgrade restore by mistake.
 db_restore() {
-  local user db app status wipe=no
+  local user db app status wipe=no src="" from=${RESTORE_FROM_DB:-}
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || { echo "usage: db_restore DB_UUID DUMP_PATH" >&2; return 1; }
+  case $2 in "$DUMP_DIR"/*/*) src=${2#"$DUMP_DIR"/}; src=${src%%/*} ;; esac
+  if [ -n "$from" ]; then
+    [ "$from" != "$1" ] || { echo "db_restore: RESTORE_FROM_DB is the target $1 itself; the target of an upgrade restore is the NEW database" >&2; return 1; }
+    [ -z "$src" ] || [ "$src" = "$from" ] || { echo "db_restore: dump $2 belongs to database $src, not RESTORE_FROM_DB=$from" >&2; return 1; }
+  elif [ -n "$src" ] && [ "$src" != "$1" ]; then
+    echo "db_restore: dump $2 belongs to database $src, not $1; to restore it into another database on purpose (UPGRADE.md) set RESTORE_FROM_DB=$src" >&2; return 1
+  fi
   app=$(state_get APP_UUID)
   if [ "${RESTORE_WITH_APP_RUNNING:-0}" != 1 ]; then
     [ -n "$app" ] || { echo "db_restore: no APP_UUID in $VPS_STATE; stop the app yourself and set RESTORE_WITH_APP_RUNNING=1" >&2; return 1; }
