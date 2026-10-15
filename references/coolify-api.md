@@ -138,7 +138,7 @@ exercised on a server yet **[verify]**.
 | `POST /databases/postgresql` | a new database for a Postgres major upgrade | as in the first table; `image` is required in practice (`postgres:18-alpine`), plus `postgres_user`, `postgres_password`, `postgres_db`, optional `postgres_initdb_args`, `postgres_host_auth_method`, `postgres_conf`; `environment_name` or `environment_uuid`; `destination_uuid` when the server has more than one destination; `instant_deploy` **[verify]** |
 | `PATCH /databases/{uuid}` | change a database's settings | accepts `image`, but a new **major** in place is not an upgrade: the new server refuses the old data directory. `UPGRADE.md` never does it **[verify]** |
 | `POST /databases/{uuid}/stop`, `POST /databases/{uuid}/start` | keep the old database stopped after the switch, start it for a way back | **[verify]** |
-| `GET /databases` | `status.sh` postgres line | the list items carry `image` and `database_type` like `GET /databases/{uuid}` **[verify]**; the major is the number at the start of the image tag (`pg_image_major`) |
+| `GET /databases` | `status.sh` postgres line | the list items carry `image` and `database_type` like `GET /databases/{uuid}` (checked 2026-10-15 on 4.3.23: tags like `postgres:16`, `postgres:17-alpine`); the major is the number at the start of the image tag (`pg_image_major`) |
 | `PATCH /databases/{uuid}/backups/{backup_uuid} {enabled:false}` | turn off the old database's schedule after the switch | **[verify]** |
 | `DELETE /databases/{uuid}` | remove the old database, only on the user's yes | **[verify]** |
 

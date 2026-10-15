@@ -325,7 +325,9 @@ capi POST "/applications/$A/envs" "$(jq -n --arg v "$URL" '{key:"DATABASE_URL", 
 echo "DATABASE_URL now points at $N"
 ```
 
-Do not print `$URL`; it contains the password. Then deploy, so the container gets the new
+Do not print `$URL`; it contains the password. If the block stops after the delete and before the
+new variable is saved, the app has no `DATABASE_URL`: run the block again (it is safe to repeat),
+or go back with step 8. Then deploy, so the container gets the new
 variable. `DEPLOY_SKIP_DUMP=1` is needed: `DB_UUID` is still the old, stopped database, and a dump
 of it would fail and stop the deploy (the dump from step 4 is the one that matters):
 
@@ -374,8 +376,7 @@ with the step 5 block (old and new swapped), `DEPLOY_SKIP_DUMP=1 deploy_and_wait
 `state_set DB_UUID <OLD>`. Everything written to the new database since step 5 is lost that way;
 if that matters, it needs a human.
 
-Keep the old database stopped for at least a week. Delete it (Coolify UI → the database →
-**Danger zone**, or `DELETE /databases/{uuid}` **[verify]**) only on the user's explicit yes,
+Keep the old database stopped for at least a week. Delete it with `capi DELETE "/databases/<OLD>"` **[verify]** only on the user's explicit yes,
 then `state_set PG_UPGRADE_OLD ''`. The dumps in `/root/db-dumps/<OLD>/` stay until the user
 removes them.
 
