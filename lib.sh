@@ -826,12 +826,15 @@ cf_valid_ipv4() {
   echo "not an IPv4 address: '$ip'" >&2; return 1
 }
 
+# The zone lives in the global setup state, also when VPS_STATE points at an app's .coolify.env
+# (PREPARE-APP): one domain, one zone, one token per server.
+
 # cf_check -> the token is active and can see the zone of DOMAIN (the longest suffix of DOMAIN
 # that is a zone in the account); records CF_ZONE_ID and CF_ZONE and prints both. A zone that
 # is not "active" (name servers not moved to Cloudflare yet) is a warning: its records do not
 # resolve until it is.
 cf_check() {
-  local domain cand r st zone id zst
+  local VPS_STATE=$VPS_SETUP_STATE domain cand r st zone id zst
   domain=$(state_get DOMAIN)
   [ -n "$domain" ] || { echo "no DOMAIN in $VPS_STATE (phase 00, question 2)" >&2; return 1; }
   cf_valid_name "$domain" || return 1
@@ -846,7 +849,7 @@ cf_check() {
     [ -n "$id" ] && break
     case $cand in *.*.*) cand=${cand#*.} ;; *) cand= ; break ;; esac
   done
-  [ -n "$cand" ] || { echo "no Cloudflare zone for $domain that this token can read; the token must be for the zone of $domain (Zone Read, DNS Edit)" >&2; return 1; }
+  [ -n "$cand" ] || { echo "no Cloudflare zone for $domain that this token can read; create an \"Edit zone DNS\" token for that zone (phase 00, question 6)" >&2; return 1; }
   [[ $id =~ ^[0-9a-f]{32}$ ]] || { echo "unexpected zone id from Cloudflare: '$id'" >&2; return 1; }
   zone=$(jq -r '.result[0].name' <<<"$r"); zst=$(jq -r '.result[0].status // "unknown"' <<<"$r")
   state_set CF_ZONE_ID "$id"; state_set CF_ZONE "$zone"
@@ -857,7 +860,7 @@ cf_check() {
 
 # cf_zone_of NAME -> the recorded zone id when NAME is the zone or inside it.
 cf_zone_of() {
-  local z id; z=$(state_get CF_ZONE); id=$(state_get CF_ZONE_ID)
+  local VPS_STATE=$VPS_SETUP_STATE z id; z=$(state_get CF_ZONE); id=$(state_get CF_ZONE_ID)
   [ -n "$z" ] && [[ $id =~ ^[0-9a-f]{32}$ ]] || { echo "no Cloudflare zone recorded; run cf_check first (phase 00, question 6)" >&2; return 1; }
   case $1 in "$z"|*."$z") echo "$id" ;; *) echo "$1 is not in the Cloudflare zone $z" >&2; return 1 ;; esac
 }

@@ -811,7 +811,7 @@ check "cf check: zone not active is a warning" "$rc:$out" "0:Cloudflare token ac
 warning: zone example.org is pending, not active: its records do not resolve until the domain's name servers are Cloudflare's"
 state_set DOMAIN example.net
 s3run cf_check
-check "cf check: zone not found" "$rc:$out" "1:no Cloudflare zone for example.net that this token can read; the token must be for the zone of example.net (Zone Read, DNS Edit)"
+check "cf check: zone not found" "$rc:$out" "1:no Cloudflare zone for example.net that this token can read; create an \"Edit zone DNS\" token for that zone (phase 00, question 6)"
 check "cf check: state keeps the last zone found" "$(state_get CF_ZONE)" "example.org"
 state_set DOMAIN example.com; s3run cf_check
 check "cf check back on example.com" "$rc" "0"
@@ -855,6 +855,8 @@ s3run dns_list old.example.com
 check "dns list" "$rc:$out" "0:$(printf 'type\tcontent\tproxied\tttl\nA\t203.0.113.10\tfalse\t1\nMX\tmx.example.net\tfalse\t1')"
 s3run dns_list nothing.example.com
 check "dns list, no records" "$rc:$out" "0:no records for nothing.example.com"
+VPS_STATE="$HOME/app.coolify.env" s3run dns_set_a app.example.com 203.0.113.10
+check "dns with VPS_STATE on an app's .coolify.env: zone from the setup state" "$rc:$out" "0:app.example.com: A unchanged (203.0.113.10, DNS only)"
 check "cf: never a DELETE" "$(grep -c '^cf DELETE' "$HOME/seq.log")" "0"
 check "cf: body temp files deleted" "$(ls -A "$HOME/srvtmp")" ""
 has "cf: token handed to curl on stdin" "$(cat "$HOME/argv.log")" '^curl .* -K - .*/client/v4/user/tokens/verify$'
