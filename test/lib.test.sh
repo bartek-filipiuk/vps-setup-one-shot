@@ -31,6 +31,14 @@ WEBHOOK = "https://discord.com/api/webhooks/1/wh-SECRET-abc"
 EVENTS = ["backup_failure", "backup_success", "deployment_failure", "deployment_success", "docker_cleanup_failure",
           "docker_cleanup_success", "restart_limit_reached", "scheduled_task_failure", "scheduled_task_success",
           "server_disk_usage", "server_patch", "server_reachable", "server_unreachable", "status_change", "traefik_outdated"]
+# services as the live 4.3.23 GET answers (fields trimmed)
+SERVICES = {"svc-umami": {"uuid": "svc-umami", "name": "umami", "service_type": "umami", "status": "running:healthy",
+    "applications": [{"uuid": "sa1", "name": "umami", "human_name": None, "fqdn": "https://stats.example.com", "status": "running:healthy",
+                      "image": "ghcr.io/umami-software/umami:postgresql-latest", "restart_limit_reached": False}],
+    "databases": [{"uuid": "sd1", "name": "postgresql", "image": "postgres:16-alpine", "status": "running:healthy", "is_public": False}]},
+  "svc-kuma": {"uuid": "svc-kuma", "name": "uptime-kuma", "service_type": "uptime-kuma", "status": "exited",
+    "applications": [{"uuid": "sa2", "name": "uptime-kuma", "fqdn": "https://up.example.com", "status": "exited", "restart_limit_reached": True}],
+    "databases": []}}
 # Discord settings as the live GET answers (no URL in it); PATCH accepts only these keys plus the URL.
 notif = {"id": 1, "team_id": 0, "discord_enabled": False, "discord_ping_enabled": False} | {e + "_discord_notifications": False for e in EVENTS}
 def seq(line):
@@ -102,6 +110,10 @@ class H(BaseHTTPRequestHandler):
                  "public_key": "ssh-ed25519 AAAAPUBLICKEYMATERIALdef coolify-app",
                  "private_key": "PRIVATEKEYMATERIALdef", "is_git_related": True, "team_id": 0}])
         if p == "/notifications/discord": return self.send(200, notif)
+        if p == "/services": return self.send(200, list(SERVICES.values()))
+        if p.startswith("/services/"):
+            u = p.split("/")[2]
+            return self.send(200, SERVICES[u]) if u in SERVICES else self.send(404, {"message": "Service not found."})
         if p.startswith("/s3-storages/"): return self.send(200, storages[p.split("/")[2]])
         if p.startswith("/databases/") and p.endswith("/backups"):
             return self.send(200, schedules.get(p.split("/")[2], []))
@@ -135,6 +147,16 @@ class H(BaseHTTPRequestHandler):
             d = p.split("/")[2]; seq("backup POST %s %s" % (d, json.dumps(json.loads(body), sort_keys=True, separators=(",", ":"))))
             schedules.setdefault(d, []).append({"uuid": "bk-new", "enabled": True, "frequency": json.loads(body)["frequency"], "save_s3": True})
             return self.send(201, {"uuid": "bk-new", "message": "Backup configuration created successfully."})
+        if p == "/services":
+            b = json.loads(body); seq("service POST %s" % json.dumps(b, sort_keys=True, separators=(",", ":")))
+            url = b["urls"][0]["url"]
+            if "taken.example.com" in url:   # shape from the 4.3.23 source
+                return self.send(409, {"message": "Domain conflicts detected. Use force_domain_override=true to proceed.",
+                    "conflicts": [{"domain": "taken.example.com", "resource_name": "starter", "resource_uuid": "a1",
+                                   "resource_type": "application", "message": "Domain taken.example.com is already in use by application 'starter'"}]})
+            if "invalid.example.com" in url:
+                return self.send(422, {"message": "Validation failed.", "errors": {"urls.0.name": ["Service 'x' does not exist in the compose file."]}})
+            return self.send(201, {"uuid": "svc-new", "domains": [url]})
         if p.endswith("/rollback"):
             seq("rollback " + p.split("/")[2] + " " + json.loads(body)["commit"])
             return self.send(200, {"message": "Rollback deployment queued.", "deployment_uuid": "d-good"})
@@ -170,6 +192,11 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, {"message": "Backup updated."})
             seq("backup PATCH %s %s %s" % (d, bk, json.dumps(b, sort_keys=True, separators=(",", ":"))))
             return self.send(200, {"message": "Backup updated."})
+        self.send(404, {"message": "not found"})
+    def do_DELETE(self):
+        p = self.path.removeprefix("/api/v1")
+        seq("DELETE " + p)
+        if p.startswith("/services/"): return self.send(200, {"message": "Deletion request queued."})
         self.send(404, {"message": "not found"})
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 EOF
@@ -388,6 +415,73 @@ out=$(ssh_keys_list 2>&1); rc=$?
 check "ssh_keys_list API error" "$rc:$out" '1:HTTP 401 GET /security/keys: {"message": "Unauthenticated."}'
 cat "$HOME/config.good" > "$COOLIFY_CONFIG"
 
+# services (R10): create with a domain, conflicts and validation errors said plainly, bad input
+# refused before any call, status as TSV, delete only with --yes
+: > "$HOME/seq.log"
+out=$(service_create umami umami stats.example.com 2>&1); rc=$?
+check "service_create without PROJECT_UUID" "$rc:$out" "1:service_create: no PROJECT_UUID in $VPS_SETUP_STATE (phase 05)"
+state_set PROJECT_UUID proj-1
+out=$(service_create umami umami Stats.Example.com 2>&1); rc=$?
+check "service_create rc" "$rc" "0"
+check "service_create: exact body" "$(cat "$HOME/seq.log")" 'service POST {"environment_name":"production","instant_deploy":true,"name":"umami","project_uuid":"proj-1","server_uuid":"s2","type":"umami","urls":[{"name":"umami","url":"https://stats.example.com"}]}'
+check "service_create: output" "$out" "service umami (umami) created: svc-new, recorded as SERVICE_UMAMI_UUID
+domain: https://stats.example.com
+Coolify is pulling the images and starting it; next: the HTTPS wait (SERVICES.md step 4)."
+check "service_create: state" "$(state_get SERVICE_UMAMI_UUID)" "svc-new"
+: > "$HOME/seq.log"
+service_create uptime-kuma my-kuma up.example.com uptime-kuma-app >/dev/null 2>&1
+has "service_create: compose service override, name to key" "$(cat "$HOME/seq.log")" '"urls":\[\{"name":"uptime-kuma-app","url":"https://up\.example\.com"\}\]'
+check "service_create: dashes in the state key" "$(state_get SERVICE_MY_KUMA_UUID)" "svc-new"
+out=$(service_create umami other taken.example.com 2>&1); rc=$?
+check "service_create 409" "$rc:$out" "1:domain taken.example.com is already used by starter (application); pick another domain or free this one first. Nothing was created."
+out=$(service_create forgejo git invalid.example.com 2>&1); rc=$?
+check "service_create 422" "$rc:$out" "1:Coolify refused the service (HTTP 422): Validation failed.; urls.0.name: Service 'x' does not exist in the compose file.. Nothing was created."
+: > "$HOME/seq.log"
+out=$(service_create plausible stats stats.example.com 2>&1); rc=$?
+check "service_create: unsupported type" "$rc:$out" "1:service type 'plausible' is not supported; one of: umami n8n uptime-kuma forgejo (SERVICES.md)"
+for d in https://stats.example.com stats localhost stats..example.com -a.example.com a-.example.com 'a b.example.com' 'x.example.com/path' 'a;b.example.com'; do
+  out=$(service_create umami umami "$d" 2>&1); rc=$?
+  check "service_create: domain '$d' refused" "$rc:$out" "1:not a domain name: '$d' (the host only, like stats.example.com, no https://)"
+done
+for n in Umami 'a b' -x 'x;y'; do
+  out=$(service_create umami "$n" stats.example.com 2>&1); rc=$?
+  check "service_create: name '$n' refused" "$rc:$out" "1:service name must be lower-case letters, digits and dashes, got '$n'"
+done
+out=$(service_create umami 2>&1); rc=$?
+check "service_create usage" "$rc:$out" "1:usage: service_create TYPE NAME DOMAIN [COMPOSE_SERVICE]  (TYPE: umami n8n uptime-kuma forgejo)"
+check "service_create: bad input sends nothing" "$(cat "$HOME/seq.log")" ""
+
+out=$(service_status 2>&1); rc=$?
+check "service_status rc:output" "$rc:$out" "0:$(printf '%s\t' kind service name status fqdn)restart_limit
+$(printf '%s\t' service umami umami running:healthy '')
+$(printf '%s\t' app umami umami running:healthy https://stats.example.com)no
+$(printf '%s\t' db umami postgresql running:healthy '')
+$(printf '%s\t' service uptime-kuma uptime-kuma exited '')
+$(printf '%s\t' app uptime-kuma uptime-kuma exited https://up.example.com)yes"
+out=$(service_status svc-umami 2>&1); rc=$?
+check "service_status one" "$rc:$(sed -n 2p <<<"$out"):$(wc -l <<<"$out")" "0:$(printf '%s\t' service umami umami running:healthy ''):4"
+out=$(service_status nope 2>&1); rc=$?
+check "service_status unknown uuid" "$rc:$out" '1:HTTP 404 GET /services/nope: {"message": "Service not found."}'
+out=$(service_status '../x' 2>&1); rc=$?
+check "service_status bad uuid" "$rc:$out" "1:not a Coolify uuid: '../x'"
+
+: > "$HOME/seq.log"
+out=$(service_delete svc-umami 2>&1); rc=$?
+check "service_delete without --yes refused" "$rc:$out" "1:service_delete: refusing without --yes. This deletes service svc-umami with its volumes: its database and files are gone for good. Ask the user, then: service_delete svc-umami --yes"
+out=$(service_delete svc-umami yes 2>&1); rc=$?
+check "service_delete with 'yes' (not --yes) refused" "$rc" "1"
+out=$(service_delete 2>&1); rc=$?
+check "service_delete usage" "$rc:$out" "1:usage: service_delete UUID --yes"
+out=$(service_delete '../applications/a1' --yes 2>&1); rc=$?
+check "service_delete bad uuid" "$rc:$out" "1:not a Coolify uuid: '../applications/a1'"
+check "service_delete refused: no request sent" "$(cat "$HOME/seq.log")" ""
+out=$(service_delete svc-umami --yes 2>&1); rc=$?
+check "service_delete rc:output" "$rc:$out" "0:service umami (svc-umami) deleted with its volumes; Coolify removes the containers in the background"
+check "service_delete: DELETE with delete_volumes" "$(cat "$HOME/seq.log")" "DELETE /services/svc-umami?delete_volumes=true"
+: > "$HOME/seq.log"
+out=$(service_delete svc-gone --yes 2>&1); rc=$?
+check "service_delete unknown uuid: no DELETE" "$rc:$(cat "$HOME/seq.log")" "1:"
+
 # db_restore: refused while the app runs, pg_restore all or nothing, wipe only on RESTORE_WIPE=yes
 dump=$(state_get LAST_DUMP)
 state_set APP_UUID good; : > "$HOME/docker.log"
@@ -560,7 +654,7 @@ check "s3 creds and webhook URL in no argv and no output" "${leaks:-none}" "none
 check "argv log was written" "$(grep -c '^jq ' "$HOME/argv.log" | awk '{print ($1 > 10) ? "yes" : "no"}')" "yes"
 PATH=${PATH#"$HOME/argvbin:"}; unset TMPDIR BACKUP_POLL_SECONDS
 
-sed -i '/^VPS_IP=/d; /^DB_UUID=/d; /^APP_UUID=/d; /^ROLLBACK_COMMIT=/d; /^LAST_DUMP=/d' "$VPS_SETUP_STATE"
+sed -i '/^VPS_IP=/d; /^DB_UUID=/d; /^APP_UUID=/d; /^ROLLBACK_COMMIT=/d; /^LAST_DUMP=/d; /^PROJECT_UUID=/d; /^SERVICE_/d' "$VPS_SETUP_STATE"
 
 # verify.sh picks the right phase
 mkdir -p "$HOME/.ssh" && touch "$HOME/.ssh/id_ed25519.pub"
