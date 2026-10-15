@@ -88,6 +88,10 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   transfer and a new webhook secret, DNS, a table of every secret with how to rotate it, and the
   checklist that removes the developer's access (SSH key last, never the only one). Coolify cannot
   isolate one project inside a team; the file says so and offers the ways around it.
+- `SERVICES.md` puts a self-hosted tool next to your apps as a Coolify one-click service on its
+  own domain: Umami, n8n, Uptime Kuma or Forgejo, with a DNS gate, the HTTPS wait, the first
+  login, what is and is not backed up, and removal only on your yes. `status.sh` shows a line
+  per service.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
   `/api/health` checking the database, a non-root multi-stage Docker image.
 
@@ -138,6 +142,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   handed over with it. `GET /team/members` and `GET /security/keys` were checked on a live
   Coolify 4.3.23; invites, roles and tokens have no API, so those parts come from the source and
   are marked `[verify]`.
+- `SERVICES.md` (R10), `service_create`, `service_status`, `service_delete` and the `status.sh`
+  Services section are tested against a fake Coolify API only (`test/lib.test.sh`,
+  `test/status.test.sh`) and have **not been run on a real server yet**; no service has been
+  created with them. `GET /services` was checked on a live Coolify 4.3.23; creating a service
+  with its domain, delete and the backups of a service come from the 4.3.23 source and are
+  marked `[verify]`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
