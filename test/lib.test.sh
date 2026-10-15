@@ -86,6 +86,21 @@ class H(BaseHTTPRequestHandler):
         if p == "/databases/db-redis":
             return self.send(200, {"uuid": "db-redis", "database_type": "standalone-redis", "image": "redis:7.2"})
         if p == "/s3-storages": return self.send(200, list(storages.values()))
+        if p == "/team/members":   # as the live GET: users without a role field
+            return self.send(200, [
+                {"id": 0, "name": "Dev Root", "email": "dev@example.invalid", "email_verified_at": "2026-10-09T10:00:00.000000Z",
+                 "two_factor_confirmed_at": "2026-10-09T10:05:00.000000Z", "created_at": "2026-10-09T10:00:00.000000Z"},
+                {"id": 3, "name": "Client Owner", "email": "client@example.invalid", "email_verified_at": None,
+                 "two_factor_confirmed_at": None, "created_at": "2026-10-15T09:00:00.000000Z"}])
+        if p == "/security/keys":  # a root token also gets private_key
+            return self.send(200, [
+                {"id": 1, "uuid": "key-local", "name": "localhost's key", "fingerprint": "SHA256:fakeFingerprintLocal",
+                 "public_key": "ssh-ed25519 AAAAPUBLICKEYMATERIALxyz root@coolify",
+                 "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nPRIVATEKEYMATERIALabc\n-----END OPENSSH PRIVATE KEY-----",
+                 "is_git_related": False, "team_id": 0},
+                {"id": 2, "uuid": "key-gh", "name": "app-deploy", "fingerprint": "SHA256:fakeFingerprintDeploy",
+                 "public_key": "ssh-ed25519 AAAAPUBLICKEYMATERIALdef coolify-app",
+                 "private_key": "PRIVATEKEYMATERIALdef", "is_git_related": True, "team_id": 0}])
         if p == "/notifications/discord": return self.send(200, notif)
         if p.startswith("/s3-storages/"): return self.send(200, storages[p.split("/")[2]])
         if p.startswith("/databases/") and p.endswith("/backups"):
@@ -352,6 +367,26 @@ done
 out=$(app_logs good 10000 2>&1); check "app_logs N=10000 accepted" "$?" "0"
 check "app_logs bad N: no request" "$(cat "$HOME/seq.log")" "logs good lines=10000"
 out=$(app_logs 2>&1); check "app_logs without uuid" "$?:$out" "1:usage: app_logs APP_UUID [N]"
+
+# team_members, ssh_keys_list: read-only TSV, the role note, no key material, API errors passed on
+out=$(team_members 2>/dev/null); rc=$?
+check "team_members rc:output" "$rc:$out" "0:name	email	verified	2fa
+Dev Root	dev@example.invalid	yes	on
+Client Owner	client@example.invalid	no	off"
+err=$(team_members 2>&1 >/dev/null)
+check "team_members role note on stderr" "$err" "team_members: role is not in the API; see Team -> Members in the Coolify UI"
+out=$(ssh_keys_list 2>&1); rc=$?
+check "ssh_keys_list rc:output" "$rc:$out" "0:uuid	name	fingerprint	git_related
+key-local	localhost's key	SHA256:fakeFingerprintLocal	no
+key-gh	app-deploy	SHA256:fakeFingerprintDeploy	yes"
+check "ssh_keys_list prints no key material" "$(grep -cE 'PRIVATEKEYMATERIAL|PUBLICKEYMATERIAL|BEGIN OPENSSH' <<<"$out")" "0"
+cp "$COOLIFY_CONFIG" "$HOME/config.good"
+printf 'COOLIFY_URL=http://127.0.0.1:%s\nCOOLIFY_TOKEN=wrong\n' "$PORT" > "$COOLIFY_CONFIG"
+out=$(team_members 2>&1); rc=$?
+check "team_members API error" "$rc:$out" '1:HTTP 401 GET /team/members: {"message": "Unauthenticated."}'
+out=$(ssh_keys_list 2>&1); rc=$?
+check "ssh_keys_list API error" "$rc:$out" '1:HTTP 401 GET /security/keys: {"message": "Unauthenticated."}'
+cat "$HOME/config.good" > "$COOLIFY_CONFIG"
 
 # db_restore: refused while the app runs, pg_restore all or nothing, wipe only on RESTORE_WIPE=yes
 dump=$(state_get LAST_DUMP)

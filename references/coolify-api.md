@@ -79,6 +79,31 @@ Settings belong to the team of the API token.
 | `PATCH /notifications/discord {discord_enabled, discord_webhook_url, discord_ping_enabled, <event>_discord_notifications...}` | turn on Discord with the seven alert events | allow-list per channel; an unknown key is a 422 `{"message":"Validation failed.","errors":{"<field>":["..."]}}`; `discord_webhook_url` must be http(s) and not localhost or a private IP (the host is not checked to be discord.com) **[verify]**. The response may echo the webhook URL to a token with `read:sensitive`, so `notify_setup` never prints it and shows only `message` and `errors` of a 422, URL blanked **[verify]** |
 | (none) | test notification | no API call; Coolify UI → **Notifications** → **Discord** → **Send test notification** **[verify]** |
 
+Teams and keys (R12: `team_members`, `ssh_keys_list`, `HANDOVER.md`). The two `GET` calls were
+verified live on 4.3.23 on 2026-10-14/15; everything about roles, invites and tokens is from the
+4.3.23 source, because the API has no call for them.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /team`, `GET /teams`, `GET /teams/{id}` | the token's team, every team of the user | ability `read` |
+| `GET /team/members`, `GET /teams/{id}/members` | who is in the team (`team_members`) | array of users: `id`, `name`, `email`, `email_verified_at`, `two_factor_confirmed_at`, dates; **no role** (live GET). The role is only in the UI: **Team** → **Members** |
+| `GET /security/keys` | private keys Coolify holds (server key, deploy keys) (`ssh_keys_list`) | array of `{uuid, name, fingerprint, public_key, is_git_related, team_id, ...}` (live GET); a token with `root` or `read:sensitive` also gets `private_key` **[verify]**, so print only chosen fields. `POST`, `PATCH`, `DELETE /security/keys[/{uuid}]` exist |
+| (none) | invites, roles, API tokens | no API in 4.3.23: there is no `/tokens` and no invite or role call. UI only, see below |
+
+From the 4.3.23 source **[verify]**:
+
+- Roles are `owner`, `admin`, `member`. Managing members and invitations needs `admin` or
+  `owner`; deleting the team needs `owner`. In **Team** → **Members** an owner can make someone
+  owner; an admin can make someone admin or member (`readonly` in the UI) or remove them. Each of
+  these changes also revokes that user's API tokens for the team.
+- An invite is an email plus a role, sent by email or as a copied link. An admin cannot invite an
+  owner. `/invitations/{uuid}` needs a login with a verified email; invites expire after 3 days.
+- API tokens (**Keys & Tokens** → **API Tokens**) have the abilities `root`, `write`, `deploy`,
+  `read` and `read:sensitive`, an expiry of 7, 30, 60, 90 or 365 days or none, and belong to the
+  team that is current when they are created. There is **no project or server scope**. Sensitive
+  fields (passwords, keys, webhook URLs) come back only with `root` or `read:sensitive` **and**
+  the user being `admin` or `owner`.
+
 `status_change` is the "app stopped" alert, read in the 4.3.23 source:
 `app/Notifications/Application/StatusChanged.php` uses `getEnabledChannels('status_change')` with
 the subject "Coolify: {resource} has been stopped", and `Container/ContainerRestarted.php` uses
@@ -108,5 +133,9 @@ a GitHub webhook with `content_type: json`, event `push`, and the app's
 - **Realtime (6001) and terminal (6002) behind the instance domain**: once the dashboard works
   through its domain on the Coolify proxy, 8000, 6001 and 6002 can stay closed; realtime and the
   terminal go through 443 (coolify.io/docs/core/infrastructure/servers/firewall).
+- **One project cannot be isolated inside a team.** A server belongs to one team, and every
+  member sees (and, by role, changes) every project on that team's servers; tokens have no project
+  scope either. A client who must see only their project gets their own server in their own team
+  (`HANDOVER.md` step 0) **[verify]**.
 - **Never put the API token into GitHub** (secrets, webhooks). It controls the whole server.
   Use the per-app webhook secret.
