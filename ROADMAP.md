@@ -62,13 +62,16 @@ Rules that apply to every item:
   Done when: the five symptoms have harness fixtures that break the server on purpose, and the
   runbook reaches the right fix for each.
   (Runbook done; fixtures not run on a server yet.)
-- **R10 `SERVICES.md`: self-host the tools in one prompt.** n8n, Plausible or Umami, Uptime Kuma,
-  Forgejo, Minio and the other Coolify one-click services, each with a domain, HTTPS, backups and a
-  line in `status.sh`. Done when: three services deploy in the harness with backups verified.
+- **R10 `SERVICES.md`: self-host the tools in one prompt.** Umami, n8n, Uptime Kuma and Forgejo
+  as Coolify one-click services, each with its own domain, HTTPS, backups and a line in
+  `status.sh`. MinIO and Plausible are not one-click on Coolify 4.3.23 and wait for a user with a
+  concrete case. Done when: three services deploy in the harness with backups verified.
+  (Runbook and helpers done; not run on a server yet.)
 - **R06b Uptime checks with a status page.** Uptime Kuma run as a Coolify service, with an uptime
-  check per app domain and its public status page. Depends on R10: one-click services cannot get a
-  custom domain through the API (`references/coolify-api.md`). Done when: the harness stops the
-  starter app, Kuma marks it down, and the status page on its own domain shows it.
+  check per app domain and its public status page. Builds on R10: `SERVICES.md` creates Kuma on
+  its own domain (on Coolify 4.3.23 the API sets it, read in the source, not yet seen on a
+  server). Done when: the harness stops the starter app, Kuma marks it down, and the status page
+  on its own domain shows it.
 - **R12 Handover pack.** `HANDOVER.md` produces what a client or colleague needs to take over a
   project or a server: a Coolify team invite with the right role, a scoped token where Coolify
   supports it, `SERVER.md` for that project, DNS and repo ownership steps, and the checklist that
