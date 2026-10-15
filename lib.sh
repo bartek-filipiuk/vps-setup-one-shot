@@ -789,10 +789,11 @@ cfapi() (
     tmp=$(umask 077 && mktemp) || exit 1
     printf '%s' "$body" > "$tmp"
   fi
+  data=(); [ -n "$tmp" ] && data=(--data-binary "@$tmp")
   out=$(printf 'header = "Authorization: Bearer %s"\n' "$(cf_cred CF_API_TOKEN)" |
     curl -sS --max-time "${CAPI_MAX_TIME:-30}" -w '\n%{http_code}' -X "$m" -K - \
       -H "Accept: application/json" -H "Content-Type: application/json" \
-      ${tmp:+--data-binary "@$tmp"} "${CF_API:-https://api.cloudflare.com/client/v4}$p") || exit 1
+      "${data[@]}" "${CF_API:-https://api.cloudflare.com/client/v4}$p") || exit 1
   code=${out##*$'\n'}; out=${out%$'\n'*}
   if [ "$code" = 429 ]; then
     echo "Cloudflare rate limit (HTTP 429 on $m $p): at most 1200 requests per 5 minutes; wait 5 minutes, then run it again" >&2
@@ -820,8 +821,12 @@ cf_valid_name() {
 cf_valid_ipv4() {
   local ip=${1:-} o
   if [[ $ip =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
-    for o in "${BASH_REMATCH[@]:1}"; do [ "$((10#$o))" -le 255 ] || break; done
-    [ "$((10#$o))" -le 255 ] && return 0
+    for o in "${BASH_REMATCH[@]:1}"; do
+      case $o in 0?*) echo "not an IPv4 address (leading zero): '$ip'" >&2; return 1 ;; esac
+      [ "$((10#$o))" -le 255 ] || { echo "not an IPv4 address: '$ip'" >&2; return 1; }
+    done
+    case ${BASH_REMATCH[1]} in 0|127) echo "not a public IPv4 address: '$ip'" >&2; return 1 ;; esac
+    return 0
   fi
   echo "not an IPv4 address: '$ip'" >&2; return 1
 }
@@ -845,13 +850,13 @@ cf_check() {
   cand=$domain
   while :; do
     r=$(cfapi GET "/zones?name=$cand") || return 1
-    id=$(jq -r '.result[0].id // empty' <<<"$r")
+    id=$(jq -r --arg c "$cand" '[.result[]? | select(.name == $c)][0].id // empty' <<<"$r")
     [ -n "$id" ] && break
     case $cand in *.*.*) cand=${cand#*.} ;; *) cand= ; break ;; esac
   done
   [ -n "$cand" ] || { echo "no Cloudflare zone for $domain that this token can read; create an \"Edit zone DNS\" token for that zone (phase 00, question 6)" >&2; return 1; }
   [[ $id =~ ^[0-9a-f]{32}$ ]] || { echo "unexpected zone id from Cloudflare: '$id'" >&2; return 1; }
-  zone=$(jq -r '.result[0].name' <<<"$r"); zst=$(jq -r '.result[0].status // "unknown"' <<<"$r")
+  zone=$cand; zst=$(jq -r --arg c "$cand" '[.result[]? | select(.name == $c)][0].status // "unknown"' <<<"$r")
   state_set CF_ZONE_ID "$id"; state_set CF_ZONE "$zone"
   echo "Cloudflare token active; zone $zone ($id), status $zst"
   [ "$zst" = active ] || echo "warning: zone $zone is $zst, not active: its records do not resolve until the domain's name servers are Cloudflare's"

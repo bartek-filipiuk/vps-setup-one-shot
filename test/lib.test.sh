@@ -848,6 +848,10 @@ s3run dns_set_a app.example.com 203.0.113.256
 check "dns bad IP refused" "$rc:$out" "1:not an IPv4 address: '203.0.113.256'"
 s3run dns_set_a app.example.com 2001:db8::2
 check "dns IPv6 refused" "$rc:$out" "1:not an IPv4 address: '2001:db8::2'"
+s3run dns_set_a app.example.com 127.0.0.1
+check "dns loopback refused" "$rc:$out" "1:not a public IPv4 address: '127.0.0.1'"
+s3run dns_set_a app.example.com 203.0.113.010
+check "dns leading zero refused" "$rc:$out" "1:not an IPv4 address (leading zero): '203.0.113.010'"
 s3run dns_set_a app.example.net 203.0.113.10
 check "dns name outside the zone refused" "$rc:$out" "1:app.example.net is not in the Cloudflare zone example.com"
 check "dns: bad input sent nothing" "$(cat "$HOME/seq.log")" ""
