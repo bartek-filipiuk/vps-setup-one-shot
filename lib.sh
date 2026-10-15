@@ -253,6 +253,29 @@ app_logs() {
   jq -r '.logs // empty' <<<"$r"
 }
 
+# --- handover: who can get in (HANDOVER.md), read-only ---
+
+# team_members -> members of the token's team (GET /team/members) as TSV: name, email, email
+# verified (yes/no), 2FA (on/off). The API has no role field; that is said on stderr.
+team_members() {
+  local r
+  r=$(capi GET /team/members) || return 1
+  printf 'name\temail\tverified\t2fa\n'
+  jq -r '.[]? | [(.name // ""), (.email // ""), (if .email_verified_at then "yes" else "no" end),
+    (if .two_factor_confirmed_at then "on" else "off" end)] | @tsv' <<<"$r"
+  echo "team_members: role is not in the API; see Team -> Members in the Coolify UI" >&2
+}
+
+# ssh_keys_list -> private keys stored in Coolify for the token's team (GET /security/keys) as
+# TSV: uuid, name, fingerprint, git-related (yes/no). A root token gets the private key in the
+# answer: only these four fields are ever printed, never public_key or private_key.
+ssh_keys_list() {
+  local r
+  r=$(capi GET /security/keys) || return 1
+  printf 'uuid\tname\tfingerprint\tgit_related\n'
+  jq -r '.[]? | [(.uuid // ""), (.name // ""), (.fingerprint // ""), (if .is_git_related then "yes" else "no" end)] | @tsv' <<<"$r"
+}
+
 # --- off-site backups: Coolify scheduled backups copied to S3-compatible storage (RESTORE.md) ---
 
 # S3 credentials: S3_KEY= and S3_SECRET= lines in S3_ENV (default ~/.config/vps-setup/s3.env,
