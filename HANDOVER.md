@@ -57,7 +57,7 @@ from the 4.3.23 source **[verify]**.
 | accept | the new person | the link, then log in with a verified email; it expires after 3 days | yes | yes | yes |
 | API token | the new person, their own | **Keys & Tokens** → **API Tokens** (`/security/api-tokens`) | `root` (their agent runs this guide) | `deploy` + `read` for CI | `deploy` + `read` for CI |
 | token into their config | the new person | their own terminal | yes | yes | yes |
-| demote or remove the developer | the new owner | **Team** → **Members** | yes (step 6) | no | no |
+| remove the developer | the new owner | **Team** → **Members** | yes, remove (step 6) | no | no |
 
 Notes:
 
@@ -99,7 +99,7 @@ cp "$HOME/.config/vps-setup/SERVER.md" "$d/SERVER.md" && cat >> "$d/SERVER.md" <
 - API tokens: each person has their own (Keys & Tokens -> API Tokens), never shared
 - Server SSH (root): <NEW PERSON's key|the developer only>
 - GitHub repo: $(state_get GH_REPO) -> <NEW OWNER>/<REPO> (owner <...>, collaborators <...>)
-- DNS: $(state_get APP_DOMAIN) (and $(state_get COOLIFY_DOMAIN) in case A) at <REGISTRAR>, account of <...>
+- DNS: $(state_get APP_DOMAIN) (and $(VPS_STATE=$VPS_SETUP_STATE state_get COOLIFY_DOMAIN) in case A) at <REGISTRAR>, account of <...>
 - Hetzner project (server, Hetzner backups, Object Storage): account of <...>
 - S3 keys (s3.env): <...>
 - Alerts: Discord webhook in <...>'s Discord server, channel <...>
@@ -114,7 +114,7 @@ the state; give them `~/.config/vps-setup/state` without the lines that are path
 developer's machine:
 
 ```
-. ./lib.sh; ( umask 077; grep -vE '^(SETUP_DIR|APP_DIR|SSH_PUBKEY|LAST_DUMP)=' "$VPS_SETUP_STATE" > "$HOME/.config/vps-setup/handover/state" ) && echo "written: $HOME/.config/vps-setup/handover/state"
+. ./lib.sh; ( umask 077; grep -vE '^(SETUP_DIR|APP_DIR|SSH_PUBKEY)=' "$VPS_SETUP_STATE" > "$HOME/.config/vps-setup/handover/state" ) && echo "written: $HOME/.config/vps-setup/handover/state"
 ```
 
 It holds IPs, domains and UUIDs, no tokens. The new owner puts it at
@@ -129,12 +129,13 @@ Case A and B: the repo goes to the new owner. Case C: a collaborator.
 Transfer (the new owner gives their GitHub login or organisation):
 
 ```
-. ./lib.sh; gh api -X POST "repos/$(state_get GH_REPO)/transfer" -f new_owner="<NEW OWNER>" --jq .full_name
+. ./lib.sh; gh api -X POST "repos/$(state_get GH_REPO)/transfer" -f new_owner="<NEW OWNER>" >/dev/null && echo "transfer requested; GitHub may show the old name until it is accepted"
 ```
 
 A personal account has to accept the transfer from the email GitHub sends **[verify]**. Deploy
 keys and webhooks move with the repo, and GitHub redirects the old name **[verify]**; still,
-point Coolify at the new name, while the developer still has a token:
+point Coolify at the new name, while the developer still has a token (if the private repo is no
+longer visible to the developer after the transfer, the new owner runs this block **[verify]**):
 
 ```
 . ./lib.sh; R="<NEW OWNER>/<REPO>"; gh repo view "$R" --json nameWithOwner -q .nameWithOwner &&
@@ -167,7 +168,7 @@ back to back; a push in between is rejected and simply not deployed):
 ```
 . ./lib.sh; S=$(openssl rand -hex 24)
 capi PATCH "/applications/$(state_get APP_UUID)" "$(jq -n --arg s "$S" '{manual_webhook_secret_github:$s}')" >/dev/null &&
-gh api -X PATCH "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/config" -f "secret=$S" >/dev/null && echo "webhook secret rotated"
+jq -n --arg s "$S" '{secret:$s}' | gh api -X PATCH "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/config" --input - >/dev/null && echo "webhook secret rotated"
 ```
 
 Then the test push from phase 05 step 6; expect `200`.
@@ -184,8 +185,8 @@ only these.
 The records this setup needs, from `SERVER.md` (case B: only the app's):
 
 ```
-. ./lib.sh; for h in "$(state_get COOLIFY_DOMAIN)" "$(state_get APP_DOMAIN)"; do
-  echo "$h A=$(dig +short A "$h" @1.1.1.1 | tr '\n' ' ') AAAA=$(dig +short AAAA "$h" @1.1.1.1 | tr '\n' ' ') (want A=$(state_get VPS_IP), no AAAA)"
+. ./lib.sh; for h in "$(VPS_STATE=$VPS_SETUP_STATE state_get COOLIFY_DOMAIN)" "$(state_get APP_DOMAIN)"; do
+  echo "$h A=$(dig +short A "$h" @1.1.1.1 | tr '\n' ' ') AAAA=$(dig +short AAAA "$h" @1.1.1.1 | tr '\n' ' ') (want A=$(VPS_STATE=$VPS_SETUP_STATE state_get VPS_IP), no AAAA)"
 done
 ```
 
@@ -214,7 +215,8 @@ project (roadmap item R15). Ask; do not pick.
 
 The database password is reachable only inside the server's Docker network; once SSH and
 Coolify access are gone, the old value opens nothing from outside. If the new owner still wants
-it changed, they do it themselves in their own terminal: `ssh -t root@<VPS_IP> docker exec -it
+it changed, they do it themselves in their own terminal (an interactive prompt needs a terminal, so this one
+is plain `ssh -t`, not `rssh`): `ssh -t root@<VPS_IP> docker exec -it
 <container of DB_UUID> psql -U app -d app -c '\password app'`, then the same value in Coolify
 (the database's **Configuration** and the app's `DATABASE_URL`) and a redeploy **[verify]**.
 
@@ -231,9 +233,10 @@ Read who is in the team:
 . ./lib.sh; team_members
 ```
 
-In **Team** → **Members** the new owner sees the roles. They demote the developer to `member`
-or remove them, then run `team_members` again: the developer is gone (or the UI shows them as
-`member`). The developer checks their own token is dead, on their machine:
+In **Team** → **Members** the new owner sees the roles. Case A: they remove the developer (a
+`member` still sees every project in the team). Case C, a colleague who leaves: remove them, or
+demote to `member` if they stay on other work. Then run `team_members` again: the developer is
+gone (or the UI shows them as `member`). The developer checks their own token is dead, on their machine:
 
 ```
 . ./lib.sh; capi GET /version >/dev/null 2>&1 && echo "token STILL WORKS - delete it in Keys & Tokens" || echo "token revoked"
