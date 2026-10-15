@@ -126,6 +126,22 @@ everything else is from the 4.3.23 source and not yet exercised **[verify]**.
 | `PUT`/`POST /services/{uuid}/storages/{storage_uuid}/backups[/run]` | volume backups of a service | not used yet; `SERVICES.md` step 5 **[verify]** |
 | (none) | scheduled backups of a database inside a service | `/databases/{uuid}/backups` covers standalone databases only; UI only **[verify]** |
 
+Upgrades (R14: `db_major`, `pg_major_upgrade_plan`, the `status.sh` updates and postgres lines,
+`UPGRADE.md`). From the 4.3.23 source, `routes/api.php` and the Coolify docs; none of it has been
+exercised on a server yet **[verify]**.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| (none) | upgrade Coolify, read or change its update settings | no API: `routes/api.php` has only `/settings/email` under settings. Auto-update is a UI setting (**Settings** → **Updates**). The UI **Upgrade** button and the auto-update scheduler both run `/data/coolify/source/upgrade.sh <version>` on the server; by hand: `curl -fsSL https://cdn.coollabs.io/coolify/upgrade.sh \| bash -s <version>`, which refuses a downgrade. The way back from a bad upgrade is the instance backup (**Settings** → **Backup**), not a downgrade |
+| `GET https://cdn.coollabs.io/coolify/versions.json` | the newest version Coolify itself offers | `.coolify.v4.version`; not the Coolify API (no token). `status.sh` compares with the newest GitHub release instead (`/repos/coollabsio/coolify/releases/latest`) |
+| `GET /deployments` | deployments running or queued, before an upgrade | array **[verify]** |
+| `POST /databases/postgresql` | a new database for a Postgres major upgrade | as in the first table; `image` is required in practice (`postgres:18-alpine`), plus `postgres_user`, `postgres_password`, `postgres_db`, optional `postgres_initdb_args`, `postgres_host_auth_method`, `postgres_conf`; `environment_name` or `environment_uuid`; `destination_uuid` when the server has more than one destination; `instant_deploy` **[verify]** |
+| `PATCH /databases/{uuid}` | change a database's settings | accepts `image`, but a new **major** in place is not an upgrade: the new server refuses the old data directory. `UPGRADE.md` never does it **[verify]** |
+| `POST /databases/{uuid}/stop`, `POST /databases/{uuid}/start` | keep the old database stopped after the switch, start it for a way back | **[verify]** |
+| `GET /databases` | `status.sh` postgres line | the list items carry `image` and `database_type` like `GET /databases/{uuid}` **[verify]**; the major is the number at the start of the image tag (`pg_image_major`) |
+| `PATCH /databases/{uuid}/backups/{backup_uuid} {enabled:false}` | turn off the old database's schedule after the switch | **[verify]** |
+| `DELETE /databases/{uuid}` | remove the old database, only on the user's yes | **[verify]** |
+
 One-click templates on 4.3.23 (source): `umami` (umami + postgresql, `SERVICE_URL_UMAMI_3000`),
 `n8n` (also `n8n-with-postgresql`), `uptime-kuma`, `forgejo` (Git over SSH on host port
 `22222`). `minio` and `plausible` are in Coolify's ignored templates, so not one-click; MinIO
