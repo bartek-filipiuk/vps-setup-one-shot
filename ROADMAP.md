@@ -85,6 +85,7 @@ Rules that apply to every item:
   release notes against `references/coolify-api.md`, upgrade, `verify.sh`), Ubuntu (updates, reboot
   window), Postgres major versions. `status.sh` says when each is due. Done when: the harness
   upgrades pinned Coolify to `latest` and a Postgres 17 database to 18 with data intact.
+  (Runbook and helpers done; not run on a server yet.)
 - **R15 Rebuild from nothing.** `REBUILD.md`: new server, every database restored from off-site
   backups, DNS repointed, apps redeployed from git. The harness runs it on purpose, quarterly.
   Done when: the rebuilt server passes `verify.sh` and `status.sh` with all data present.

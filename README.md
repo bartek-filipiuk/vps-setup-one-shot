@@ -72,10 +72,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 - Phase 06 also turns on Coolify's notifications to a Discord channel (app stopped, deploy failed,
   backup failed, server unreachable and back, disk usage, restart limit) from one webhook URL you
   paste into your own terminal.
-- `status.sh` prints one screen: server (ssh, disk, memory, pending reboot), Coolify version vs
-  the latest release, every app with its status, last deploy and days to certificate expiry, and
-  the last backup of every database, plus the age of its last copy in S3, and whether a
-  notification channel is on with the alert events. A Coolify release a
+- `status.sh` prints one screen: server (ssh, disk, memory, pending reboot, package updates),
+  Coolify version vs the latest release, every app with its status, last deploy and days to
+  certificate expiry, the last backup of every database, plus the age of its last copy in S3,
+  the Postgres major of every database, and whether a notification channel is on with the alert
+  events. A Coolify release a
   minor version or more ahead is a warning. Exit 0 all OK, 1 needs attention, 2 server or API
   unreachable.
 - `DOCTOR.md` is the runbook for "my app is down": `status.sh`, the health route, the newest
@@ -92,6 +93,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   own domain: Umami, n8n, Uptime Kuma or Forgejo, with a DNS gate, the HTTPS wait, the first
   login, what is and is not backed up, and removal only on your yes. `status.sh` shows a line
   per service.
+- `UPGRADE.md` keeps the server current: Coolify (backups first, the release notes checked
+  against the API calls this guide uses, then Coolify's own upgrade script), Ubuntu updates and
+  the reboot window, and a Postgres major version moved into a new database with the old one
+  kept for a way back. `status.sh` says when each is due: pending security updates or an old
+  reboot, and the Postgres major of every database.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
   `/api/health` checking the database, a non-root multi-stage Docker image.
 
@@ -148,6 +154,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   created with them. `GET /services` was checked on a live Coolify 4.3.23; creating a service
   with its domain, delete and the backups of a service come from the 4.3.23 source and are
   marked `[verify]`.
+- `UPGRADE.md` (R14), `db_major`, `pg_major_upgrade_plan`, the `RESTORE_FROM_DB` guard of
+  `db_restore` and the `status.sh` updates and postgres lines are tested against a fake Coolify
+  API, a stubbed `ssh` and a fake `docker` only (`test/lib.test.sh`, `test/status.test.sh`) and
+  have **not been run on a real server yet**; no Coolify, Ubuntu or Postgres upgrade has been
+  done with them. The upgrade script, the missing upgrade API and the database calls come from
+  the Coolify 4.3.23 source and docs and are marked `[verify]`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
