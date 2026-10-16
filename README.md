@@ -20,8 +20,20 @@ Then start your agent with the guide. With Claude Code it is one line:
 claude "Read SETUP.md and guide me through it."
 ```
 
+Or install it as a Claude Code plugin, no clone needed:
+
+```
+/plugin marketplace add bartek-filipiuk/vps-setup-one-shot
+/plugin install vps-setup-one-shot@bartek-filipiuk
+```
+
+(from a shell: `claude plugin marketplace add bartek-filipiuk/vps-setup-one-shot`, then
+`claude plugin install vps-setup-one-shot@bartek-filipiuk`), then type `/vps-setup` (or `/vps-setup-one-shot:vps-setup` if another command has that name). Later:
+`/vps-status`, `/vps-doctor`, `/vps-checkup`, and in the repo of an app you already have,
+`/vps-prepare-app`.
+
 Any other agent (Codex, Cursor, ...) works the same way: open it in that folder and say
-`Read SETUP.md and guide me through it.`
+`Read SETUP.md and guide me through it.` `AGENTS.md` lists every runbook and the matching command.
 
 Later, in the repo of an app you already have:
 
@@ -116,6 +128,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 - With DNS at Cloudflare, phase 01 and `SERVICES.md` create the A records through the
   Cloudflare API (`dns_set_a` in `lib.sh`: DNS only, created or updated, never deleted) from a
   token for that one zone; the `dig` check in phase 04 stays as the proof they resolve.
+- The Claude Code plugin is this repo itself: `.claude-plugin/` holds the plugin and marketplace
+  manifests, and each command in `skills/` is a thin pointer that names its runbook in the
+  installed copy and repeats none of it; the Cursor rule in `.cursor/rules/` lists the same
+  files. `test/packaging.sh` checks that the commands, the rule and the `AGENTS.md` table agree.
+  The manifests carry no version, so `claude plugin update vps-setup-one-shot` follows the latest
+  commit.
 - `starter/` is the demo app: Next.js (standalone output), a waitlist form writing to Postgres,
   `/api/health` checking the database, a non-root multi-stage Docker image.
 
@@ -196,6 +214,10 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   a clean Coolify mount the Docker socket, the `hcloud` JSON fields, the advisories answer and how
   long Coolify keeps backup runs come from the source and API documentation and are marked
   `[verify]` in `references/coolify-api.md`.
+- The Claude Code plugin and the Cursor rule (R19) are checked by `test/packaging.sh` only and
+  have **not been installed from the marketplace or run end to end yet**; that Codex and Cursor
+  pick up `AGENTS.md` and the rule comes from their documentation, not a run. `claude plugin
+  validate .` passes locally (warning only about the missing version) and is not in CI.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 

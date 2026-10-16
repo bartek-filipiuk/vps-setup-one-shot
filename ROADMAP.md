@@ -109,7 +109,11 @@ Rules that apply to every item:
   (Code and fake-API tests done; not run on a server yet.)
 - **R19 Agent packaging.** A Claude Code plugin (`/vps-setup`, `/vps-status`, `/vps-doctor`) and
   parity for Codex and Cursor through `AGENTS.md`; the markdown stays the source, a test diffs the
-  two. Done when: the harness passes through the plugin and through plain markdown.
+  two. The repo root is the plugin and its own marketplace (`.claude-plugin/`), one user-invoked
+  pointer per runbook in `skills/`, the same list in `.cursor/rules/` and in the `AGENTS.md`
+  "Entry points" table; `test/packaging.sh` checks they agree and carry no runbook content.
+  Done when: the harness passes through the plugin and through plain markdown.
+  (Plugin, rule and test done; not installed from the marketplace or run yet.)
 - **R20 Providers beyond Hetzner.** `PROVIDER=other` becomes first-class: the generic path (an
   Ubuntu box with your key) tested on dedicated servers; provider-specific firewall and backup steps
   only on request. What differs on a dedicated server: the OS is installed through the provider's

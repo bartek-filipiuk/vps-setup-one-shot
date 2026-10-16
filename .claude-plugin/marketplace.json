@@ -1,0 +1,15 @@
+{
+  "name": "bartek-filipiuk",
+  "description": "Plugins by bartek-filipiuk",
+  "owner": {
+    "name": "Bartek Filipiuk"
+  },
+  "plugins": [
+    {
+      "name": "vps-setup-one-shot",
+      "source": ".",
+      "description": "Runbooks an AI coding agent follows to set up and run a Hetzner/Ubuntu VPS with Coolify: setup, status, doctor, checkup, rollback, restore, upgrade, rebuild, handover, services, prepare an existing app.",
+      "category": "devops"
+    }
+  ]
+}

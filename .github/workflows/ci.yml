@@ -23,6 +23,8 @@ jobs:
         run: bash test/status.test.sh
       - name: checkup.sh tests (fake Coolify API and GitHub, ssh, openssl and hcloud stubs, no server)
         run: bash test/checkup.test.sh
+      - name: agent packaging (plugin, Cursor rule and AGENTS.md agree, no runbook content)
+        run: bash test/packaging.sh
 
   shellcheck:
     runs-on: ubuntu-latest
