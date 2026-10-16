@@ -174,6 +174,30 @@ Webhook target for GitHub push events: `<COOLIFY_URL>/webhooks/source/github/eve
 a GitHub webhook with `content_type: json`, event `push`, and the app's
 `manual_webhook_secret_github` as the secret. Deliveries return 200 and trigger a deploy.
 
+Checkup (R16: `checkup.sh`, `CHECKUP.md`, `checkup_server_facts`, `firewall_rules`,
+`firewall_applied`, `hcloud_json`, `coolify_advisories`, `backup_success_rate`, `server_cost`).
+The Coolify calls are the `GET`s of `status.sh` above; the rest is not Coolify's API. None of it
+has been run against a real server, Hetzner project or GitHub answer yet **[verify]**.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /databases/{uuid}/backups`, `.../executions` | backup success rate, last 30 days | as above. Coolify deletes old execution rows together with old local backups (retention), so the 30 days may hold fewer runs than the schedule made; a short history is not a failure **[verify]** |
+| `GET https://api.github.com/repos/coollabsio/coolify/security-advisories?state=published&per_page=100` | Coolify advisories against `GET /version` | GitHub REST, no token: 60 calls an hour per IP, 403 or 429 past it. Array of `{ghsa_id, cve_id, severity, published_at, summary, vulnerabilities:[{package, vulnerable_version_range, patched_versions}]}`; ranges like `< 4.0.0-beta.420` or `>= 4.0.0, <= 4.3.23`, may be null; a pre-release sorts before its release (`JQ_VERSION` in `lib.sh`) **[verify]** |
+| `hcloud firewall describe vps-setup-fw -o json` | firewall rules and where it is applied | `{rules:[{direction, protocol, port (string, null for icmp), source_ips:[...]}], applied_to:[{type:"server", server:{id}} or {type:"label_selector", applied_to_resources:[...]}]}` as in the Hetzner Cloud API **[verify]** |
+| `hcloud server describe <name> -o json`, `hcloud server list -o json` | server id; monthly list price | `id`, `server_type.prices[]:{location, price_monthly:{net, gross}}` (strings), `datacenter.location.name` (newer API also `location.name`), `backup_window` null when backups are off; backups add 20% of the server price **[verify]** |
+| `hcloud primary-ip list -o json`, `hcloud volume list -o json` | counted in the cost line | no price in the answer; their prices, Object Storage and traffic only in the Hetzner Console → **Usage** **[verify]** |
+
+On the server (`checkup_server_facts`, one `rssh` round trip, read-only): `ss -tlnpH` and
+`ss -ulnpH`, `sshd -T`, `ssh-keygen -lf /root/.ssh/authorized_keys` (comments dropped),
+`ps -o args= -C dockerd`, the `"hosts"` of `/etc/docker/daemon.json`, `docker inspect` of every
+container (name, image, privileged, a mount of `/var/run/docker.sock` or `/run/docker.sock`),
+`df -Pk /`, `du -sk /data/coolify/backups /root/db-dumps`, `docker system df`. Expected on a clean
+4.3.23, from the source and its compose files: `coolify-proxy` (Traefik, socket read-only) and
+`coolify-sentinel` mount the socket, and the `coolify-helper` build containers while a deploy
+runs (`DOCKER_SOCK_OK`, `DOCKER_SOCK_OK_IMAGES`) **[verify]**; 8000 (dashboard), 6001 and 6002
+(realtime, terminal) and 8080 (the proxy's dashboard) listen on all addresses and are closed
+from the internet only by the cloud firewall **[verify]**.
+
 ## Known quirks
 
 - **Do not use `POST /applications/dockerfile`** for a repo: it builds an inline Dockerfile without

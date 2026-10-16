@@ -160,6 +160,7 @@ Write a summary the user can keep. No secrets in it.
 - Upgrades (Coolify, Ubuntu, Postgres): $(state_get SETUP_DIR)/UPGRADE.md
 - Logs: Coolify UI -> app -> Logs
 - Health: $(state_get SETUP_DIR)/status.sh (one screen; exit 0 = all OK)
+- Monthly checkup (ports, SSH, Docker, advisories, backup rate, disk growth, cost): $(state_get SETUP_DIR)/CHECKUP.md
 - Alerts: the Discord channel; check the Coolify settings: cd $(state_get SETUP_DIR) && . ./lib.sh && notify_status
 - Panel access if the domain breaks: ssh -N -L 8000:localhost:8000 root@$(state_get VPS_IP), then http://localhost:8000
 
