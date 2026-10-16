@@ -5,7 +5,7 @@ analytics, automation, an uptime monitor or a Git host, each on its own domain w
 Coolify ships these as one-click services; this file drives them through its API. Work from the
 repo root of `vps-setup-one-shot` (or with `SETUP_DIR` pointing at it, as in `PREPARE-APP.md`);
 every command starts with `. ./lib.sh` and uses the global setup state (the project from phase
-05). Rules from `SETUP.md` apply: API only via `capi`, server commands only via `rssh`, nothing
+05, or another client's project the user picks in step 1). Rules from `SETUP.md` apply: API only via `capi`, server commands only via `rssh`, nothing
 destructive without the user's yes, prove every step.
 
 **Not run on a real server yet.** `service_create`, `service_status`, `service_delete` and the
@@ -17,8 +17,8 @@ templates come from the 4.3.23 source and are marked `[verify]` (`references/coo
 
 ## Supported services
 
-One way per tool. Each runs as a Coolify service in the setup's project (environment
-`production`), with its data in Docker volumes on the server.
+One way per tool. Each runs as a Coolify service in the chosen project and environment (by
+default the setup's project and `production`), with its data in Docker volumes on the server.
 
 | Tool | `TYPE` | What it needs | First login (user, right after HTTPS works) |
 |------|--------|---------------|---------------------------------------------|
@@ -52,7 +52,18 @@ supported yet either; one is added after a run on a server (`SERVICE_TYPES` in `
 ## 1. Pick the tool and its domain (user)
 
 Ask which tool from the table, a short name for it (lower case, digits, dashes; usually the
-type) and its domain, a subdomain of theirs such as `stats.<DOMAIN>`. The user adds an **A**
+type) and its domain, a subdomain of theirs such as `stats.<DOMAIN>`. Ask too which project it
+belongs to: by default the setup's own (phase 05), or a client's or product's project that
+already exists (`projects_inventory` lists them). For another project, step 3 runs with
+`VPS_PROJECT="<project name>"` in front, and `VPS_ENV=<stage>` when it is not `production`;
+the project must exist (`project_ensure`, PREPARE-APP.md step 5). The domain must be free:
+
+```
+. ./lib.sh; domain_in_use "<SERVICE_DOMAIN>"; echo "exit $?"
+```
+
+Exit 1 is free; exit 0 prints the app or service that has it (pick another domain); exit 2 means
+Coolify could not be read. The user adds an **A**
 record for that name pointing at `VPS_IP`, and no AAAA record (as in phase 01, step 4).
 
 With `DNS_PROVIDER=cloudflare` you create the record instead (replace `<SERVICE_DOMAIN>`):
@@ -86,6 +97,12 @@ Replace `<TYPE>` and `<NAME>` too:
 
 ```
 . ./lib.sh; service_create "<TYPE>" "<NAME>" "<SERVICE_DOMAIN>"
+```
+
+In a client's project from step 1 instead:
+
+```
+. ./lib.sh; VPS_PROJECT="<project name>" service_create "<TYPE>" "<NAME>" "<SERVICE_DOMAIN>"
 ```
 
 Expect `service <NAME> (<TYPE>) created: <uuid>, recorded as SERVICE_<NAME>_UUID` (the name in
@@ -123,7 +140,12 @@ its logs in the Coolify UI (project → the service → **Logs**) and see "HTTPS
 each attempt counts against Let's Encrypt's limits.
 
 Now the user does the first login from the table, at once. `./status.sh` has a `service <NAME>`
-line and a `cert <SERVICE_DOMAIN>` line from now on.
+line under its project and a `cert <SERVICE_DOMAIN>` line from now on. Regenerate the list of
+projects, so the service is in it:
+
+```
+. ./lib.sh; projects_md
+```
 
 ## 5. Backups
 

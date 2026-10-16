@@ -46,9 +46,30 @@ Find and write down, each with the file it came from:
 - Background work: cron jobs, queues, workers, websockets.
 - Existing `Dockerfile` / `.dockerignore` / health route.
 
+Then where it goes: one Coolify project per client or product, one environment per stage. Show
+the user what exists (read only):
+
+```
+. "$SETUP_DIR/lib.sh"; projects_inventory | column -t -s "$(printf '\t')"
+```
+
+The default is a new project named after the repo, in `production`. If the app belongs to a
+client or product that already has a project, the user picks that project instead, and a stage
+(`production`, or for example `staging`). The suggested domain follows from both; a domain the
+user names wins. Whatever domain the plan says, no app or service may use it yet:
+
+```
+. "$SETUP_DIR/lib.sh"; P="<project>"; N="<repo name>"; S=production
+H=$(app_domain_default "$P" "$N" "$S") && echo "default: $H"
+domain_in_use "$H"; echo "exit $?"
+```
+
+`domain_in_use` exit 1 means free; exit 0 prints who has it (pick another domain); exit 2 means
+Coolify could not be read (fix that first).
+
 Write this into `DEPLOY.md` (inventory + plan) and show it to the user. The plan lists every file
-you will add or change, the domain (`<name>.<DOMAIN>` from the global state is a good default),
-whether a Postgres database is created, and open questions. Wait for approval.
+you will add or change, the project and stage, the domain, whether a Postgres database is
+created, and open questions. Wait for approval.
 
 Things to flag rather than silently fix:
 - **SQLite or uploads on local disk**: needs a persistent volume (Coolify UI only: app →
@@ -123,6 +144,19 @@ Follow `$SETUP_DIR/phases/05-starter.md` steps 2 to 6 with these differences:
 - Use `VPS_STATE=.coolify.env` so the UUIDs land in this repo's `.coolify.env` (check it is
   gitignored first). Set `GH_REPO` from `gh repo view --json nameWithOwner -q .nameWithOwner`,
   `APP_NAME` from the repo name, `APP_DOMAIN` from the approved plan, `APP_DIR` to the repo path.
+- Step 3, the project: the approved project and stage instead of the app's name. Both are found
+  or created, and recorded in `.coolify.env` (`PROJECT_UUID`, `PROJECT_NAME`, `ENV_NAME`); the
+  database and application bodies of steps 3 and 4 then take them from `project_ctx`:
+
+  ```
+  . "$SETUP_DIR/lib.sh"; VPS_STATE=.coolify.env
+  project_ensure "<project from the plan>" "<one line: client or product>" &&
+  env_ensure "$(state_get PROJECT_UUID)" "<stage from the plan>" && project_ctx
+  ```
+
+  If `project_ensure` says several projects have that name, ask the user which one is meant and
+  to rename the other in the Coolify UI (**Projects**); never pick one yourself.
+- Before the domain is set (step 4), `domain_in_use "$(state_get APP_DOMAIN)"` must still exit 1.
 - DNS: the user adds an A record for the new hostname pointing to the server IP (no AAAA, DNS
   only on Cloudflare). With `DNS_PROVIDER=cloudflare` in `~/.config/vps-setup/state` you create
   it: `dns_set_a "$(state_get APP_DOMAIN)" "$(VPS_STATE=$VPS_SETUP_STATE state_get VPS_IP)"`
@@ -159,6 +193,9 @@ Follow `$SETUP_DIR/phases/05-starter.md` steps 2 to 6 with these differences:
 
 Write the classic keys too, so `coolify-deploy`-style tools work in this repo:
 `state_set COOLIFY_PROJECT_UUID ...`, `COOLIFY_APP_UUID`, `COOLIFY_DOMAIN=https://<APP_DOMAIN>`.
+`PROJECT_NAME` and `ENV_NAME` are already there from `project_ensure` and `env_ensure`. An
+older `.coolify.env` with only the classic keys keeps working: `project_ctx` reads
+`COOLIFY_PROJECT_UUID` and `production`.
 
 ## 6. Deploy and verify
 
@@ -175,3 +212,9 @@ this database), rollback (`$SETUP_DIR/ROLLBACK.md`: `deploy_and_wait` prints the
 and dumps the database to `/root/db-dumps/<DB_UUID>/` on the server before every deploy; a push
 to `main` deploys without the dump), and anything that was flagged and left open. Show the user
 the summary.
+
+Then regenerate the server's list of projects, so the new app shows up in it:
+
+```
+. "$SETUP_DIR/lib.sh"; projects_md
+```

@@ -9,7 +9,7 @@ Checked against Coolify 4.3.23 on 2026-10-09 unless marked **[verify]**.
 |------|-----|-------|
 | `GET /version` | sanity check, record version | plain string |
 | `GET /servers` | find `COOLIFY_SERVER_UUID` | the Coolify host is usually named `localhost` |
-| `POST /projects {name}` | one project per app | returns `uuid`; environment `production` exists by default |
+| `POST /projects {name}` | one project per client or product (`project_ensure`) | returns `uuid`; environment `production` exists by default. `description` is sent too (R09) **[verify]** |
 | `POST /security/keys {name, private_key}` | store a deploy key | returns `uuid` → `private_key_uuid` |
 | `POST /databases/postgresql` | Postgres | body: `project_uuid, server_uuid, environment_name, name, image, postgres_user, postgres_password, postgres_db, is_public:false, instant_deploy:true`; returns `uuid`, `internal_db_url` |
 | `GET /databases/{uuid}` | status, `internal_db_url` | status `running:healthy` when ready; the uuid is the hostname inside the `coolify` network and part of the container name |
@@ -133,6 +133,21 @@ the subject "Coolify: {resource} has been stopped", and `Container/ContainerRest
 it too; there is no separate container-stopped notification. So `NOTIFY_EVENTS` includes it, or
 the R06a drill (stop the app, a message arrives) gets nothing. Not yet seen on a server **[verify]**.
 
+Projects and environments (R09: `project_find`, `project_ensure`, `env_ensure`, `project_ctx`,
+`domain_in_use`, `projects_inventory`, `projects_md`, the `status.sh` group lines). The `GET`
+shapes were checked read-only on a live 4.3.23 on 2026-10-16; the writes other than
+`POST /projects` are from the API docs and not yet exercised **[verify]**.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /projects` | find a project by name (`project_find`), list them | array of `{id, uuid, name, description}` (live GET) |
+| `GET /projects/{uuid}` | the project's environments (`env_ensure`, `projects_inventory`, `status.sh`) | `{id, uuid, name, description, team_id, created_at, updated_at, icon_*, environments:[...]}`; `environments[]`: `{id, uuid, name, description, project_id, created_at, updated_at}` (live GET). Apps, services and databases point at an environment by its numeric `id` |
+| `GET /projects/{uuid}/{environment_name}` | one environment | 200 (live GET); not used |
+| `GET /applications`, `GET /databases`, `GET /services` | which environment a resource is in | each item carries a numeric `environment_id` (live GET) |
+| `POST /projects/{uuid}/environments {name}` | a new stage (`env_ensure`) | returns `{uuid, name}`; a duplicate name is refused (422) **[verify]**; `env_ensure` reads the list first and posts only a missing name |
+| resource `POST` with an unknown `environment_name` | | 404 "Environment not found" **[verify]**; `project_ctx` gives only environments `env_ensure` created or found |
+| `PATCH /applications/{uuid} {domains}` on a domain another resource uses | | may be accepted without a conflict **[verify]**; `domain_in_use` is checked before (PREPARE-APP step 2 and 5, SERVICES step 1) |
+
 Services (R10: `service_create`, `service_status`, `service_delete`, the `status.sh` Services
 section, `SERVICES.md`). The two `GET` calls were verified live on 4.3.23 on 2026-10-15;
 everything else is from the 4.3.23 source and not yet exercised **[verify]**.
@@ -223,5 +238,8 @@ from the internet only by the cloud firewall **[verify]**.
   member sees (and, by role, changes) every project on that team's servers; tokens have no project
   scope either. A client who must see only their project gets their own server in their own team
   (`HANDOVER.md` step 0) **[verify]**.
+- **Project names are not unique** **[verify]**. Nothing in the API stops two projects with the
+  same name, so `project_find` and `project_ensure` fail on two matches ("rename one in the
+  Coolify UI") instead of picking one.
 - **Never put the API token into GitHub** (secrets, webhooks). It controls the whole server.
   Use the per-app webhook secret.

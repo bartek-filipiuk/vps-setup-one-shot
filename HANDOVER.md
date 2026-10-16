@@ -109,7 +109,17 @@ chmod 600 "$d/SERVER.md"; echo "written: $d/SERVER.md"
 ```
 
 Show the user the file. Case B: delete the lines about the server, SSH, panel access and the
-teardown before it goes out; they are not the client's. Case A: the new owner's agent also needs
+teardown before it goes out; they are not the client's. The client's own section of
+`PROJECTS.md` (their apps, services, databases, domains and stages; uuids, no secrets) goes into
+the pack too, and only theirs: the other projects are the developer's other clients. Replace
+`<CLIENT PROJECT>` with the project's name exactly as `projects_inventory` shows it:
+
+```
+. ./lib.sh; d="$HOME/.config/vps-setup/handover"; p="<CLIENT PROJECT>"
+( umask 077; projects_md - | awk -v h="## $p" '/regenerate with$/ { sub(/; regenerate with$/, "."); print; getline; sub(/^`[^`]*`\. /, ""); print; next } /^## / { on = ($0 == h); seen = 1 } on || !seen { print }' > "$d/PROJECTS.md" ) &&
+grep -qx "## $p" "$d/PROJECTS.md" && echo "written: $d/PROJECTS.md" || echo "no project named $p"
+```
+ Case A: the new owner's agent also needs
 the state; give them `~/.config/vps-setup/state` without the lines that are paths on the
 developer's machine:
 

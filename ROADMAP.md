@@ -129,7 +129,11 @@ Rules that apply to every item:
   a green fixture stays "not supported yet". Done when: three stacks beyond Node are green.
 - **R09 Projects and clients.** One Coolify project per client or product, one environment per
   stage, names and domains derived from the project name, `PROJECTS.md` listing what runs where,
-  `status.sh` grouped by project. Done when: the harness runs two projects side by side.
+  `status.sh` grouped by project. `project_ensure`, `env_ensure`, `project_ctx` (an old setup
+  keeps working without a state rewrite), `app_domain_default`, `domain_in_use`,
+  `projects_inventory` and `projects_md` in `lib.sh`; phase 05, `PREPARE-APP.md`, `SERVICES.md`
+  and phase 06 use them. Done when: the harness runs two projects side by side.
+  (Helpers, runbook changes and PROJECTS.md generation done; not run on a server yet.)
 - **R11 Staging without a second server.** A `staging` branch deploys to `staging.<app-domain>`
   as a second app with its own database; promotion is a merge to `main`. Done when: the harness
   pushes to `staging`, sees it change, merges, sees production change.

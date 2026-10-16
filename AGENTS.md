@@ -39,7 +39,8 @@ backups), `CHECKUP.md` (the monthly checkup: `checkup.sh`, what each line means,
 `lib.sh`
 (state file, Coolify API helpers, deploy with dump and rollback point, rollback, restore, app logs,
 S3 storage and off-site backups, Coolify notifications to Discord, team members and stored keys,
-one-click services, Postgres major versions, DNS records through the Cloudflare API, the
+one-click services, projects and environments and the generated PROJECTS.md, Postgres major
+versions, DNS records through the Cloudflare API, the
 rebuild inventory and the backups in the bucket, the read-only checkup helpers: hcloud list and
 describe only, advisories, backup success rate, the checkup log), `verify.sh` (reads the real
 server state and says which phase is next), `status.sh` (one-screen health check, read-only),

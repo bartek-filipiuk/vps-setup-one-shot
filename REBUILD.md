@@ -22,10 +22,10 @@ what to clear first and what cannot come back.
 
 | Survives (on the user's machine or outside the server) | Gone with the server |
 |--------------------------------------------------------|----------------------|
-| `~/.config/vps-setup/state` (domains, app name, repo, bucket name, choices) | Coolify's database: apps, projects, environment variable values, deploy keys, the webhook secret, the S3 storage entry, notification settings, the admin login |
+| `~/.config/vps-setup/state` (domains, app name, repo, bucket name, choices, project and stage names `PROJECT_NAME`, `ENV_NAME`) | Coolify's database: apps, projects, environment variable values, deploy keys, the webhook secret, the S3 storage entry, notification settings, the admin login |
 | `~/.config/vps-setup/s3.env`, `notify.env`, `cloudflare.env` | the API token in `~/.config/coolify/config` (it opens nothing now) |
-| `~/.config/vps-setup/SERVER.md` (old IP and UUIDs, for reference) | `/root/db-dumps/` (the dumps `deploy_and_wait` took) |
-| each app's `.coolify.env` (UUIDs only) and its `DEPLOY.md` | the volumes of services (n8n, Uptime Kuma, Forgejo) |
+| `~/.config/vps-setup/SERVER.md` (old IP and UUIDs, for reference) and `PROJECTS.md` (which project and stage each app and service was in) | `/root/db-dumps/` (the dumps `deploy_and_wait` took) |
+| each app's `.coolify.env` (UUIDs, its project and stage names) and its `DEPLOY.md` | the volumes of services (n8n, Uptime Kuma, Forgejo) |
 | the git repos on GitHub | Hetzner server backups, when the server was deleted: they belong to the server **[verify]** |
 | the S3 bucket with the database backups (phase 06 step 1) | |
 | the DNS records (they point at the old IP until step 2) | |
@@ -119,8 +119,8 @@ Run them as written; `./verify.sh` leads. What differs on a rebuild:
 ## 3. The starter's database and app, not deployed: phase 05 steps 2 to 4
 
 Skip step 1: `APP_DIR` and `GH_REPO` survived and the repo is on GitHub
-(`gh repo view "$(state_get GH_REPO)"`). Steps 2 to 4 create a new deploy key, the project, the
-Postgres and the app with its `DATABASE_URL`. The app is created with `instant_deploy:false`, so
+(`gh repo view "$(state_get GH_REPO)"`). Steps 2 to 4 create a new deploy key, the project (by
+its old name, `project_ensure`), the Postgres and the app with its `DATABASE_URL`. The app is created with `instant_deploy:false`, so
 nothing runs yet; that matters for step 5. Do not run step 5 of phase 05 yet.
 
 Same Postgres major as before: phase 05 creates `postgres:17-alpine`. If the old database had
@@ -215,7 +215,10 @@ In each app's repo, with `VPS_STATE=.coolify.env`:
 2. `PREPARE-APP.md` step 5, but only phase 05 steps 2 to 4 with PREPARE-APP's differences: the
    application and its environment variables created, nothing deployed (steps 5 and 6 come in
    7.4, after the restore); the repo is already deployable
-   (steps 1 to 4 were done back then). The environment variable values are gone with Coolify:
+   (steps 1 to 4 were done back then). The project and stage come back by name:
+   `n=$(state_get PROJECT_NAME); project_ensure "${n:-$(state_get APP_NAME)}" && e=$(state_get ENV_NAME); env_ensure "$(state_get PROJECT_UUID)" "${e:-production}"`;
+   apps from before R09 have no `PROJECT_NAME` or `ENV_NAME`, so they get a project named after
+   the app and `production`, as before (the old `PROJECTS.md` copy says where they were). The environment variable values are gone with Coolify:
    the user writes `.env.production` again from the names in `DEPLOY.md` or `.env.example`.
    Generated secrets (`openssl rand -hex 32`) get new values, so every session signed with the
    old one is invalid and users log in again. If the app encrypts stored data with such a secret,
@@ -244,15 +247,15 @@ Alerts: `notify.env` survived, so phase 06 step 2b (`notify_setup discord`) and 
 from the UI.
 
 Services: `SERVICES.md` for each one the user had (the `SERVICE_<NAME>_UUID` keys in the state
-copy give the names). Their volumes are gone: n8n, Uptime Kuma and Forgejo start empty, because
+copy give the names, the old `PROJECTS.md` copy the project each was in, for `VPS_PROJECT`). Their volumes are gone: n8n, Uptime Kuma and Forgejo start empty, because
 `lib.sh` drives no volume backups. A database inside a service (Umami) backed up from the UI has
 its files in the bucket too, but restoring into a service's database is not covered
 (`SERVICES.md` step 5); that needs a human.
 
 ## 9. Check and the new SERVER.md
 
-Phase 06 step 3 writes `SERVER.md` again with the new IP and UUIDs (the command overwrites the old
-one), step 4 records `HANDOVER_DONE=1`. Then:
+Phase 06 step 3 writes `PROJECTS.md` and `SERVER.md` again with the new IP and UUIDs (it
+overwrites both; the copies from step 0 keep the old ones), step 4 records `HANDOVER_DONE=1`. Then:
 
 ```
 ./verify.sh; ./status.sh; echo "status exit $?"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# One-screen health check of the server (updates, reboot), Coolify, apps, services, certificates,
-# backups, Postgres major versions and alerts.
+# One-screen health check of the server (updates, reboot), Coolify, apps and services (grouped
+# by project and environment), certificates, backups, Postgres major versions and alerts.
 # Run from anywhere on YOUR machine: ./status.sh
 # Exit code: 0 all OK, 1 something needs attention (WARN or FAIL), 2 server or Coolify API unreachable.
 # Read-only: it never changes anything and never prints tokens or deploy logs.
@@ -158,15 +158,42 @@ else
     line WARN "version" "$version, latest release $latest (minor or major update behind; UPGRADE.md, Coolify)"
   else line OK "version" "$version (latest release $latest)"; fi
 
+  # --- Projects (R09): environment id -> "project / environment", for the group lines of apps
+  # and services. Unreadable: one WARN, and apps and services are listed without groups.
+  projmap='{}' grouped=0
+  if plist=$(api /projects) && jq -e 'arrays' <<<"$plist" >/dev/null 2>&1; then
+    grouped=1
+    while IFS= read -r pu; do
+      [ -n "$pu" ] || continue
+      if ! service_valid_uuid "$pu" 2>/dev/null || ! one=$(api "/projects/$pu") ||
+         ! projmap=$(printf '%s\n' "$projmap" "$one" | jq -sce '.[0] + ([.[1] | (.name // "?") as $p | .environments[]
+             | {key: (.id | tostring), value: "\($p) / \(.name // "?")"}] | from_entries)' 2>/dev/null); then
+        grouped=0; projmap='{}'; break
+      fi
+    done < <(jq -r '.[].uuid // empty' <<<"$plist")
+  fi
+  [ "$grouped" = 1 ] || line WARN "projects" "n/a (could not read; apps and services listed without their project)"
+  # group LABEL -> a group line when LABEL differs from the last one (empty when not grouped)
+  last_group=''
+  group() {
+    [ "$grouped" = 1 ] && [ "$1" != "$last_group" ] || return 0
+    last_group=$1
+    if [ "$1" = "~" ]; then subsection "(no project)"; else subsection "project $1"; fi
+  }
+  # shellcheck disable=SC2016 # $m is a jq variable
+  JQ_GROUP='(($m[(.environment_id // "none") | tostring]) // "~")'
+
   # --- Apps ---
   section "Apps"
-  if ! apps=$(api /applications | jq -c '.[] | {uuid, name, status: (.status // "unknown"), fqdn: (.fqdn // "")}' 2>/dev/null); then
+  if ! apps=$(api /applications | jq -c --argjson m "$projmap" '[.[] | {uuid, name, status: (.status // "unknown"), fqdn: (.fqdn // ""),
+      grp: '"$JQ_GROUP"'}] | sort_by((.grp == "~"), .grp, .name) | .[]' 2>/dev/null); then
     line WARN "apps" "n/a (could not read applications)"
   elif [ -z "$apps" ]; then
     line OK "apps" "none"
   else
     while IFS= read -r app; do
       uuid=$(jq -r .uuid <<<"$app"); name=$(jq -r .name <<<"$app"); st=$(jq -r .status <<<"$app")
+      group "$(jq -r .grp <<<"$app")"
       case $st in
         running:unhealthy) mark=WARN ;;
         running*) mark=OK ;;
@@ -192,16 +219,19 @@ else
   # --- Services: Coolify one-click services (SERVICES.md) ---
   section "Services"
   # Per service: status, the fqdns of its applications, the applications at the restart limit.
-  if ! svcs=$(api /services | jq -c 'if type == "array" then .[] else error("not a list") end
-      | {name: (.name // "?"), status: (.status // "unknown"),
+  if ! svcs=$(api /services | jq -c --argjson m "$projmap" 'if type == "array" then . else error("not a list") end
+      | [.[] | {name: (.name // "?"), status: (.status // "unknown"),
          fqdn: ([.applications[]? | .fqdn // "" | select(. != "")] | join(",")),
-         limit: ([.applications[]? | select(.restart_limit_reached == true) | .name // "?"] | join(", "))}' 2>/dev/null); then
+         limit: ([.applications[]? | select(.restart_limit_reached == true) | .name // "?"] | join(", ")),
+         grp: '"$JQ_GROUP"'}] | sort_by((.grp == "~"), .grp, .name) | .[]' 2>/dev/null); then
     line WARN "services" "n/a (could not read services)"
   elif [ -z "$svcs" ]; then
     line OK "services" "none"
   else
+    last_group=''
     while IFS= read -r svc; do
       name=$(jq -r .name <<<"$svc"); st=$(jq -r .status <<<"$svc")
+      group "$(jq -r .grp <<<"$svc")"
       fqdn=$(jq -r .fqdn <<<"$svc"); limit=$(jq -r .limit <<<"$svc")
       # running:unknown is a template without a health check, as for apps.
       case $st in

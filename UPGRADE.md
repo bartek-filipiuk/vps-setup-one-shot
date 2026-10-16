@@ -237,7 +237,7 @@ start (step 2), stop there: this needs a human, and nothing has changed for the 
 
 It prints the old database (uuid, name, image, user, database, major), the new one it plans
 (`<name>-pg18`, `postgres:18-alpine`, same user and database name, a new password, the same
-project and server, environment `production`), the app, and the steps. It refuses a target that
+project, environment and server, from `project_ctx`), the app, and the steps. It refuses a target that
 is not above the current major. Read it with the user, together with the downtime, and get an
 explicit yes for the whole section. Then a dump while nothing has changed yet:
 
@@ -248,11 +248,11 @@ explicit yes for the whole section. Then a dump while nothing has changed yet:
 ### 2. Create the new database (the user's yes from step 1)
 
 ```
-. ./lib.sh; O=$(state_get DB_UUID); T=18; I=$(capi GET "/databases/$O") &&
-B=$(jq -n --arg p "$(state_get PROJECT_UUID)" --arg s "$(coolify_server)" --arg t "$T" \
+. ./lib.sh; O=$(state_get DB_UUID); T=18; I=$(capi GET "/databases/$O") && read -r P E < <(project_ctx) &&
+B=$(jq -n --arg p "$P" --arg e "$E" --arg s "$(coolify_server)" --arg t "$T" \
   --arg n "$(jq -r '.name' <<<"$I")-pg$T" --arg u "$(jq -r '.postgres_user // "postgres"' <<<"$I")" \
   --arg d "$(jq -r '.postgres_db // .postgres_user // "postgres"' <<<"$I")" --arg pw "$(openssl rand -hex 24)" \
-  '{project_uuid:$p, server_uuid:$s, environment_name:"production", name:$n, image:"postgres:\($t)-alpine",
+  '{project_uuid:$p, server_uuid:$s, environment_name:$e, name:$n, image:"postgres:\($t)-alpine",
     postgres_user:$u, postgres_password:$pw, postgres_db:$d, is_public:false, instant_deploy:true}') &&
 N=$(capi POST /databases/postgresql "$B" | jq -r '.uuid // empty') && [ -n "$N" ] &&
 state_set PG_UPGRADE_OLD "$O" && state_set PG_UPGRADE_NEW "$N" && echo "new database: $N (old: $O)"
