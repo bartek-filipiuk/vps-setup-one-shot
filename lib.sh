@@ -75,6 +75,9 @@ line() {
   printf '%s%-5s%s %-28s %s\n' "$c" "$1" "${C_END:-}" "$(tr -d '[:cntrl:]' <<<"$2")" "$(tr -d '[:cntrl:]' <<<"$3")"
 }
 section() { printf '\n%s\n' "$1"; }
+# subsection TEXT -> an indented group line inside a section (status.sh: "project acme / production");
+# no mark, so checkup.sh and anything that reads the WARN and FAIL lines skip it.
+subsection() { printf '  %s\n' "$(tr -d '[:cntrl:]' <<<"$1")"; }
 # worst MARK MARK -> the more serious of the two
 worst() { case "$1 $2" in *FAIL*) echo FAIL ;; *WARN*) echo WARN ;; *) echo OK ;; esac; }
 

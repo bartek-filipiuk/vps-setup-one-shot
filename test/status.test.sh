@@ -32,6 +32,8 @@ class H(BaseHTTPRequestHandler):
         p = self.path.removeprefix("/api/v1").split("?")[0].split("/")[1:]
         def pick(v): return self.send(200, v) if v is not None else self.send(404, {"message": "Not found."})
         if p == ["version"]: return pick(s.get("version"))
+        if p == ["projects"]: return pick(s.get("projects"))
+        if len(p) == 2 and p[0] == "projects": return pick(s.get("project", {}).get(p[1]))
         if p == ["applications"]: return pick(s.get("apps"))
         if p[:2] == ["deployments", "applications"]: return pick(s.get("deploys", {}).get(p[2]))
         if p == ["services"]: return pick(s.get("services"))
@@ -81,11 +83,13 @@ ago()    { date -u -d "-$1 hours" '+%Y-%m-%dT%H:%M:%S.000000Z'; }
 ago_tz() { date -u -d "-$1 hours" '+%Y-%m-%dT%H:%M:%S+00:00'; }
 BASE=$(jq -n --arg d "$(ago 2)" --arg b "$(ago_tz 5)" '{
   version: "4.3.23", latest: {tag_name: "v4.3.23"},
-  apps: [{uuid: "a1", name: "starter", status: "running:healthy", fqdn: "https://app.example.test,http://x.sslip.io"}],
+  projects: [{id: 1, uuid: "p1", name: "starter", description: null}],
+  project: {p1: {id: 1, uuid: "p1", name: "starter", environments: [{id: 1, uuid: "e1", name: "production", project_id: 1}]}},
+  apps: [{uuid: "a1", name: "starter", status: "running:healthy", fqdn: "https://app.example.test,http://x.sslip.io", environment_id: 1}],
   deploys: {a1: {count: 1, deployments: [
     {status: "finished", created_at: $d, finished_at: $d, commit: "abc123", application_name: "starter", logs: "SECRET-LOG-LINE"},
     {status: "failed", created_at: "2026-01-01T00:00:00.000000Z", finished_at: "2026-01-01T00:01:00.000000Z", commit: "old", application_name: "starter"}]}},
-  services: [{uuid: "s1", name: "umami", service_type: "umami", status: "running:healthy",
+  services: [{uuid: "s1", name: "umami", service_type: "umami", status: "running:healthy", environment_id: 1,
     applications: [{uuid: "sa1", name: "umami", fqdn: "https://stats.example.test", status: "running:healthy", restart_limit_reached: false}],
     databases: [{uuid: "sd1", name: "postgresql", status: "running:healthy", is_public: false}]}],
   dbs: [{uuid: "d1", name: "starter-db", database_type: "standalone-postgresql", image: "postgres:17-alpine"}],
@@ -184,6 +188,29 @@ check "services none: no service cert" "$(grep -c 'stats\.example' <<<"$out")" "
 expect "services 404" 1 '^WARN +services +n/a \(could not read services\)$' 'del(.services)'
 expect "services unreadable" 1 '^WARN +services +n/a \(could not read services\)$' '.services = {unexpected: 1}'
 FAKE_CERT_DAYS=10 expect "service cert 10d" 1 '^WARN +cert stats\.example\.test +expires in (9|10) days'
+
+# projects (R09): apps and services grouped under "project <name> / <environment>" lines; the
+# WARN and FAIL lines, labels and exit codes stay as they were
+run .
+check "projects: mark lines on a clean run unchanged" "$(grep -cE '^(OK|WARN|FAIL) ' <<<"$out")" "14"
+check "projects: group line before the app and before the service" \
+  "$(grep -E '^  project |^OK +(app|service) ' <<<"$out" | sed 's/  */ /g; s/, last deploy: .*//' | paste -sd '|' -)" \
+  " project starter / production|OK app starter running:healthy| project starter / production|OK service umami running:healthy, https://stats.example.test"
+run '.projects += [{id: 2, uuid: "p2", name: "acme"}] | .project.p2 = {uuid: "p2", name: "acme", environments: [{id: 2, name: "production"}, {id: 3, name: "staging"}]}
+  | .apps += [{uuid: "a2", name: "shop", status: "running:healthy", fqdn: "", environment_id: 3},
+              {uuid: "a3", name: "blog", status: "running:healthy", fqdn: "", environment_id: 2},
+              {uuid: "a4", name: "lost", status: "running:healthy", fqdn: "", environment_id: 42}]
+  | .deploys.a2 = .deploys.a1 | .deploys.a3 = .deploys.a1 | .deploys.a4 = .deploys.a1'
+check "projects: two projects sorted, unknown environment last" \
+  "$(sed -n '/^Apps$/,/^Services$/p' <<<"$out" | grep -E '^  |^OK +app ' | sed 's/  */ /g; s/ running.*//' | paste -sd '|' -)" \
+  " project acme / production|OK app blog| project acme / staging|OK app shop| project starter / production|OK app starter| (no project)|OK app lost"
+check "projects: grouped run exit" "$rc" "0"
+expect "projects 404" 1 '^WARN +projects +n/a \(could not read; apps and services listed without their project\)$' 'del(.projects)'
+has "projects 404: apps still listed" "$out" '^OK +app starter +running:healthy'
+check "projects 404: no group lines" "$(grep -cE '^  (project |\(no project\))' <<<"$out")" "0"
+expect "project detail 404" 1 '^WARN +projects +n/a ' 'del(.project)'
+expect "projects with no environment ids" 0 '^OK +app starter ' 'del(.apps[0].environment_id) | del(.services[0].environment_id)'
+check "projects with no environment ids: no project" "$(grep -c '^  (no project)$' <<<"$out")" "2"
 
 FAKE_CERT_DAYS=10 expect "cert 10d" 1 '^WARN +cert app\.example\.test +expires in (9|10) days'
 FAKE_CERT_DAYS=2 expect "cert 2d" 1 '^FAIL +cert app\.example\.test +expires in (1|2) days'

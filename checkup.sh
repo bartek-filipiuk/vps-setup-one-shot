@@ -42,6 +42,7 @@ action_for() {
     reboot|updates) echo "UPGRADE.md B" ;;
     version) echo "UPGRADE.md A" ;;
     app|apps) echo "DOCTOR.md" ;;
+    projects) echo "PREPARE-APP.md step 5" ;;
     cert) echo "DOCTOR.md D" ;;
     service|services) echo "SERVICES.md" ;;
     backup) [ "$w2" = rate ] && echo "CHECKUP.md 3e" || echo "phases/06-handover.md step 1" ;;

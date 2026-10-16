@@ -38,6 +38,8 @@ class H(BaseHTTPRequestHandler):
         p = self.path.removeprefix("/api/v1").split("?")[0].split("/")[1:]
         def pick(v): return self.send(200, v) if v is not None else self.send(404, {"message": "Not found."})
         if p == ["version"]: return pick(s.get("version"))
+        if p == ["projects"]: return pick(s.get("projects"))
+        if len(p) == 2 and p[0] == "projects": return pick(s.get("project", {}).get(p[1]))
         if p == ["applications"]: return pick(s.get("apps"))
         if p[:2] == ["deployments", "applications"]: return pick(s.get("deploys", {}).get(p[2]))
         if p == ["services"]: return pick(s.get("services"))
@@ -163,7 +165,9 @@ ago() { date -u -d "-$1 hours" '+%Y-%m-%dT%H:%M:%S.000000Z'; }
 # A clean setup as status.test.sh has it, plus the advisories GitHub publishes for Coolify.
 BASE=$(jq -n --arg d "$(ago 2)" --arg b "$(ago_tz 5)" --arg b2 "$(ago_tz 29)" '{
   version: "4.3.23", latest: {tag_name: "v4.3.23"},
-  apps: [{uuid: "a1", name: "starter", status: "running:healthy", fqdn: "https://app.example.test"}],
+  projects: [{id: 1, uuid: "p1", name: "starter", description: null}],
+  project: {p1: {id: 1, uuid: "p1", name: "starter", environments: [{id: 1, uuid: "e1", name: "production", project_id: 1}]}},
+  apps: [{uuid: "a1", name: "starter", status: "running:healthy", fqdn: "https://app.example.test", environment_id: 1}],
   deploys: {a1: {count: 1, deployments: [{status: "finished", created_at: $d, finished_at: $d, commit: "abc123"}]}},
   services: [],
   dbs: [{uuid: "d1", name: "starter-db", database_type: "standalone-postgresql", image: "postgres:17-alpine"}],
@@ -343,6 +347,7 @@ rm -f "$LOG"
 # status.sh findings come into the Actions with their runbooks; unreachable is exit 2
 FAKE_DISK=90 expect "status WARN: exit 1" 1 '^WARN +disk / +90% used$'
 has "status WARN: in Actions with its runbook" "$out" '^  WARN +disk / +90% used -> DOCTOR\.md C$'
+expect "status projects unreadable: runbook" 1 '^  WARN +projects +n/a .* -> PREPARE-APP\.md step 5$' 'del(.projects)'
 FAKE_CERT_DAYS=10 expect "status cert: runbook" 1 '^  WARN +cert app\.example\.test +expires in (9|10) days -> DOCTOR\.md D$'
 rm -f "$LOG"
 FAKE_SSH_RC=255 FAKE_FACTS_FAIL=1 expect "server unreachable: exit 2" 2 '^  FAIL +ssh +server unreachable \(exit 255\) -> DOCTOR\.md E$'
