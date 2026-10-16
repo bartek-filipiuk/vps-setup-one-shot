@@ -163,8 +163,9 @@ ask when, as in `RESTORE.md` step 1). Write down its time and size. Errors:
   backups were made for (after `UPGRADE.md` C it is `PG_UPGRADE_NEW` of the copy). Show the list
   to the user; never pick another database's backups without their yes.
 - `no backups in s3/...`: nothing to restore. The app comes back with an empty database.
-- `listing of s3/... failed`: the key pair or the bucket is wrong (phase 06 step 1a, then step 4
-  here again).
+- `listing of s3/... failed`: the key pair or the bucket is wrong, or docker on the server failed
+  (its error is printed above); keys: phase 06 step 1a, then step 4
+  here again.
 
 A key ending in `pg-dump-all-<time>.gz` comes from a schedule with `dump_all` on: a gzipped
 `pg_dumpall` that `db_restore` cannot read. Stop and tell the user; that case is not covered here
@@ -211,7 +212,9 @@ In each app's repo, with `VPS_STATE=.coolify.env`:
 1. `rebuild_inventory`, then the commands it prints (they start with `VPS_STATE=...`). The copy
    `.coolify.env.before-rebuild-<DATE>` is not covered by a `.coolify.env` line in `.gitignore`:
    never commit it (`git status` shows it); it holds UUIDs only.
-2. `PREPARE-APP.md` step 5, up to creating the application; the repo is already deployable
+2. `PREPARE-APP.md` step 5, but only phase 05 steps 2 to 4 with PREPARE-APP's differences: the
+   application and its environment variables created, nothing deployed (steps 5 and 6 come in
+   7.4, after the restore); the repo is already deployable
    (steps 1 to 4 were done back then). The environment variable values are gone with Coolify:
    the user writes `.env.production` again from the names in `DEPLOY.md` or `.env.example`.
    Generated secrets (`openssl rand -hex 32`) get new values, so every session signed with the

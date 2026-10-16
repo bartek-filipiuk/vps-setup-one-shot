@@ -314,6 +314,7 @@ case "$*" in
     want="MC_HOST_s3=https://AKFAKEKEY123:s3SeCrEt%2Fx%2By%3Dz%7Cw@fsn1.your-objectstorage.com"
     if [ "$(cat "$4")" = "$want" ]; then echo "envfile ok $(stat -c %a "$4")" >> "$HOME/envcheck.log"; else echo "envfile bad" >> "$HOME/envcheck.log"; fi
     echo "ls ${11}" >> "$HOME/mcls.log"
+    [ "${FAKE_MC_LS_FAIL:-0}" = nokey ] && { echo '{"status":"error","error":{"message":"Unable to list folder.","cause":{"message":"Object does not exist"}}}'; exit 1; }
     [ "${FAKE_MC_LS_FAIL:-0}" = 1 ] && { echo '{"status":"error","error":{"message":"Unable to list folder.","cause":{"message":"The specified bucket does not exist."}}}'; exit 1; }
     cat "$HOME/mc-ls.json" 2>/dev/null; true ;;
   "run --rm --env-file "*)
@@ -748,6 +749,9 @@ cat > "$HOME/mc-ls.full" <<'JSON'
 {"status":"success","type":"file","lastModified":"2026-10-13T02:00:05.5Z","size":1000,"key":"root-0/my-landing-db-oldpg1/pg-dump-app-1760000001.dmp"}
 {"status":"success","type":"file","lastModified":"2026-10-14T03:00:00+02:00","size":2048,"key":"root-0/my-landing-db-oldpg1/pg-dump-app-1760086401.dmp"}
 {"status":"success","type":"file","lastModified":"2026-10-14T01:30:00Z","size":500,"key":"root-0/shop-db-oth2/pg-dump-shop-1760005000.dmp"}
+{"status":"success","type":"file","lastModified":"2026-10-11T02:00:00Z","size":300,"key":"root-0/all-db-dall3/pg-dump-all-1759900000.gz"}
+{"status":"success","type":"file","lastModified":"2026-10-15T02:00:00Z","size":7,"key":"stray.txt"}
+not json
 {"status":"success","type":"file","lastModified":"2026-10-12T02:00:00.123456789Z","size":900,"key":"data/coolify/backups/databases/root-0/my-landing-db-oldpg1/pg-dump-app-1759999999.dmp"}
 JSON
 cp "$HOME/mc-ls.full" "$HOME/mc-ls.json"; : > "$HOME/envcheck.log"; : > "$HOME/mcls.log"
@@ -755,8 +759,9 @@ s3run s3_backup_list
 check "s3 list rc" "$rc" "0"
 check "s3 list header" "$(head -1 <<<"$out")" "$(printf 'db_uuid\tlast_modified\tsize\tkey')"
 check "s3 list: newest first across offsets" "$(sed -n '2,$p' <<<"$out" | cut -f1,2 | paste -sd ' ' -)" \
-  "$(printf 'oth2\t2026-10-14T01:30:00Z oldpg1\t2026-10-14T03:00:00+02:00 oldpg1\t2026-10-13T02:00:05.5Z oldpg1\t2026-10-12T02:00:00.123456789Z')"
-check "s3 list: folders skipped, every file once" "$(($(wc -l <<<"$out") - 1))" "4"
+  "$(printf 'oth2\t2026-10-14T01:30:00Z oldpg1\t2026-10-14T03:00:00+02:00 oldpg1\t2026-10-13T02:00:05.5Z oldpg1\t2026-10-12T02:00:00.123456789Z dall3\t2026-10-11T02:00:00Z')"
+check "s3 list: folders, short keys and non-JSON skipped, every file once" "$(($(wc -l <<<"$out") - 1))" "5"
+check "s3 list: a dump_all backup is listed with its .gz key" "$(grep -c 'dall3.*pg-dump-all-1759900000.gz$' <<<"$out")" "1"
 check "s3 list: mc lists the backup prefix of the bucket" "$(cat "$HOME/mcls.log")" "ls s3/my-backups/$P/"
 check "s3 list: mc got the creds from a 600 env file" "$(cat "$HOME/envcheck.log")" "envfile ok 600"
 check "s3 list: env file deleted" "$(ls -A "$HOME/srvtmp")" ""
@@ -765,12 +770,14 @@ check "s3 list by uuid" "$rc:$(sed -n 2p <<<"$out")" "0:$(printf 'oldpg1\t2026-1
 check "s3 list by uuid: only that database" "$(sed -n '2,$p' <<<"$out" | cut -f1 | sort -u)" "oldpg1"
 check "s3 list: a full key is kept whole" "$(tail -1 <<<"$out" | cut -f4)" "$P/root-0/my-landing-db-oldpg1/pg-dump-app-1759999999.dmp"
 s3run s3_backup_list gone9
-check "s3 list: no backups for that uuid" "$rc:$out" "1:no backups for database gone9 in s3/my-backups/$P/ (backups there are of: oldpg1 oth2)"
+check "s3 list: no backups for that uuid" "$rc:$out" "1:no backups for database gone9 in s3/my-backups/$P/ (backups there are of: dall3 oldpg1 oth2)"
 : > "$HOME/mc-ls.json"
 s3run s3_backup_list
 check "s3 list: empty bucket" "$rc:$out" "1:no backups in s3/my-backups/$P/"
 FAKE_MC_LS_FAIL=1 s3run s3_backup_list
 check "s3 list: mc error" "$rc:$out" "1:listing of s3/my-backups/$P/ failed: The specified bucket does not exist. (wrong key pair or bucket: phase 06 step 1a and 1b)"
+FAKE_MC_LS_FAIL=nokey s3run s3_backup_list
+check "s3 list: missing prefix is no backups, not bad keys" "$rc:$out" "1:no backups in s3/my-backups/$P/ (Object does not exist)"
 check "s3 list failure: env file deleted" "$(ls -A "$HOME/srvtmp")" ""
 s3run s3_backup_list 'x;rm'
 check "s3 list: bad uuid refused" "$rc:$out" "1:s3_backup_list: not a database uuid: 'x;rm'"
@@ -780,7 +787,7 @@ check "s3 list without creds refused, no ssh" "$rc:$out:$(cat "$HOME/seq.log")" 
 s3u=$(state_get S3_STORAGE_UUID); state_set S3_STORAGE_UUID ''; VPS_STATE=$VPS_SETUP_STATE state_set S3_STORAGE_UUID ''
 : > "$HOME/seq.log"
 s3run s3_backup_list oldpg1
-check "s3 list without S3_STORAGE_UUID refused, no ssh" "$rc:$out:$(cat "$HOME/seq.log")" "1:s3_backup_list: no S3_STORAGE_UUID in $VPS_SETUP_STATE (phase 06 step 1b):"
+check "s3 list without S3_STORAGE_UUID refused, no ssh" "$rc:$out:$(cat "$HOME/seq.log")" "1:s3_backup_list: no S3_STORAGE_UUID in $VPS_SETUP_STATE or $VPS_SETUP_STATE (phase 06 step 1b):"
 state_set S3_STORAGE_UUID "$s3u"
 # a backup of the old database goes into the new one: fetched into DUMP_DIR/<new>/, so
 # db_restore's guard passes without RESTORE_FROM_DB (source dir == target)
@@ -829,6 +836,10 @@ commands, after the user's yes (rebuild_inventory changed nothing):
   state_set HANDOVER_DONE ''
   mv $COOLIFY_CONFIG $COOLIFY_CONFIG.before-rebuild-$d"
 check "rebuild inventory writes nothing" "$(cksum < "$RS"):$(cksum < "$COOLIFY_CONFIG"):$(ls -A "$(dirname "$COOLIFY_CONFIG")" "$HOME")" "$before:$cfg_before:$ls_before"
+printf '# old server\n' > "$HOME/SERVER.md"
+out=$(VPS_SETUP_STATE=$RS VPS_STATE=$RS rebuild_inventory 2>&1)
+check "rebuild inventory: SERVER.md copied before phase 06 overwrites it" "$(grep -c "^  cp -p $HOME/SERVER.md $HOME/SERVER.md.before-rebuild-$d$" <<<"$out")" "1"
+rm -f "$HOME/SERVER.md"
 printf 'COOLIFY_PROJECT_UUID=p1\nCOOLIFY_APP_UUID=a1\nCOOLIFY_DOMAIN=https://shop.example.com\nDB_UUID=shopdb\nGH_REPO=u/shop\n' > "$HOME/app.state"
 out=$(VPS_STATE="$HOME/app.state" rebuild_inventory 2>&1); rc=$?
 has "rebuild inventory of an app: keeps the app's URL" "$out" '^  COOLIFY_DOMAIN=https://shop\.example\.com$'

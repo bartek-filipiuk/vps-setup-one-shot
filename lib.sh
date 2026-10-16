@@ -621,7 +621,7 @@ S3_BACKUP_PREFIX=data/coolify/backups/databases/
 s3_mc_prepare() {
   local s3 info endpoint
   s3=$(state_get S3_STORAGE_UUID); [ -n "$s3" ] || s3=$(VPS_STATE=$VPS_SETUP_STATE state_get S3_STORAGE_UUID)
-  [ -n "$s3" ] || { echo "$1: no S3_STORAGE_UUID in $VPS_STATE (phase 06 step 1b)" >&2; return 1; }
+  [ -n "$s3" ] || { echo "$1: no S3_STORAGE_UUID in $VPS_STATE or $VPS_SETUP_STATE (phase 06 step 1b)" >&2; return 1; }
   s3_env_check || return 1
   info=$(capi GET "/s3-storages/$s3") || return 1
   endpoint=$(jq -r '.endpoint // empty' <<<"$info"); bucket=$(jq -r '.bucket // empty' <<<"$info")
@@ -692,12 +692,14 @@ s3_backup_list() {
     s3_mc_head "$mchost"
     cat <<'EOF'
 img=$(mc_image "${2:-}")
-docker run --rm --env-file "$envf" --entrypoint mc "$img" --json ls --recursive "s3/$1" 2>/dev/null || exit 3
+docker run --rm --env-file "$envf" --entrypoint mc "$img" --json ls --recursive "s3/$1" || exit 3
 EOF
   } | rssh "sh -s -- $(printf %q "$bucket/$S3_BACKUP_PREFIX") $(printf %q "${MC_IMAGE:-}")"); rc=$?
   if [ "$rc" = 3 ]; then
     # mc --json reports errors on stdout: {"status":"error","error":{"message", "cause":{"message"}}} [verify]
     res=$(jq -Rr 'fromjson? | objects | select(.status == "error") | (.error.cause.message // .error.message // empty)' <<<"$res" | head -n 1)
+    # A bucket without the prefix answers "Object does not exist": nothing backed up yet, not bad keys.
+    case "$res" in *[Oo]bject\ does\ not\ exist*) echo "no backups in s3/$bucket/$S3_BACKUP_PREFIX ($res)" >&2; return 1 ;; esac
     echo "listing of s3/$bucket/$S3_BACKUP_PREFIX failed${res:+: $res} (wrong key pair or bucket: phase 06 step 1a and 1b)" >&2
     return 1
   fi
@@ -1038,6 +1040,9 @@ rebuild_inventory() {
   echo "commands, after the user's yes (rebuild_inventory changed nothing):"
   [ "$f" = "$VPS_SETUP_STATE" ] || echo "  VPS_STATE=$(printf %q "$f")"
   echo "  cp -p $(printf %q "$f") $(printf %q "$f.before-rebuild-$day")"
+  if [ "$f" = "$VPS_SETUP_STATE" ] && [ -f "${VPS_SETUP_STATE%/*}/SERVER.md" ]; then
+    echo "  cp -p $(printf %q "${VPS_SETUP_STATE%/*}/SERVER.md") $(printf %q "${VPS_SETUP_STATE%/*}/SERVER.md.before-rebuild-$day")"
+  fi
   printf '%s' "$cmds"
   if [ "$f" = "$VPS_SETUP_STATE" ] && [ -f "$COOLIFY_CONFIG" ]; then
     echo "  mv $(printf %q "$COOLIFY_CONFIG") $(printf %q "$COOLIFY_CONFIG.before-rebuild-$day")"
