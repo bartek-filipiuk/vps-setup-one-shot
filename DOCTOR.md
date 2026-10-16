@@ -273,7 +273,7 @@ changing the firewall only after the user's yes. Disk full: section C.
 Stop, needs a human when: the server needs the Hetzner Console or the rescue system (the user
 logs in to the Console; phase 02 has the recovery), the provider is not Hetzner and its panel is
 the only way in, Coolify itself does not start (`coolify` keeps restarting, its log shows a
-database or migration error), or the server is gone (`RESTORE.md`, then roadmap item R15).
+database or migration error), or the server is gone for good (`REBUILD.md`: a new server, the data from the off-site backups).
 
 ## 4. Afterwards
 

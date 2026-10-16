@@ -68,6 +68,29 @@ with; checked 2026-10-14 on a 4.3.23 server: `coolify-helper:1.0.17` has `/usr/b
 is gone from Docker Hub), override with `MC_IMAGE`, and `MC_HOST_s3=https://KEY:SECRET@host`, key
 and secret percent-encoded **[verify]**.
 
+Rebuild (R15: `s3_backup_list`, `rebuild_inventory`, `REBUILD.md`). No Coolify API call: a new
+Coolify knows none of the old server's backup runs, so the list comes from the bucket. Nothing
+here has been run against a real bucket yet **[verify]**.
+
+- Layout in the bucket, from the 4.3.23 source (`DatabaseBackupJob`): `<bucket>/data/coolify/backups/databases/<team name slug>-<team id>/<database name slug>-<database uuid>/<file>`,
+  for Postgres `pg-dump-<db>-<unix time>.dmp`, with `dump_all` `pg-dump-all-<unix time>.gz`
+  (checked 2026-10-16 on a 4.3.23 server against the execution filenames, e.g.
+  `root-team-0/<name>-db-<uuid>/`; the bucket itself not listed yet). `s3_backup_list` takes the
+  uuid as the part after the last `-` of the directory name (Coolify uuids have no dashes) **[verify]**.
+- The call, inside the coolify-helper image on the server, credentials as for `db_fetch_from_s3`:
+  `mc --json ls --recursive s3/<bucket>/data/coolify/backups/databases/`. One JSON object per line,
+  `{status:"success", type:"file"|"folder", lastModified (RFC 3339, may carry an offset or
+  fractions), size, key, ...}`; the key is relative to the listed prefix, a full key is accepted
+  too. Errors come on stdout as `{status:"error", error:{message, cause:{message}}}` with a non-zero
+  exit; an empty prefix may answer either empty or with an error **[verify]**.
+- Coolify's instance backup (**Settings** → **Backup**, Coolify's own database to S3) is not used.
+  Restoring it on a new server needs the old `APP_KEY` from `/data/coolify/source/.env` (Coolify
+  encrypts environment values, keys and passwords with it) and the old `/data/coolify/ssh/keys/`
+  (Coolify docs, "Backup and Restore Your Coolify Instance"). This guide saves neither, so the
+  restored secrets could not be read; `REBUILD.md` recreates everything through the phases instead.
+- A never deployed application (`instant_deploy:false`) does not report `running*`, so
+  `db_restore`'s running-app guard passes before the first deploy **[verify]**.
+
 Notifications (R06a: `notify_setup`, `notify_status`, `status.sh` alerts line, phase 06 step 2).
 `GET` verified live on 4.3.23 on 2026-10-14; the `PATCH` behaviour, the validation, the 422 shape,
 the URL echo and the missing test endpoint are from the 4.3.23 source only **[verify]**.

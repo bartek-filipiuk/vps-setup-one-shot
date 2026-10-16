@@ -18,7 +18,7 @@ Which runbook:
 |-----------|---------|
 | a deploy just broke the app or a migration broke the data | `ROLLBACK.md` (the dump `deploy_and_wait` took is newer than any nightly backup) |
 | data deleted or damaged some time ago, or the dumps in `/root/db-dumps/` are gone | this file |
-| the server itself is gone | a new server first (phases 01–05), then this file; the full path is roadmap item R15 |
+| the server itself is gone | `REBUILD.md` (a new server through the phases, then the backup of the old database into the new one) |
 
 This restores **into an existing Coolify Postgres** (`DB_UUID` in the state). Everything written
 after the chosen backup is lost.
@@ -87,8 +87,9 @@ are explained in `ROLLBACK.md` step 4; the same rules apply here, including the 
 a wipe.
 
 Coolify's Postgres backups are `pg_dump --format=custom`, which `pg_restore` reads **[verify]**.
-If `pg_restore` says the input is a text format dump, the schedule was set to dump all databases
-(`dump_all`); stop and tell the user, that case is not covered here.
+If the file is named `pg-dump-all-<time>.gz`, or `pg_restore` says the input is a text format
+dump or not a valid archive, the schedule was set to dump all databases (`dump_all`); stop and
+tell the user, that case is not covered here.
 
 ## 5. Check
 

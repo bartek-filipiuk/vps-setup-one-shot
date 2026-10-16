@@ -153,6 +153,7 @@ Write a summary the user can keep. No secrets in it.
 - Risky deploy (migrations): cd $(state_get SETUP_DIR) && . ./lib.sh && deploy_and_wait $(state_get APP_UUID)  (dumps the database first, prints the rollback point)
 - Bad deploy: $(state_get SETUP_DIR)/ROLLBACK.md (previous image via Coolify rollback, dumps in /root/db-dumps/ on the server)
 - Restore the database from an off-site backup: $(state_get SETUP_DIR)/RESTORE.md
+- Server gone for good: $(state_get SETUP_DIR)/REBUILD.md
 - App down (site down, deploy failed, 502, certificate error, server unreachable): $(state_get SETUP_DIR)/DOCTOR.md
 - Hand the project or server to someone: $(state_get SETUP_DIR)/HANDOVER.md
 - Self-hosted tools (analytics, automation, uptime): $(state_get SETUP_DIR)/SERVICES.md

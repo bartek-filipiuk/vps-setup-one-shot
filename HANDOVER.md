@@ -40,7 +40,7 @@ developer's other clients. So for case B offer one of these, and let the user ch
   and reading logs for them.
 - **The project moves to its own server**, which then goes over as case A: a second server
   with this setup (`SETUP.md`, then `PREPARE-APP.md` for the app) and the database brought over
-  from a backup (`RESTORE.md` on the new server; the full path is roadmap item R15). That server
+  from a backup (`REBUILD.md` steps 3 to 6 on the new server). That server
   can sit in its own Coolify team on the same panel, or behind its own Coolify.
 
 Inviting a case B client into the developer's team as a member is possible, but only after the
@@ -211,7 +211,7 @@ token.
 Hetzner: whether a project, or a server inside it, can move to another account is the Console's
 business and has not been tried here **[verify]**. If it cannot, the options are: the developer's
 account keeps paying and the client pays the developer, or the server is rebuilt in the client's
-project (roadmap item R15). Ask; do not pick.
+project (`REBUILD.md`, as a planned move). Ask; do not pick.
 
 The database password is reachable only inside the server's Docker network; once SSH and
 Coolify access are gone, the old value opens nothing from outside. If the new owner still wants

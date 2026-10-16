@@ -100,6 +100,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   the reboot window, and a Postgres major version moved into a new database with the old one
   kept for a way back. `status.sh` says when each is due: pending security updates or an old
   reboot, and the Postgres major of every database.
+- `REBUILD.md` brings everything back on a new server when the old one is gone for good: it
+  runs the phases again, after `rebuild_inventory` says which state keys survive and which
+  belonged to the old server, and restores each database from the newest backup of the old
+  database in the bucket (`s3_backup_list`). Environment variable values, service volumes and
+  everything written after that backup do not come back; the file says so up front.
 - With DNS at Cloudflare, phase 01 and `SERVICES.md` create the A records through the
   Cloudflare API (`dns_set_a` in `lib.sh`: DNS only, created or updated, never deleted) from a
   token for that one zone; the `dig` check in phase 04 stays as the proof they resolve.
@@ -171,6 +176,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   record has been created with it. The calls come from the Cloudflare API documentation; the
   answers not described there, and DNS only being required, are marked `[assumed]` in
   `references/cloudflare-api.md`.
+- `REBUILD.md` (R15), `s3_backup_list` and `rebuild_inventory` are tested against a fake Coolify
+  API, a stubbed `ssh` and a fake `docker` only (`test/lib.test.sh`) and have **not been run on a
+  real server yet**; no server has been rebuilt with them. The layout of the backups in the
+  bucket and what `mc ls` prints come from the Coolify 4.3.23 source and the `mc` documentation
+  and are marked `[verify]` in `references/coolify-api.md`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
