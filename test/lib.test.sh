@@ -32,13 +32,35 @@ EVENTS = ["backup_failure", "backup_success", "deployment_failure", "deployment_
           "docker_cleanup_success", "restart_limit_reached", "scheduled_task_failure", "scheduled_task_success",
           "server_disk_usage", "server_patch", "server_reachable", "server_unreachable", "status_change", "traefik_outdated"]
 # services as the live 4.3.23 GET answers (fields trimmed)
-SERVICES = {"svc-umami": {"uuid": "svc-umami", "name": "umami", "service_type": "umami", "status": "running:healthy",
+SERVICES = {"svc-umami": {"uuid": "svc-umami", "name": "umami", "service_type": "umami", "status": "running:healthy", "environment_id": 1,
     "applications": [{"uuid": "sa1", "name": "umami", "human_name": None, "fqdn": "https://stats.example.com", "status": "running:healthy",
                       "image": "ghcr.io/umami-software/umami:postgresql-latest", "restart_limit_reached": False}],
     "databases": [{"uuid": "sd1", "name": "postgresql", "image": "postgres:16-alpine", "status": "running:healthy", "is_public": False}]},
-  "svc-kuma": {"uuid": "svc-kuma", "name": "uptime-kuma", "service_type": "uptime-kuma", "status": "exited",
+  "svc-kuma": {"uuid": "svc-kuma", "name": "uptime-kuma", "service_type": "uptime-kuma", "status": "exited", "environment_id": 3,
     "applications": [{"uuid": "sa2", "name": "uptime-kuma", "fqdn": "https://up.example.com", "status": "exited", "restart_limit_reached": True}],
     "databases": []}}
+# projects (R09) as the live 4.3.23 GET /projects/{uuid} answers (fields trimmed); environments by numeric id.
+# "twins" twice: Coolify does not keep project names unique [verify].
+PROJECTS = {
+  "p-starter": {"id": 1, "uuid": "p-starter", "name": "starter", "description": "created by vps-setup-one-shot",
+                "environments": [{"id": 1, "uuid": "e1", "name": "production", "project_id": 1}]},
+  "p-acme": {"id": 2, "uuid": "p-acme", "name": "Acme Corp", "description": None,
+             "environments": [{"id": 2, "uuid": "e2", "name": "production", "project_id": 2},
+                              {"id": 3, "uuid": "e3", "name": "staging", "project_id": 2}]},
+  "p-tw1": {"id": 4, "uuid": "p-tw1", "name": "twins", "description": "", "environments": [{"id": 9, "uuid": "e9", "name": "production", "project_id": 4}]},
+  "p-tw2": {"id": 5, "uuid": "p-tw2", "name": "twins", "description": "", "environments": []}}
+APPS = [
+  {"uuid": "a-starter", "name": "starter", "status": "running:healthy", "fqdn": "https://starter.example.com",
+   "git_repository": "git@github.com:u/starter.git", "environment_id": 1, "manual_webhook_secret_github": "hook-SECRET-1"},
+  {"uuid": "a-shop", "name": "shop", "status": "running:healthy", "fqdn": "https://shop.acme.example.com, https://WWW.Shop.example.com:443/x",
+   "git_repository": "https://x-access-token:tok-SECRET-2@github.com/acme/shop.git", "environment_id": 2},
+  {"uuid": "a-shop-stg", "name": "shop", "status": "exited:unhealthy", "fqdn": "https://staging.shop.acme.example.com",
+   "git_repository": "git@github.com:acme/shop.git", "environment_id": 3},
+  {"uuid": "a-orphan", "name": "orphan|pipe", "status": "running:unknown", "fqdn": None, "git_repository": None, "environment_id": 99}]
+DBS = [{"uuid": "db-pg", "name": "starter-db", "status": "running:healthy", "database_type": "standalone-postgresql", "environment_id": 1,
+        "internal_db_url": "postgres://app:pw-SECRET-123@db-pg:5432/app", "postgres_password": "pw-SECRET-123"}]
+import os
+DOWN = os.path.join(os.path.dirname(sys.argv[2]), "projects.down")   # touch it: GET /projects answers 500
 # Discord settings as the live GET answers (no URL in it); PATCH accepts only these keys plus the URL.
 notif = {"id": 1, "team_id": 0, "discord_enabled": False, "discord_ping_enabled": False} | {e + "_discord_notifications": False for e in EVENTS}
 # Cloudflare API v4 (R18): the envelope {success, errors, messages, result}; zones and records in memory.
@@ -185,6 +207,14 @@ class H(BaseHTTPRequestHandler):
                  "public_key": "ssh-ed25519 AAAAPUBLICKEYMATERIALdef coolify-app",
                  "private_key": "PRIVATEKEYMATERIALdef", "is_git_related": True, "team_id": 0}])
         if p == "/notifications/discord": return self.send(200, notif)
+        if p == "/projects":
+            if os.path.exists(DOWN): return self.send(500, {"message": "Server Error"})
+            return self.send(200, [{k: v[k] for k in ("id", "uuid", "name", "description")} for v in PROJECTS.values()])
+        if p.startswith("/projects/") and p.count("/") == 2:
+            u = p.split("/")[2]
+            return self.send(200, PROJECTS[u]) if u in PROJECTS else self.send(404, {"message": "Project not found."})
+        if p == "/applications": return self.send(200, APPS)
+        if p == "/databases": return self.send(200, DBS)
         if p == "/services": return self.send(200, list(SERVICES.values()))
         if p.startswith("/services/"):
             u = p.split("/")[2]
@@ -223,6 +253,21 @@ class H(BaseHTTPRequestHandler):
             d = p.split("/")[2]; seq("backup POST %s %s" % (d, json.dumps(json.loads(body), sort_keys=True, separators=(",", ":"))))
             schedules.setdefault(d, []).append({"uuid": "bk-new", "enabled": True, "frequency": json.loads(body)["frequency"], "save_s3": True})
             return self.send(201, {"uuid": "bk-new", "message": "Backup configuration created successfully."})
+        if p == "/projects":
+            b = json.loads(body); seq("project POST %s" % json.dumps(b, sort_keys=True, separators=(",", ":")))
+            u = "p-new%d" % len(PROJECTS); n = 10 + len(PROJECTS)
+            PROJECTS[u] = {"id": n, "uuid": u, "name": b["name"], "description": b.get("description"),
+                           "environments": [{"id": n, "uuid": "e%d" % n, "name": "production", "project_id": n}]}
+            return self.send(201, {"uuid": u})
+        if p.startswith("/projects/") and p.endswith("/environments"):
+            u = p.split("/")[2]; b = json.loads(body)
+            seq("environment POST %s %s" % (u, json.dumps(b, sort_keys=True, separators=(",", ":"))))
+            if u not in PROJECTS: return self.send(404, {"message": "Project not found."})
+            if any(e["name"] == b["name"] for e in PROJECTS[u]["environments"]):
+                return self.send(422, {"message": "Validation failed.", "errors": {"name": ["The name has already been taken."]}})
+            n = 100 + sum(len(v["environments"]) for v in PROJECTS.values())
+            PROJECTS[u]["environments"].append({"id": n, "uuid": "e%d" % n, "name": b["name"]})
+            return self.send(201, {"uuid": "e%d" % n, "name": b["name"]})
         if p == "/services":
             b = json.loads(body); seq("service POST %s" % json.dumps(b, sort_keys=True, separators=(",", ":")))
             url = b["urls"][0]["url"]
@@ -571,6 +616,138 @@ check "service_delete: DELETE with delete_volumes" "$(cat "$HOME/seq.log")" "DEL
 : > "$HOME/seq.log"
 out=$(service_delete svc-gone --yes 2>&1); rc=$?
 check "service_delete unknown uuid: no DELETE" "$rc:$(cat "$HOME/seq.log")" "1:"
+
+# projects and environments (R09): slugs, find and ensure, the context new resources go into,
+# domain defaults and conflicts, the inventory and PROJECTS.md; an old setup keeps working
+got=""; for n in "Acme Corp" "  Shop--2026 " "ŁÓDŹ sklep" "a.b_c" "$(printf 'x%.0s' $(seq 1 70))-tail"; do got="${got}[$(project_slug "$n")]"; done
+check "project_slug" "$got" "[acme-corp][shop-2026][d-sklep][a-b-c][$(printf 'x%.0s' $(seq 1 63))]"
+out=$(project_slug '--' 2>&1); check "project_slug nothing usable" "$?:$out" "1:not a usable name: '--'"
+out=$(project_slug "$(printf 'a%.0s' $(seq 1 62))-b" 2>&1); check "project_slug no dash at the cut" "$out" "$(printf 'a%.0s' $(seq 1 62))"
+: > "$HOME/seq.log"
+check "project_find one" "$(project_find "Acme Corp" 2>&1)" "p-acme"
+out=$(project_find nobody 2>&1); check "project_find none" "$?:$out" "0:"
+out=$(project_find twins 2>&1); check "project_find ambiguous" "$?:$out" "1:2 projects named twins; rename one in the Coolify UI (Projects)"
+out=$(project_find '' 2>&1); check "project_find empty name" "$?:$out" "1:not a usable project name: '' (1 to 100 characters, no control characters)"
+out=$(project_find $'a\nb' 2>&1); check "project_find control chars" "$?" "1"
+check "project_find: read-only" "$(cat "$HOME/seq.log")" ""
+
+PS1_STATE=$HOME/r09.state; rm -f "$PS1_STATE"
+out=$(VPS_STATE=$PS1_STATE project_ensure "Beta Shop" "client: Beta" 2>&1); rc=$?
+check "project_ensure creates" "$rc:$out" "0:project Beta Shop: p-new4 (created)"
+check "project_ensure: exact body" "$(cat "$HOME/seq.log")" 'project POST {"description":"client: Beta","name":"Beta Shop"}'
+check "project_ensure: state" "$(VPS_STATE=$PS1_STATE state_get PROJECT_UUID):$(VPS_STATE=$PS1_STATE state_get PROJECT_NAME)" "p-new4:Beta Shop"
+: > "$HOME/seq.log"
+out=$(VPS_STATE=$PS1_STATE project_ensure "Beta Shop" 2>&1); rc=$?
+check "project_ensure reuses" "$rc:$out" "0:project Beta Shop: p-new4 (existing)"
+check "project_ensure rerun: no POST" "$(cat "$HOME/seq.log")" ""
+out=$(VPS_STATE=$PS1_STATE project_ensure twins 2>&1); rc=$?
+check "project_ensure ambiguous: nothing created" "$rc:$out:$(cat "$HOME/seq.log")" "1:2 projects named twins; rename one in the Coolify UI (Projects):"
+out=$(project_ensure 2>&1); check "project_ensure usage" "$?:$out" "1:usage: project_ensure NAME [DESCRIPTION]"
+
+out=$(VPS_STATE=$PS1_STATE env_ensure p-acme staging 2>&1); rc=$?
+check "env_ensure existing" "$rc:$out" "0:environment staging in project p-acme: existing"
+check "env_ensure existing: no POST" "$(cat "$HOME/seq.log")" ""
+out=$(VPS_STATE=$PS1_STATE env_ensure p-new4 staging 2>&1); rc=$?
+check "env_ensure creates" "$rc:$out" "0:environment staging in project p-new4: created"
+check "env_ensure: exact body" "$(cat "$HOME/seq.log")" 'environment POST p-new4 {"name":"staging"}'
+check "env_ensure: state" "$(VPS_STATE=$PS1_STATE state_get ENV_NAME)" "staging"
+: > "$HOME/seq.log"
+for e in Staging 'qa env' -x 'a/b'; do
+  out=$(env_ensure p-acme "$e" 2>&1); rc=$?
+  check "env_ensure refuses '$e'" "$rc:$out" "1:not an environment name: '$e' (lower-case letters, digits and dashes, like staging)"
+done
+out=$(env_ensure ../x staging 2>&1); check "env_ensure bad uuid" "$?:$out" "1:not a Coolify uuid: '../x'"
+out=$(env_ensure p-gone staging 2>&1); check "env_ensure unknown project" "$?:$out" '1:HTTP 404 GET /projects/p-gone: {"message": "Project not found."}'
+check "env_ensure refused: nothing sent" "$(cat "$HOME/seq.log")" ""
+
+# project_ctx: VPS_PROJECT, then PROJECT_UUID, then COOLIFY_PROJECT_UUID (an old .coolify.env), then the setup state
+check "ctx: new state" "$(VPS_STATE=$PS1_STATE project_ctx 2>&1)" "p-new4 staging"
+check "ctx: VPS_ENV wins" "$(VPS_STATE=$PS1_STATE VPS_ENV=production project_ctx 2>&1)" "p-new4 production"
+check "ctx: VPS_PROJECT by name" "$(VPS_PROJECT="Acme Corp" project_ctx 2>&1)" "p-acme production"
+out=$(VPS_PROJECT=nobody project_ctx 2>&1); check "ctx: VPS_PROJECT must exist" "$?:$out" "1:no project named nobody in Coolify; create it with project_ensure (PREPARE-APP.md step 5)"
+out=$(VPS_PROJECT=twins project_ctx 2>&1); check "ctx: VPS_PROJECT ambiguous" "$?:$out" "1:2 projects named twins; rename one in the Coolify UI (Projects)"
+out=$(VPS_STATE=$PS1_STATE VPS_ENV=Prod project_ctx 2>&1); check "ctx: bad VPS_ENV" "$?:$out" "1:not an environment name: 'Prod'"
+printf 'COOLIFY_PROJECT_UUID=p-old\nCOOLIFY_APP_UUID=a1\n' > "$HOME/old-app.env"
+check "ctx: old .coolify.env" "$(VPS_STATE=$HOME/old-app.env project_ctx 2>&1)" "p-old production"
+printf 'COOLIFY_PROJECT_UUID=p-old\nPROJECT_UUID=p-acme\nENV_NAME=staging\n' > "$HOME/new-app.env"
+check "ctx: PROJECT_UUID before COOLIFY_PROJECT_UUID" "$(VPS_STATE=$HOME/new-app.env project_ctx 2>&1)" "p-acme staging"
+printf 'GH_REPO=u/x\n' > "$HOME/bare-app.env"
+check "ctx: setup state as the last fallback" "$(VPS_STATE=$HOME/bare-app.env project_ctx 2>&1)" "proj-1 production"
+check "ctx: old setup state (no ENV_NAME)" "$(project_ctx 2>&1)" "proj-1 production"
+out=$(VPS_SETUP_STATE=$HOME/none.state VPS_STATE=$HOME/bare-app.env project_ctx 2>&1)
+check "ctx: no project anywhere" "$?:$out" "1:no project: no PROJECT_UUID in $HOME/bare-app.env; run project_ensure (phase 05 step 3, PREPARE-APP.md step 5)"
+printf 'PROJECT_UUID=../x\n' > "$HOME/bad-app.env"
+out=$(VPS_STATE=$HOME/bad-app.env project_ctx 2>&1); check "ctx: bad uuid in the state" "$?:$out" "1:not a Coolify uuid: '../x'"
+
+# app_domain_default: from DOMAIN in the setup state
+DS=$HOME/r09-setup.state; printf 'DOMAIN=example.com\nSETUP_DIR=/home/u/vps-setup-one-shot\n' > "$DS"
+got=""
+for a in "starter|starter" "Acme Corp|Acme Corp" "Acme Corp|shop" "Acme Corp|shop|staging" "starter|starter|staging"; do
+  IFS='|' read -r p1 p2 p3 <<<"$a"
+  got="$got $(VPS_SETUP_STATE=$DS app_domain_default "$p1" "$p2" ${p3:+"$p3"} 2>&1)"
+done
+check "app_domain_default shapes" "$got" " starter.example.com acme-corp.example.com shop.acme-corp.example.com staging.shop.acme-corp.example.com staging.starter.example.com"
+out=$(VPS_SETUP_STATE=$HOME/none.state app_domain_default starter starter 2>&1)
+check "app_domain_default without DOMAIN" "$?:$out" "1:no DOMAIN in $HOME/none.state (phase 00, question 2)"
+out=$(VPS_SETUP_STATE=$DS app_domain_default "$(printf 'a%.0s' $(seq 1 63))" "$(printf 'b%.0s' $(seq 1 63))" 2>&1)
+check "app_domain_default checks the host" "$?" "0"
+out=$(app_domain_default starter 2>&1); check "app_domain_default usage" "$?:$out" "1:usage: app_domain_default PROJECT APP [STAGE]"
+
+# domain_in_use: apps (any of several fqdns, port and path ignored, case-insensitive) and services
+out=$(domain_in_use starter.example.com); check "domain_in_use app" "$?:$out" "0:app starter"
+out=$(domain_in_use www.shop.example.com); check "domain_in_use second fqdn with port" "$?:$out" "0:app shop"
+out=$(domain_in_use Up.Example.com); check "domain_in_use service" "$?:$out" "0:service uptime-kuma (uptime-kuma)"
+out=$(domain_in_use free.example.com); check "domain_in_use free" "$?:$out" "1:"
+out=$(domain_in_use example.com); check "domain_in_use no suffix match" "$?:$out" "1:"
+cp "$COOLIFY_CONFIG" "$HOME/config.good"
+printf 'COOLIFY_URL=http://127.0.0.1:%s\nCOOLIFY_TOKEN=wrong\n' "$PORT" > "$COOLIFY_CONFIG"
+domain_in_use starter.example.com >/dev/null 2>&1; check "domain_in_use unreadable" "$?" "2"
+cat "$HOME/config.good" > "$COOLIFY_CONFIG"
+
+# projects_inventory: exact TSV, unknown environment as - -, no secrets
+: > "$HOME/seq.log"
+out=$(projects_inventory 2>&1); rc=$?
+T=$'\t'
+check "projects_inventory" "$rc:$out" "0:project${T}environment${T}kind${T}name${T}status${T}fqdn${T}repo${T}uuid
+Acme Corp${T}production${T}app${T}shop${T}running:healthy${T}https://shop.acme.example.com, https://WWW.Shop.example.com:443/x${T}https://github.com/acme/shop.git${T}a-shop
+Acme Corp${T}staging${T}app${T}shop${T}exited:unhealthy${T}https://staging.shop.acme.example.com${T}git@github.com:acme/shop.git${T}a-shop-stg
+Acme Corp${T}staging${T}service${T}uptime-kuma${T}exited${T}https://up.example.com${T}-${T}svc-kuma
+starter${T}production${T}app${T}starter${T}running:healthy${T}https://starter.example.com${T}git@github.com:u/starter.git${T}a-starter
+starter${T}production${T}db${T}starter-db${T}running:healthy${T}-${T}-${T}db-pg
+starter${T}production${T}service${T}umami${T}running:healthy${T}https://stats.example.com${T}-${T}svc-umami
+-${T}-${T}app${T}orphan|pipe${T}running:unknown${T}-${T}-${T}a-orphan"
+check "projects_inventory: no secrets" "$(grep -cE 'SECRET|internal_db_url|postgres://|Bearer' <<<"$out")" "0"
+check "projects_inventory: read-only" "$(cat "$HOME/seq.log")" ""
+
+# projects_md: the file, mode 600, every project (empty ones too), no secrets; "-" prints it
+PM=$HOME/.config/vps-setup/PROJECTS.md
+out=$(VPS_SETUP_STATE=$DS projects_md 2>&1); rc=$?
+check "projects_md rc:output" "$rc:$out" "0:wrote $PM (5 projects, 7 resources)"
+check "projects_md mode" "$(stat -c %a "$PM" 2>/dev/null || stat -f %Lp "$PM")" "600"
+md=$(cat "$PM")
+has "projects_md: title" "$md" '^# Projects and what runs where$'
+# shellcheck disable=SC2016 # the backticks are Markdown code, not a command substitution
+{
+  has "projects_md: regenerate command" "$md" '^`cd /home/u/vps-setup-one-shot && \. \./lib\.sh && projects_md`'
+  has "projects_md: project heading" "$md" '^## Acme Corp$'
+  has "projects_md: environment heading" "$md" '^### staging$'
+  has "projects_md: description" "$md" '^Project uuid `p-starter`; created by vps-setup-one-shot\.$'
+  has "projects_md: app row" "$md" '^\| app \| shop \| exited:unhealthy \| https://staging\.shop\.acme\.example\.com \| git@github\.com:acme/shop\.git \| `a-shop-stg` \|$'
+}
+has "projects_md: empty environment" "$md" '^Nothing in it yet\.$'
+has "projects_md: project without environments" "$md" '^No environments\.$'
+has "projects_md: unknown environment" "$md" '^## \(no project\)$'
+has "projects_md: pipe escaped" "$md" '^\| app \| orphan\\\|pipe \| '
+check "projects_md: twins both listed" "$(grep -c '^## twins$' <<<"$md")" "2"
+check "projects_md: no secrets" "$(grep -cE 'SECRET|internal_db_url|postgres://|Bearer|abc=def' <<<"$md")" "0"
+check "projects_md -: stdout, same body" "$(VPS_SETUP_STATE=$DS projects_md - 2>&1 | sed 1,3d)" "$(sed 1,3d "$PM")"
+cp "$PM" "$HOME/pm.before"; touch "$HOME/projects.down"
+out=$(projects_md 2>&1); rc=$?
+check "projects_md API error" "$rc:$out" "1:HTTP 500 GET /projects: {\"message\": \"Server Error\"}
+projects_md: could not read Coolify; $PM left as it was"
+check "projects_md API error: file untouched" "$(cmp -s "$PM" "$HOME/pm.before" && echo same)" "same"
+out=$(projects_inventory 2>/dev/null); check "projects_inventory API error" "$?:$out" "1:"
+rm -f "$HOME/projects.down" "$PM.tmp"
 
 # db_restore: refused while the app runs, pg_restore all or nothing, wipe only on RESTORE_WIPE=yes
 dump=$(state_get LAST_DUMP)

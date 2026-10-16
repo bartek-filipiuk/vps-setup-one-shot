@@ -495,6 +495,223 @@ service_delete() {
   echo "service $name ($uuid) deleted with its volumes; Coolify removes the containers in the background"
 }
 
+# --- projects and environments (R09; phase 05, PREPARE-APP.md, SERVICES.md) ---
+
+# One Coolify project per client or product, one environment per stage (production by default).
+# A setup from before R09 has one project named after APP_NAME with its production environment:
+# it keeps working as it is, the new state keys (PROJECT_NAME, ENV_NAME) fall back to the old
+# ones (project_ctx). VPS_PROJECT and VPS_ENV pick another project or stage for one command;
+# they are not called PROJECT and ENV because sh reads ENV as a startup file.
+
+# project_slug NAME -> NAME as a lower-case slug for host names and environments: everything
+# but a-z and 0-9 becomes one dash, no dash at either end, at most 63 characters.
+project_slug() {
+  local s
+  s=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -c 'a-z0-9' '-' | tr -s '-')
+  s=${s#-}; s=${s:0:63}; s=${s%-}
+  [ -n "$s" ] || { echo "not a usable name: '${1:-}'" >&2; return 1; }
+  printf '%s\n' "$s"
+}
+
+# project_name_ok NAME -> 0 for a usable Coolify project name: not empty, at most 100
+# characters, no control characters.
+project_name_ok() {
+  local n=${1:-}
+  [ -n "$n" ] && [ "${#n}" -le 100 ] && [ "$(tr -d '[:cntrl:]' <<<"$n")" = "$n" ] ||
+    { echo "not a usable project name: '$n' (1 to 100 characters, no control characters)" >&2; return 1; }
+}
+
+# project_find NAME -> the uuid of the project named exactly NAME; prints nothing (and returns
+# 0) when there is none. Coolify does not keep project names unique [verify], so two projects
+# with the name are an error instead of a guess.
+project_find() {
+  local r n
+  project_name_ok "${1:-}" || return 1
+  r=$(capi GET /projects) || return 1
+  n=$(jq -er --arg n "$1" 'arrays | map(select(.name == $n)) | length' <<<"$r") ||
+    { echo "project_find: unexpected answer to GET /projects" >&2; return 1; }
+  [ "$n" -le 1 ] || { echo "$n projects named $1; rename one in the Coolify UI (Projects)" >&2; return 1; }
+  jq -r --arg n "$1" '.[] | select(.name == $n) | .uuid // empty' <<<"$r"
+}
+
+# project_ensure NAME [DESCRIPTION] -> the project named NAME, created when there is none
+# (POST /projects); records PROJECT_UUID and PROJECT_NAME in VPS_STATE. A second run finds the
+# project and creates nothing.
+project_ensure() {
+  local name=${1:-} uuid how=existing r
+  [ -n "$name" ] || { echo "usage: project_ensure NAME [DESCRIPTION]" >&2; return 1; }
+  uuid=$(project_find "$name") || return 1
+  if [ -z "$uuid" ]; then
+    r=$(capi POST /projects "$(jq -n --arg n "$name" --arg d "${2:-}" '{name:$n, description:$d}')") || return 1
+    uuid=$(jq -r '.uuid // empty' <<<"$r"); how=created
+  fi
+  service_valid_uuid "$uuid" 2>/dev/null || { echo "no project uuid in the answer to POST /projects" >&2; return 1; }
+  state_set PROJECT_UUID "$uuid" && state_set PROJECT_NAME "$name" || return 1
+  echo "project $name: $uuid ($how)"
+}
+
+# env_ensure PROJECT_UUID ENV -> the environment ENV in the project, created when missing
+# (POST /projects/{uuid}/environments [verify]); records ENV_NAME. ENV is a slug (staging,
+# production, ...): project_slug ENV must give ENV back.
+env_ensure() {
+  local project=${1:-} env=${2:-} r
+  [ -n "$project" ] && [ -n "$env" ] || { echo "usage: env_ensure PROJECT_UUID ENV" >&2; return 1; }
+  service_valid_uuid "$project" || return 1
+  [ "$(project_slug "$env" 2>/dev/null)" = "$env" ] ||
+    { echo "not an environment name: '$env' (lower-case letters, digits and dashes, like staging)" >&2; return 1; }
+  r=$(capi GET "/projects/$project") || return 1
+  if jq -e --arg e "$env" 'any(.environments[]?; .name == $e)' <<<"$r" >/dev/null; then
+    state_set ENV_NAME "$env" || return 1
+    echo "environment $env in project $project: existing"; return 0
+  fi
+  capi POST "/projects/$project/environments" "$(jq -n --arg e "$env" '{name:$e}')" >/dev/null || return 1
+  state_set ENV_NAME "$env" || return 1
+  echo "environment $env in project $project: created"
+}
+
+# project_ctx -> "<project uuid> <environment name>" that new resources go into. The project:
+# VPS_PROJECT (a name, the project must exist), else PROJECT_UUID in VPS_STATE, else
+# COOLIFY_PROJECT_UUID in VPS_STATE (an app's .coolify.env from before R09), else PROJECT_UUID
+# in the setup state. The environment: VPS_ENV, else ENV_NAME next to the project, else
+# production. This is the migration path: nothing in an old state has to be rewritten.
+project_ctx() {
+  local project env='' f
+  if [ -n "${VPS_PROJECT:-}" ]; then
+    project=$(project_find "$VPS_PROJECT") || return 1
+    [ -n "$project" ] || { echo "no project named $VPS_PROJECT in Coolify; create it with project_ensure (PREPARE-APP.md step 5)" >&2; return 1; }
+  else
+    for f in "$VPS_STATE" "$VPS_SETUP_STATE"; do
+      project=$(VPS_STATE=$f state_get PROJECT_UUID)
+      [ -n "$project" ] || [ "$f" != "$VPS_STATE" ] || project=$(VPS_STATE=$f state_get COOLIFY_PROJECT_UUID)
+      [ -n "$project" ] && { env=$(VPS_STATE=$f state_get ENV_NAME); break; }
+    done
+    [ -n "$project" ] || { echo "no project: no PROJECT_UUID in $VPS_STATE; run project_ensure (phase 05 step 3, PREPARE-APP.md step 5)" >&2; return 1; }
+  fi
+  service_valid_uuid "$project" || return 1
+  env=${VPS_ENV:-${env:-production}}
+  [ "$(project_slug "$env" 2>/dev/null)" = "$env" ] || { echo "not an environment name: '$env'" >&2; return 1; }
+  echo "$project $env"
+}
+
+# app_domain_default PROJECT APP [STAGE] -> the suggested host for an app, from DOMAIN in the
+# setup state: the project's own app in production is <project>.<DOMAIN>, another app of the
+# project <app>.<project>.<DOMAIN>, and any other stage gets "<stage>." in front. Only a
+# default: the domain the user approved (APP_DOMAIN) wins.
+app_domain_default() {
+  local p a s=${3:-production} d host
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || { echo "usage: app_domain_default PROJECT APP [STAGE]" >&2; return 1; }
+  d=$(VPS_STATE=$VPS_SETUP_STATE state_get DOMAIN)
+  [ -n "$d" ] || { echo "no DOMAIN in $VPS_SETUP_STATE (phase 00, question 2)" >&2; return 1; }
+  p=$(project_slug "$1") && a=$(project_slug "$2") && s=$(project_slug "$s") || return 1
+  if [ "$a" = "$p" ]; then host=$p.$d; else host=$a.$p.$d; fi
+  [ "$s" = production ] || host=$s.$host
+  cf_valid_name "$host" || return 1
+  echo "$host"
+}
+
+# domain_in_use HOST -> who serves HOST already: "app <name>" or "service <name> (<app>)", from
+# the fqdn of every application and service application. Returns 0 when it is in use, 1 when it
+# is free, 2 when Coolify could not be read. Coolify may accept a domain twice [verify], so this
+# is checked before a domain is set.
+domain_in_use() {
+  local host apps svcs who
+  host=$(tr '[:upper:]' '[:lower:]' <<<"${1:-}")
+  [ -n "$host" ] || { echo "usage: domain_in_use HOST" >&2; return 2; }
+  apps=$(capi GET /applications) && svcs=$(capi GET /services) || return 2
+  # The API answers go through stdin, not argv: an application carries its webhook secrets.
+  # shellcheck disable=SC2016 # $h, $a and $s are jq variables
+  who=$(printf '%s\n' "$apps" "$svcs" | jq -sr --arg h "$host" '
+    def hosts: (. // "") | split(",") | map(gsub("^\\s+|\\s+$"; "") | sub("^[a-z]+://"; "") | split("/")[0]
+      | if startswith("[") then . else split(":")[0] end | ascii_downcase);
+    def has_host: hosts | any(.[]; . == $h);
+    .[0] as $a | .[1] as $s
+    | if ($a | type) != "array" or ($s | type) != "array" then error("not a list") else
+    [($a[] | select(.fqdn | has_host) | "app \(.name // .uuid)"),
+     ($s[] | (.name // .uuid) as $n | .applications[]? | select(.fqdn | has_host) | "service \($n) (\(.name // "?"))")]
+    | .[] end' 2>/dev/null) || return 2
+  [ -n "$who" ] || return 1
+  printf '%s\n' "$who"
+}
+
+# projects_json -> one JSON object with every project (environments by numeric id), and the
+# applications, services and databases mapped to "project / environment" through
+# environment_id. Calls: GET /projects, GET /projects/{uuid} per project, GET /applications,
+# GET /services, GET /databases. Read-only; fails when any of them cannot be read.
+projects_json() {
+  local list uuid one envs='[]' apps svcs dbs
+  list=$(capi GET /projects) || return 1
+  jq -e 'arrays' <<<"$list" >/dev/null || { echo "projects: GET /projects is not a list" >&2; return 1; }
+  while IFS= read -r uuid; do
+    [ -n "$uuid" ] || continue
+    service_valid_uuid "$uuid" || return 1
+    one=$(capi GET "/projects/$uuid") || return 1
+    envs=$(printf '%s\n' "$envs" "$one" | jq -sc '.[0] + [.[1] | {uuid, name, description: (.description // ""),
+      environments: [.environments[]? | {id, name}]}]') || return 1
+  done < <(jq -r '.[].uuid // empty' <<<"$list")
+  apps=$(capi GET /applications) && svcs=$(capi GET /services) && dbs=$(capi GET /databases) || return 1
+  # Through stdin, not argv: the answers carry webhook secrets and connection strings, of which
+  # only names, statuses, domains, repos and uuids come out.
+  printf '%s\n' "$envs" "$apps" "$svcs" "$dbs" | jq -s '
+    .[0] as $p | .[1] as $a | .[2] as $s | .[3] as $d
+    | def fqdns: (. // "") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) | join(", ");
+    def norepo: (. // "") | sub("://[^/@]+@"; "://");
+    ([$p[] | .name as $pn | .uuid as $pu | .environments[]
+      | {key: (.id | tostring), value: {project: $pn, project_uuid: $pu, environment: .name}}] | from_entries) as $m
+    | def where: ($m[(.environment_id // "x") | tostring] // {project: "-", project_uuid: "-", environment: "-"});
+    if ([$a, $s, $d] | map(type == "array") | all | not) then error("not a list") else
+    {projects: ($p | sort_by(.name)),
+     resources: ([($a[] | where + {kind: "app", name: (.name // "?"), status: (.status // "unknown"),
+                    fqdn: (.fqdn | fqdns), repo: (.git_repository | norepo), uuid: (.uuid // "?")}),
+                  ($s[] | where + {kind: "service", name: (.name // "?"), status: (.status // "unknown"),
+                    fqdn: ([.applications[]? | .fqdn | fqdns | select(. != "")] | join(", ")), repo: "", uuid: (.uuid // "?")}),
+                  ($d[] | where + {kind: "db", name: (.name // "?"), status: (.status // "unknown"),
+                    fqdn: "", repo: "", uuid: (.uuid // "?")})]
+       | sort_by((if .project == "-" then 1 else 0 end), .project, .environment, .kind, .name))} end'
+}
+
+# projects_inventory -> what runs where, as TSV: project, environment, kind (app, service, db),
+# name, status, fqdn, repo, uuid; "-" for an empty field, "-" "-" for a resource in no known
+# project. Read-only.
+projects_inventory() {
+  local j
+  j=$(projects_json) || return 1
+  printf 'project\tenvironment\tkind\tname\tstatus\tfqdn\trepo\tuuid\n'
+  jq -r '.resources[] | [.project, .environment, .kind, .name, .status, .fqdn, .repo, .uuid]
+    | map(gsub("[[:cntrl:]]"; " ") | if . == "" then "-" else . end) | @tsv' <<<"$j"
+}
+
+# projects_md [FILE] -> writes PROJECTS.md (default ~/.config/vps-setup/PROJECTS.md, mode 600;
+# "-" prints it): every project with a table per environment, empty projects included, and
+# what runs in no known project. Names, statuses, domains, repos and uuids only, never env
+# values or connection strings. On an API error nothing is written.
+projects_md() {
+  local f=${1:-$HOME/.config/vps-setup/PROJECTS.md} j md setup
+  j=$(projects_json) || { echo "projects_md: could not read Coolify; ${f} left as it was" >&2; return 1; }
+  setup=$(VPS_STATE=$VPS_SETUP_STATE state_get SETUP_DIR)
+  md=$(jq -r --arg day "$(date -u '+%F %H:%M UTC')" --arg setup "${setup:-SETUP_DIR}" '
+    def cell: tostring | gsub("[[:cntrl:]]"; " ") | gsub("\\|"; "\\|") | if . == "" then "-" else . end;
+    def table(rs): if (rs | length) == 0 then "Nothing in it yet.\n" else
+      "| kind | name | status | domain | repo | uuid |\n| --- | --- | --- | --- | --- | --- |\n"
+      + ([rs[] | "| \(.kind | cell) | \(.name | cell) | \(.status | cell) | \(.fqdn | cell) | \(.repo | cell) | `\(.uuid | cell)` |"]
+         | join("\n")) + "\n" end;
+    .resources as $r
+    | "# Projects and what runs where\n\nGenerated \($day) from the Coolify API; regenerate with\n"
+      + "`cd \($setup) && . ./lib.sh && projects_md`. One Coolify project per client or product,\n"
+      + "one environment per stage. No passwords or keys are in this file.\n"
+      + ([.projects[] | . as $p
+          | "\n## \($p.name | cell)\n\nProject uuid `\($p.uuid | cell)`\(if $p.description != "" then "; \($p.description | cell)" else "" end).\n"
+            + (if ($p.environments | length) == 0 then "\nNo environments.\n"
+               else ([$p.environments | sort_by(.name)[] | .name as $e
+                      | "\n### \($e | cell)\n\n" + table([$r[] | select(.project_uuid == $p.uuid and .environment == $e)])] | join(""))
+               end)] | join(""))
+      + (if any($r[]; .project == "-") then "\n## (no project)\n\n" + table([$r[] | select(.project == "-")]) else "" end)' <<<"$j") ||
+    { echo "projects_md: could not build the file; ${f} left as it was" >&2; return 1; }
+  if [ "$f" = - ]; then printf '%s\n' "$md"; return 0; fi
+  mkdir -p "$(dirname "$f")" &&
+  ( umask 077; printf '%s\n' "$md" > "$f.tmp" ) && chmod 600 "$f.tmp" && mv "$f.tmp" "$f" || return 1
+  echo "wrote $f ($(jq '.projects | length' <<<"$j") projects, $(jq '.resources | length' <<<"$j") resources)"
+}
+
 # --- off-site backups: Coolify scheduled backups copied to S3-compatible storage (RESTORE.md) ---
 
 # S3 credentials: S3_KEY= and S3_SECRET= lines in S3_ENV (default ~/.config/vps-setup/s3.env,
