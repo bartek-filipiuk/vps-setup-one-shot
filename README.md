@@ -103,6 +103,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   transfer and a new webhook secret, DNS, a table of every secret with how to rotate it, and the
   checklist that removes the developer's access (SSH key last, never the only one). Coolify cannot
   isolate one project inside a team; the file says so and offers the ways around it.
+- One Coolify project per client or product, one environment per stage (`production` by
+  default): `PREPARE-APP.md` and `SERVICES.md` ask which project a new app or tool belongs to,
+  suggest a domain from the project's name and refuse one that is taken; `status.sh` groups apps
+  and services by project, and `~/.config/vps-setup/PROJECTS.md` (generated, no secrets) lists
+  what runs where. A setup from before keeps its one project as it is.
 - `SERVICES.md` puts a self-hosted tool next to your apps as a Coolify one-click service on its
   own domain: Umami, n8n, Uptime Kuma or Forgejo, with a DNS gate, the HTTPS wait, the first
   login, what is and is not backed up, and removal only on your yes. `status.sh` shows a line
@@ -190,6 +195,14 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   created with them. `GET /services` was checked on a live Coolify 4.3.23; creating a service
   with its domain, delete and the backups of a service come from the 4.3.23 source and are
   marked `[verify]`.
+- Projects and clients (R09: `project_ensure`, `env_ensure`, `project_ctx`,
+  `app_domain_default`, `domain_in_use`, `projects_inventory`, `projects_md`, the `status.sh`
+  group lines and the changes to phase 05, `PREPARE-APP.md` and `SERVICES.md`) are tested against
+  a fake Coolify API only (`test/lib.test.sh`, `test/status.test.sh`) and have **not been run on a
+  real server yet**; no second project has been created with them. The `GET` shapes of projects,
+  environments and `environment_id` were checked read-only on a live Coolify 4.3.23; creating an
+  environment, a domain set twice and duplicate project names come from the API docs and are
+  marked `[verify]` in `references/coolify-api.md`.
 - `UPGRADE.md` (R14), `db_major`, `pg_major_upgrade_plan`, the `RESTORE_FROM_DB` guard of
   `db_restore` and the `status.sh` updates and postgres lines are tested against a fake Coolify
   API, a stubbed `ssh` and a fake `docker` only (`test/lib.test.sh`, `test/status.test.sh`) and
