@@ -155,7 +155,7 @@ db_major() {
 # the app whose DATABASE_URL moves, and the commands, with the real uuids. Read-only. Exit 1
 # when TARGET is not a number, is not above the current major, or the database cannot be read.
 pg_major_upgrade_plan() {
-  local db=${1:-} target=${2:-} info cur name user dbname project server app
+  local db=${1:-} target=${2:-} info cur name user dbname project env server app
   [ -n "$db" ] && [ -n "$target" ] || { echo "usage: pg_major_upgrade_plan DB_UUID TARGET  (TARGET: a major version like 18)" >&2; return 1; }
   case $target in *[!0-9]*|0*) target=x ;; esac
   [ "$target" != x ] && [ "${#target}" -le 3 ] || { echo "TARGET must be a major version like 18, got '${2:-}'" >&2; return 1; }
@@ -165,12 +165,12 @@ pg_major_upgrade_plan() {
   info=$(capi GET "/databases/$db") || return 1
   name=$(jq -r '.name // "db"' <<<"$info")
   user=$(jq -r '.postgres_user // "postgres"' <<<"$info"); dbname=$(jq -r '.postgres_db // .postgres_user // "postgres"' <<<"$info")
-  project=$(state_get PROJECT_UUID); app=$(state_get APP_UUID)
+  read -r project env < <(project_ctx 2>/dev/null); app=$(state_get APP_UUID)
   server=$(coolify_server 2>/dev/null)
   echo "Postgres major upgrade plan (nothing has changed; UPGRADE.md, Postgres)"
   echo "old:     $db  $name  $(jq -r '.image // "?"' <<<"$info")  user $user, database $dbname  (Postgres $cur)"
   echo "new:     $name-pg$target  postgres:$target-alpine  user $user, database $dbname, new password"
-  echo "         project ${project:-<no PROJECT_UUID in $VPS_STATE>}, environment production, server ${server:-<unknown>}"
+  echo "         project ${project:-<no PROJECT_UUID in $VPS_STATE>}, environment ${env:-production}, server ${server:-<unknown>}"
   echo "app:     ${app:-<no APP_UUID in $VPS_STATE>}  (its DATABASE_URL moves from old to new)"
   [ "$(state_get DB_UUID)" = "$db" ] || echo "note:    $db is not DB_UUID in $VPS_STATE ($(state_get DB_UUID)); make sure this is the app's database"
   echo "steps:   1 user's yes  2 create new, wait running:healthy  3 stop the app  4 db_dump $db"
@@ -399,12 +399,13 @@ service_valid_uuid() {
 }
 
 # service_create TYPE NAME DOMAIN [COMPOSE_SERVICE] -> creates the one-click service TYPE named
-# NAME in the setup's project (PROJECT_UUID), environment production, with https://DOMAIN on
+# NAME in the project and environment of project_ctx (the setup's project and production unless
+# VPS_PROJECT or VPS_ENV say otherwise), with https://DOMAIN on
 # COMPOSE_SERVICE (default: TYPE), and starts it (instant_deploy). Records
 # SERVICE_<NAME>_UUID (upper case, - as _). On a domain conflict (409) or a validation error
 # (422) Coolify deletes the new service again [verify]; the reason is printed, nothing to clean up.
 service_create() {
-  local type=${1:-} name=${2:-} domain svc=${4:-${1:-}} project server body res code msg key uuid
+  local type=${1:-} name=${2:-} domain svc=${4:-${1:-}} ctx project env server body res code msg key uuid
   domain=$(tr '[:upper:]' '[:lower:]' <<<"${3:-}")
   [ -n "$type" ] && [ -n "$name" ] && [ -n "$domain" ] ||
     { echo "usage: service_create TYPE NAME DOMAIN [COMPOSE_SERVICE]  (TYPE: $SERVICE_TYPES)" >&2; return 1; }
@@ -427,11 +428,11 @@ service_create() {
   if [ -n "$(state_get "$key")" ]; then
     echo "service $name already recorded as $key=$(state_get "$key"); pick another name, or service_delete it first. Nothing was created." >&2; return 1
   fi
-  project=$(state_get PROJECT_UUID)
-  [ -n "$project" ] || { echo "service_create: no PROJECT_UUID in $VPS_STATE (phase 05)" >&2; return 1; }
+  ctx=$(project_ctx 2>&1) || { echo "service_create: $ctx" >&2; return 1; }
+  read -r project env <<<"$ctx"
   server=$(coolify_server) && [ -n "$server" ] || { echo "service_create: no Coolify server found (phase 04 step 4)" >&2; return 1; }
-  body=$(jq -n --arg t "$type" --arg n "$name" --arg p "$project" --arg s "$server" --arg c "$svc" --arg u "https://$domain" \
-    '{type:$t, name:$n, project_uuid:$p, server_uuid:$s, environment_name:"production",
+  body=$(jq -n --arg t "$type" --arg n "$name" --arg p "$project" --arg e "$env" --arg s "$server" --arg c "$svc" --arg u "https://$domain" \
+    '{type:$t, name:$n, project_uuid:$p, server_uuid:$s, environment_name:$e,
       instant_deploy:true, urls:[{name:$c, url:$u}]}') || return 1
   if ! res=$(capi POST /services "$body" 2>&1); then
     # capi's error is "HTTP <code> POST /services: <body>"

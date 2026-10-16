@@ -550,7 +550,7 @@ cat "$HOME/config.good" > "$COOLIFY_CONFIG"
 # refused before any call, status as TSV, delete only with --yes
 : > "$HOME/seq.log"
 out=$(service_create umami umami stats.example.com 2>&1); rc=$?
-check "service_create without PROJECT_UUID" "$rc:$out" "1:service_create: no PROJECT_UUID in $VPS_SETUP_STATE (phase 05)"
+check "service_create without a project" "$rc:$out" "1:service_create: no project: no PROJECT_UUID in $VPS_SETUP_STATE; run project_ensure (phase 05 step 3, PREPARE-APP.md step 5)"
 state_set PROJECT_UUID proj-1
 out=$(service_create umami umami Stats.Example.com 2>&1); rc=$?
 check "service_create rc" "$rc" "0"
@@ -679,6 +679,14 @@ check "ctx: no project anywhere" "$?:$out" "1:no project: no PROJECT_UUID in $HO
 printf 'PROJECT_UUID=../x\n' > "$HOME/bad-app.env"
 out=$(VPS_STATE=$HOME/bad-app.env project_ctx 2>&1); check "ctx: bad uuid in the state" "$?:$out" "1:not a Coolify uuid: '../x'"
 
+# service_create goes into the context's project and environment
+: > "$HOME/seq.log"
+VPS_STATE=$PS1_STATE service_create n8n flows flows.example.com >/dev/null 2>&1
+has "service_create: environment from project_ctx" "$(cat "$HOME/seq.log")" '"environment_name":"staging".*"project_uuid":"p-new4"'
+: > "$HOME/seq.log"
+VPS_STATE=$PS1_STATE VPS_PROJECT="Acme Corp" VPS_ENV=production service_create n8n flows2 flows2.example.com >/dev/null 2>&1
+has "service_create: VPS_PROJECT and VPS_ENV" "$(cat "$HOME/seq.log")" '"environment_name":"production".*"project_uuid":"p-acme"'
+
 # app_domain_default: from DOMAIN in the setup state
 DS=$HOME/r09-setup.state; printf 'DOMAIN=example.com\nSETUP_DIR=/home/u/vps-setup-one-shot\n' > "$DS"
 got=""
@@ -797,6 +805,7 @@ check "plan rc" "$rc" "0"
 has "plan: old database" "$out" '^old: +db-pg +starter-db +postgres:17-alpine +user app, database app +\(Postgres 17\)$'
 has "plan: new database" "$out" '^new: +starter-db-pg18 +postgres:18-alpine +user app, database app, new password$'
 has "plan: where" "$out" '^ +project proj-1, environment production, server s2$'
+has "plan: environment from project_ctx" "$(VPS_ENV=staging pg_major_upgrade_plan db-pg 18 2>&1)" '^ +project proj-1, environment staging, server s2$'
 has "plan: app" "$out" '^app: +stopped-app '
 has "plan: explicit restore target" "$out" 'RESTORE_FROM_DB=db-pg db_restore <NEW_UUID> <dump>'
 has "plan: Postgres 18 quirk" "$out" '^warning: Postgres 18\+ '
