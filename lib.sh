@@ -54,6 +54,48 @@ capi() {
   printf '%s\n' "$out"
 }
 
+# --- one-line reports (status.sh, checkup.sh) ---
+
+# report_colors -> sets C_OK, C_WARN, C_FAIL, C_END: ANSI colors on a terminal, empty when piped
+# or with NO_COLOR set.
+report_colors() {
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_OK=$'\033[32m' C_WARN=$'\033[33m' C_FAIL=$'\033[31m' C_END=$'\033[0m'
+  else
+    C_OK='' C_WARN='' C_FAIL='' C_END=''
+  fi
+}
+
+# line MARK label detail  (MARK: OK, WARN, FAIL). API-provided text is stripped of control chars.
+# WARN and FAIL set the caller's `attention` to 1.
+line() {
+  local c
+  # shellcheck disable=SC2034 # attention is read by status.sh and checkup.sh
+  case $1 in OK) c=${C_OK:-} ;; WARN) c=${C_WARN:-}; attention=1 ;; *) c=${C_FAIL:-}; attention=1 ;; esac
+  printf '%s%-5s%s %-28s %s\n' "$c" "$1" "${C_END:-}" "$(tr -d '[:cntrl:]' <<<"$2")" "$(tr -d '[:cntrl:]' <<<"$3")"
+}
+section() { printf '\n%s\n' "$1"; }
+# worst MARK MARK -> the more serious of the two
+worst() { case "$1 $2" in *FAIL*) echo FAIL ;; *WARN*) echo WARN ;; *) echo OK ;; esac; }
+
+# Epoch seconds of an openssl date ("Jan  1 00:00:00 2027 GMT"): GNU date, then BSD date.
+epoch_of() { date -u -d "$1" +%s 2>/dev/null || date -j -u -f "%b %d %T %Y %Z" "$1" +%s 2>/dev/null; }
+
+# jq: Coolify timestamps to epoch. Seen: "2026-10-13T12:08:21.000000Z" (deployments) and
+# "2026-10-13T12:08:10+00:00" (backup executions); a space instead of T is accepted too.
+# Anything else is an error, so a format change shows as "could not read", never as "none".
+# shellcheck disable=SC2016,SC2034 # $s is a jq variable; JQ_EPOCH is read by status.sh
+JQ_EPOCH='def epoch:
+  . as $s
+  | [capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2})[T ](?<t>[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})?$")]
+  | if length == 0 then error("unknown date format: \($s)") else .[0] end
+  | ((.d + "T" + .t + "Z") | fromdateiso8601)
+    - (if (.z // "Z") == "Z" then 0
+       else ((.z[1:3] | tonumber) * 3600 + (.z[-2:] | tonumber) * 60) * (if .z[0:1] == "-" then -1 else 1 end) end);'
+
+# X.Y.Z -> "X Y Z" (pre-release suffix dropped); empty when not numeric.
+semver() { local v=${1#v}; v=${v%%-*}; case $v in *[!0-9.]*|'') ;; *) tr '.' ' ' <<<"$v" ;; esac; }
+
 # --- safe deploys: rollback point and database dump before every deploy (ROLLBACK.md) ---
 
 # Dumps live on the server under DUMP_DIR/<DB_UUID>/ (default /root/db-dumps; tests point it elsewhere).
