@@ -18,7 +18,7 @@ Which runbook:
 |-----------|---------|
 | a deploy just broke the app or a migration broke the data | `ROLLBACK.md` (the dump `deploy_and_wait` took is newer than any nightly backup) |
 | data deleted or damaged some time ago, or the dumps in `/root/db-dumps/` are gone | this file |
-| the server itself is gone | a new server first (phases 01–05), then this file; the full path is roadmap item R15 |
+| the server itself is gone | `REBUILD.md` (a new server through the phases, then the backup of the old database into the new one) |
 
 This restores **into an existing Coolify Postgres** (`DB_UUID` in the state). Everything written
 after the chosen backup is lost.

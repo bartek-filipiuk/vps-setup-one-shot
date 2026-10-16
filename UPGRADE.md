@@ -210,7 +210,7 @@ Delete the snapshot when the user is happy: `hcloud image list --type snapshot`,
 `do-release-upgrade` replaces most of the system, asks questions on the way and cannot be undone.
 Docker, Coolify and the apps must be checked against the new release first. This file does not
 do it. The path a person can take: a new server on the new release, the apps moved to it
-(`REBUILD.md`, roadmap R15, once it exists), or the release upgrade with a snapshot, in a long
+(`REBUILD.md`, as a planned move), or the release upgrade with a snapshot, in a long
 window.
 
 ## C. Postgres major version
