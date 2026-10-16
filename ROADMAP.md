@@ -88,7 +88,11 @@ Rules that apply to every item:
   (Runbook and helpers done; not run on a server yet.)
 - **R15 Rebuild from nothing.** `REBUILD.md`: new server, every database restored from off-site
   backups, DNS repointed, apps redeployed from git. The harness runs it on purpose, quarterly.
+  Through the phases again, with `rebuild_inventory` (which state keys survive, which to clear)
+  and `s3_backup_list` (the backups in the bucket itself, by the old database uuid) in `lib.sh`;
+  Coolify's instance backup is not used (it needs the old `APP_KEY`, never saved).
   Done when: the rebuilt server passes `verify.sh` and `status.sh` with all data present.
+  (Runbook and helpers done; not run on a server yet.)
 - **R16 Monthly checkup.** `CHECKUP.md`, run by the user's agent on a schedule: open ports vs the
   firewall, sshd config, Docker socket exposure, Coolify advisories, certificate renewals, backup
   success rate, disk growth, and what the servers cost this month. Ends with actions, each with a
