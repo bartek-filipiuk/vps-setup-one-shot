@@ -125,6 +125,8 @@ or newer with `UPGRADE.md` section A, soon. `WARN` without a version range: read
 sentence what it is about and whether it applies; once read, record it so it stays quiet:
 `. ./lib.sh; state_set CHECKUP_ADVISORIES_SEEN "<id> <older ids>"`. `n/a` with a rate limit:
 run again in an hour.
+The first run usually lists a few advisories without a range; one round of marking them seen
+keeps later runs quiet.
 
 ### 3e. Backup success rate
 
@@ -133,6 +135,11 @@ reached S3. A failed run or upload is `WARN`, fewer than half successful or no r
 `FAIL`. Coolify deletes old run records along with old local backups, so a short history (7 runs
 with 7 kept locally) is not a failure **[verify]**. Fix: the newest failure's message
 (`db_backup_list <DB_UUID>`), then phase 06 step 1 (schedule, storage, key pair).
+
+`status.sh`'s `WARN off-site ... S3 upload not reported by API` is expected on Coolify 4.3.23,
+whose API was not seen returning `s3_uploaded` **[verify]**: the Actions list points it at
+`RESTORE.md` step 3, and only a restore from the bucket proves the copy. Until then a clean
+server ends with this one `WARN`; say so to the user instead of treating it as new.
 
 ### 3f. Disk growth
 

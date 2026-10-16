@@ -259,6 +259,7 @@ FAKE_LISTEN="listen tcp 0.0.0.0:$PORT coolify" CHECKUP_PROBE_TIMEOUT=x expect "l
 FAKE_PASSWORD=yes expect "sshd: password login on" 1 '^FAIL +sshd +passwordauthentication yes \(want no\)$'
 FAKE_ROOT=yes expect "sshd: root with password" 1 '^FAIL +sshd +permitrootlogin yes \(want without-password\)$'
 has "sshd: Actions" "$out" '^  FAIL +sshd .* -> CHECKUP\.md 3b$'
+FAKE_ROOT=prohibit-password expect "sshd: newer OpenSSH spelling" 0 '^OK +sshd +password login off'
 
 # Docker (CHECKUP.md 3c)
 FAKE_DOCKERD_TCP=tcp://0.0.0.0:2375 expect "docker: dockerd on tcp" 1 '^FAIL +docker api +the Docker API is on TCP \(dockerd tcp://0\.0\.0\.0:2375\): whoever reaches it is root$'
@@ -302,6 +303,10 @@ expect "backup rate: no run in 30 days" 1 '^FAIL +backup rate starter-db +no bac
   '.execs.b1.executions |= map(.created_at = $t)' --arg t "$(ago_tz 1000)"
 expect "backup rate: no schedule leaves it to status.sh" 1 '^FAIL +backup starter-db +none \(no backup schedule\)' '.backups.d1 = []'
 check "backup rate: no schedule, no second line" "$(grep -c 'backup rate starter-db' <<<"$out")" "0"
+expect "off-site not reported by the API (real 4.3.23)" 1 '^WARN +off-site starter-db +.*S3 upload not reported by API' \
+  '.execs.b1.executions |= map(del(.s3_uploaded))'
+has "off-site not reported: Actions points at the restore drill" "$out" '^  WARN +off-site .* -> RESTORE\.md step 3$'
+check "off-site not reported: backup rate stays OK" "$(grep -cE '^(WARN|FAIL) +backup rate' <<<"$out")" "0"
 expect "backup rate: local only" 1 '^OK +backup rate starter-db +2/2 runs succeeded; local only$' '.backups.d1[0].save_s3 = false'
 
 # disk growth from the checkup log (CHECKUP.md 3f)

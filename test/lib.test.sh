@@ -1026,8 +1026,10 @@ check "advisories: offline is rc 2" "$rc:$out" "2:GitHub did not answer (offline
 s3run coolify_advisories latest
 check "advisories: version required" "$rc:$out" "1:usage: coolify_advisories VERSION (like 4.3.23)"
 check "advisories: no version compare surprises" "$(jq -rn "$JQ_VERSION"'[("4.0.0-beta.420" | ver) < ("4.0.0" | ver), ("4.3" | ver) == ("4.3.0" | ver),
-  ("4.3.9" | ver) < ("4.3.23" | ver), ("< 4.3.21" | range_match("4.3.21")), (">4.3.0,<4.3.30" | range_match("4.3.23")), ("~4.3" | range_match("4.3.23"))] | map(tostring) | join(" ")')" \
-  "true true true false true null"
+  ("4.3.9" | ver) < ("4.3.23" | ver), ("< 4.3.21" | range_match("4.3.21")), (">4.3.0,<4.3.30" | range_match("4.3.23")), ("~4.3" | range_match("4.3.23")),
+  ("< 4.0.0-beta.420.7" | range_match("4.0.0-beta.419")), ("< 4.0.0-beta.420.7" | range_match("4.0.0-beta.420.6")),
+  ("< 4.0.0-beta.420.7" | range_match("4.0.0-beta.420.7")), ("4.0.0-beta.420.6" | ver) < ("4.0.0" | ver)] | map(tostring) | join(" ")')" \
+  "true true true false true null true true false true"
 
 s3run backup_success_rate db-rate
 check "backup rate: last 30 days, running not counted, S3 failures counted" "$rc:$out" "0:$(printf 'schedule\tfrequency\truns\tsuccess\tfailed\ts3\ts3_uploaded\ts3_failed\ts3_unreported\tnewest_failure

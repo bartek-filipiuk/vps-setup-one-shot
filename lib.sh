@@ -1190,7 +1190,7 @@ EOF
 JQ_VERSION='def ver:
   ltrimstr("v") | (split("-")[0]) as $b | (split("-")[1:] | join("-")) as $p
   | (($b | split(".") | map(tonumber? // 0)) + [0, 0, 0])[0:3]
-    + (if $p == "" then [1, 0] else [0, ($p | split(".") | last | tonumber? // 0)] end);
+    + (if $p == "" then [1, 0, 0, 0] else ([0] + (($p | split(".") | map(tonumber? // 0)) + [0, 0, 0])[1:4]) end);
 def range_match($v):
   if type != "string" or (gsub("\\s"; "") == "") then null
   else [split(",")[] | gsub("^\\s+|\\s+$"; "") | capture("^(?<op><=|>=|==|<|>|=)?\\s*(?<w>v?[0-9][0-9A-Za-z.-]*)$")] as $c

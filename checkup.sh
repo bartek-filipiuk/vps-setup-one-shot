@@ -45,7 +45,8 @@ action_for() {
     cert) echo "DOCTOR.md D" ;;
     service|services) echo "SERVICES.md" ;;
     backup) [ "$w2" = rate ] && echo "CHECKUP.md 3e" || echo "phases/06-handover.md step 1" ;;
-    off-site|databases) echo "phases/06-handover.md step 1" ;;
+    off-site) case $1 in *"not reported"*) echo "RESTORE.md step 3" ;; *) echo "phases/06-handover.md step 1" ;; esac ;;
+    databases) echo "phases/06-handover.md step 1" ;;
     postgres) echo "UPGRADE.md C" ;;
     alerts) echo "phases/06-handover.md step 2" ;;
     firewall|listening) echo "CHECKUP.md 3a" ;;
@@ -67,7 +68,7 @@ probe() {
   t=$(curl -s -o /dev/null --connect-timeout "$CHECKUP_PROBE_TIMEOUT" --max-time $((CHECKUP_PROBE_TIMEOUT + 3)) \
     -w '%{time_connect}' "http://$ip:$1/" 2>/dev/null); rc=$?
   [ "$rc" = 7 ] && { echo closed; return; }
-  if [ "$(awk -v t="${t:-0}" 'BEGIN { print (t + 0 > 0) ? 1 : 0 }')" = 1 ]; then echo open; return; fi
+  if [ "$(awk -v t="${t:-0}" 'BEGIN { print ((t + 0 > 0) ? 1 : 0) }')" = 1 ]; then echo open; return; fi
   case $rc in 28) echo closed ;; 0) echo open ;; *) echo unknown ;; esac
 }
 
@@ -143,6 +144,8 @@ else
   for kv in $SSHD_EXPECT; do
     k=${kv%%=*} want=${kv#*=}
     got=$(awk -v k="$k" '$1 == "sshd" && $2 == k { print $3; exit }' <<<"$facts")
+    # OpenSSH after 9.x may print the same setting as prohibit-password
+    [ "$k" = permitrootlogin ] && [ "$got" = prohibit-password ] && got=$want
     [ "$got" = "$want" ] || bad="$bad${bad:+, }$k ${got:-not set} (want $want)"
   done
   if [ -n "$bad" ]; then cline FAIL "sshd" "$bad"
