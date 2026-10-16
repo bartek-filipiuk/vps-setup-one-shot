@@ -166,6 +166,10 @@ ask when, as in `RESTORE.md` step 1). Write down its time and size. Errors:
 - `listing of s3/... failed`: the key pair or the bucket is wrong (phase 06 step 1a, then step 4
   here again).
 
+A key ending in `pg-dump-all-<time>.gz` comes from a schedule with `dump_all` on: a gzipped
+`pg_dumpall` that `db_restore` cannot read. Stop and tell the user; that case is not covered here
+(`RESTORE.md` step 4).
+
 Download it into the **new** database's dump directory:
 
 ```
@@ -181,7 +185,7 @@ Expect `/root/db-dumps/<new DB_UUID>/s3-<name> <bytes>`, the same size as in the
 The file lies under `DUMP_DIR/<new DB_UUID>/`, so `db_restore` takes it as this database's own
 dump and needs no `RESTORE_FROM_DB`, although the backup was made of the old one. The app has
 never run, so the guard for a running app passes too. Expect `restored ... into app`. A `text
-format dump` error: the schedule dumped all databases; `RESTORE.md` step 4 says to stop there.
+format dump` or `not a valid archive` error: the schedule dumped all databases; `RESTORE.md` step 4 says to stop there.
 
 ## 6. Deploy, push-to-deploy, the data: phase 05 steps 5 to 8
 

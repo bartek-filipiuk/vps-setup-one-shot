@@ -87,8 +87,9 @@ are explained in `ROLLBACK.md` step 4; the same rules apply here, including the 
 a wipe.
 
 Coolify's Postgres backups are `pg_dump --format=custom`, which `pg_restore` reads **[verify]**.
-If `pg_restore` says the input is a text format dump, the schedule was set to dump all databases
-(`dump_all`); stop and tell the user, that case is not covered here.
+If the file is named `pg-dump-all-<time>.gz`, or `pg_restore` says the input is a text format
+dump or not a valid archive, the schedule was set to dump all databases (`dump_all`); stop and
+tell the user, that case is not covered here.
 
 ## 5. Check
 

@@ -73,8 +73,10 @@ Coolify knows none of the old server's backup runs, so the list comes from the b
 here has been run against a real bucket yet **[verify]**.
 
 - Layout in the bucket, from the 4.3.23 source (`DatabaseBackupJob`): `<bucket>/data/coolify/backups/databases/<team name slug>-<team id>/<database name slug>-<database uuid>/<file>`,
-  for Postgres `pg-dump-<db>-<unix time>.dmp`. `s3_backup_list` takes the uuid as the part after the
-  last `-` of the directory name (Coolify uuids have no dashes) **[verify]**.
+  for Postgres `pg-dump-<db>-<unix time>.dmp`, with `dump_all` `pg-dump-all-<unix time>.gz`
+  (checked 2026-10-16 on a 4.3.23 server against the execution filenames, e.g.
+  `root-team-0/<name>-db-<uuid>/`; the bucket itself not listed yet). `s3_backup_list` takes the
+  uuid as the part after the last `-` of the directory name (Coolify uuids have no dashes) **[verify]**.
 - The call, inside the coolify-helper image on the server, credentials as for `db_fetch_from_s3`:
   `mc --json ls --recursive s3/<bucket>/data/coolify/backups/databases/`. One JSON object per line,
   `{status:"success", type:"file"|"folder", lastModified (RFC 3339, may carry an offset or
