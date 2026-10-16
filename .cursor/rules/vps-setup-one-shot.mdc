@@ -1,0 +1,17 @@
+---
+description: Which vps-setup-one-shot runbook to read when the user wants to set up, check, fix, upgrade, rebuild or hand over their Coolify server.
+alwaysApply: false
+---
+The markdown is the source; nothing here repeats it. Work from the repo root, read the file, follow it exactly, in the user's language.
+
+- A server from nothing (Hetzner or any Ubuntu 24.04 box, Coolify, the starter app): `SETUP.md`
+- One-screen health, read-only: run `status.sh`; fixes are in `DOCTOR.md`
+- The app is down, a deploy failed, 502 or a certificate error: `DOCTOR.md`
+- The monthly checkup: `CHECKUP.md`
+- An existing app onto the server, from the app's own repo: `PREPARE-APP.md`
+- Back to the previous version after a bad deploy: `ROLLBACK.md`
+- A database back from an off-site backup: `RESTORE.md`
+- A self-hosted tool on its own domain (Umami, n8n, Uptime Kuma, Forgejo): `SERVICES.md`
+- Coolify, Ubuntu or Postgres major upgrades: `UPGRADE.md`
+- A new server from nothing with the databases from the backups: `REBUILD.md`
+- A server or project to a client, a colleague joining, old access removed: `HANDOVER.md`

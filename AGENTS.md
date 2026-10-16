@@ -4,6 +4,27 @@ For anyone who changes this repository, person or agent. The repo is developed b
 agent with human review; read this before the first pull request. (`starter/AGENTS.md` is about
 the Next.js starter app only.)
 
+## Entry points
+
+For the user's agent: open this folder and say `Read SETUP.md and guide me through it.` Codex and
+Cursor read this file (Cursor also `.cursor/rules/vps-setup-one-shot.mdc`); Claude Code users can
+install the plugin instead (README "Start") and type the command. A command never repeats a
+runbook step; it names the file. `test/packaging.sh` parses this table.
+
+| What | Runbook | Claude Code |
+| --- | --- | --- |
+| a server from nothing, Coolify and the starter app | `SETUP.md` | `/vps-setup` |
+| one-screen health, read-only | `status.sh` | `/vps-status` |
+| the app is down, a deploy failed, 502, certificate error | `DOCTOR.md` | `/vps-doctor` |
+| the monthly checkup | `CHECKUP.md` | `/vps-checkup` |
+| an existing app onto the server, from its repo | `PREPARE-APP.md` | `/vps-prepare-app` |
+| back to the previous version after a bad deploy | `ROLLBACK.md` | `/vps-rollback` |
+| a database back from an off-site backup | `RESTORE.md` | `/vps-restore` |
+| a self-hosted tool on its own domain | `SERVICES.md` | `/vps-services` |
+| Coolify, Ubuntu and Postgres major upgrades | `UPGRADE.md` | `/vps-upgrade` |
+| a new server, databases from the backups | `REBUILD.md` | `/vps-rebuild` |
+| a server or project to someone else, old access removed | `HANDOVER.md` | `/vps-handover` |
+
 ## Layout
 
 `SETUP.md` (entry point the user's agent reads), `phases/` (00–06, one file per step),
@@ -26,7 +47,9 @@ server state and says which phase is next), `status.sh` (one-screen health check
 disk growth and cost, ending with the actions; read-only),
 `references/` (Coolify and Cloudflare API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `test/` (checks that need no server), `ROADMAP.md` (the plan,
-ids R01…, mirrored in `starter/app/roadmap.ts`).
+ids R01…, mirrored in `starter/app/roadmap.ts`), `.claude-plugin/` (the Claude Code plugin
+and marketplace manifests), `skills/` (one pointer per entry point, the plugin's commands),
+`.cursor/rules/` (the Cursor rule, the same pointers).
 
 ## Rules
 
@@ -62,6 +85,11 @@ ids R01…, mirrored in `starter/app/roadmap.ts`).
   every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md`,
   `PREPARE-APP.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md` and `CHECKUP.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
   `json`, ...). `bash test/extract-blocks.test.sh` is its self-test and must print `ALL PASSED`.
+- `bash test/packaging.sh` must print `ALL POINTERS OK`: the "Entry points" table, the plugin and
+  marketplace manifests, `skills/` and the Cursor rule agree, and the pointers carry no runbook
+  content (no code fences, no `lib.sh` helper names, no server commands). `claude plugin validate .`
+  passes locally (warnings about the missing version are intended, so updates follow commits);
+  it is not in CI.
 - Shellcheck exclusions. Scripts: only `.shellcheckrc` (`shell=bash`, `disable=SC2015,SC1091`),
   default severity. Doc blocks: the same `.shellcheckrc` (passed with `--rcfile`) plus
   `-e SC2034,SC2154`, because blocks set and read variables across blocks, at severity
