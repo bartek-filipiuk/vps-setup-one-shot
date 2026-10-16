@@ -4,6 +4,10 @@
 # Exit code: 0 when everything is done, 1 otherwise.
 set -uo pipefail
 cd "$(dirname "$0")" && . ./lib.sh
+# Installed as a Claude Code plugin, this directory is a versioned copy that moves on every
+# update; keep SETUP_DIR (set in phase 00) pointing at the copy that is running now.
+d=$(state_get SETUP_DIR)
+[ -n "$d" ] && [ "$d" != "$PWD" ] && [ "$VPS_STATE" = "$VPS_SETUP_STATE" ] && state_set SETUP_DIR "$PWD"
 
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; }
