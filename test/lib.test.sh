@@ -309,6 +309,13 @@ cat > "$HOME/fakebin/docker" <<'STUB'
 #!/bin/sh
 echo "docker $*" >> "$HOME/docker.log"
 case "$*" in
+  "run --rm --env-file "*" --json ls --recursive "*)
+    # mc ls in a container: $4 env file, $7 image, ${11} s3/BUCKET/PREFIX
+    want="MC_HOST_s3=https://AKFAKEKEY123:s3SeCrEt%2Fx%2By%3Dz%7Cw@fsn1.your-objectstorage.com"
+    if [ "$(cat "$4")" = "$want" ]; then echo "envfile ok $(stat -c %a "$4")" >> "$HOME/envcheck.log"; else echo "envfile bad" >> "$HOME/envcheck.log"; fi
+    echo "ls ${11}" >> "$HOME/mcls.log"
+    [ "${FAKE_MC_LS_FAIL:-0}" = 1 ] && { echo '{"status":"error","error":{"message":"Unable to list folder.","cause":{"message":"The specified bucket does not exist."}}}'; exit 1; }
+    cat "$HOME/mc-ls.json" 2>/dev/null; true ;;
   "run --rm --env-file "*)
     # mc in a container: $4 env file, $6 DIR:/out, $9 image, ${12} source, ${13} /out/NAME
     want="MC_HOST_s3=https://AKFAKEKEY123:s3SeCrEt%2Fx%2By%3Dz%7Cw@fsn1.your-objectstorage.com"
@@ -733,6 +740,103 @@ has "fetch: MC_IMAGE overrides the helper" "$(cat "$HOME/docker.log")" " --entry
 S3_ENV="$HOME/nope.env" s3run db_fetch_from_s3 db-pg /data/x/y.dmp
 check "fetch without creds refused" "$rc:$out" "1:no S3 credentials: $HOME/nope.env is missing (phase 06 step 1)"
 check "fetch without creds: no ssh" "$(cat "$HOME/seq.log")" ""
+
+# rebuild (R15): the backups in the bucket itself, newest first, by the old database's uuid
+P=data/coolify/backups/databases
+cat > "$HOME/mc-ls.full" <<'JSON'
+{"status":"success","type":"folder","lastModified":"2026-10-14T02:00:00Z","size":0,"key":"root-0/"}
+{"status":"success","type":"file","lastModified":"2026-10-13T02:00:05.5Z","size":1000,"key":"root-0/my-landing-db-oldpg1/pg-dump-app-1760000001.dmp"}
+{"status":"success","type":"file","lastModified":"2026-10-14T03:00:00+02:00","size":2048,"key":"root-0/my-landing-db-oldpg1/pg-dump-app-1760086401.dmp"}
+{"status":"success","type":"file","lastModified":"2026-10-14T01:30:00Z","size":500,"key":"root-0/shop-db-oth2/pg-dump-shop-1760005000.dmp"}
+{"status":"success","type":"file","lastModified":"2026-10-12T02:00:00.123456789Z","size":900,"key":"data/coolify/backups/databases/root-0/my-landing-db-oldpg1/pg-dump-app-1759999999.dmp"}
+JSON
+cp "$HOME/mc-ls.full" "$HOME/mc-ls.json"; : > "$HOME/envcheck.log"; : > "$HOME/mcls.log"
+s3run s3_backup_list
+check "s3 list rc" "$rc" "0"
+check "s3 list header" "$(head -1 <<<"$out")" "$(printf 'db_uuid\tlast_modified\tsize\tkey')"
+check "s3 list: newest first across offsets" "$(sed -n '2,$p' <<<"$out" | cut -f1,2 | paste -sd ' ' -)" \
+  "$(printf 'oth2\t2026-10-14T01:30:00Z oldpg1\t2026-10-14T03:00:00+02:00 oldpg1\t2026-10-13T02:00:05.5Z oldpg1\t2026-10-12T02:00:00.123456789Z')"
+check "s3 list: folders skipped, every file once" "$(($(wc -l <<<"$out") - 1))" "4"
+check "s3 list: mc lists the backup prefix of the bucket" "$(cat "$HOME/mcls.log")" "ls s3/my-backups/$P/"
+check "s3 list: mc got the creds from a 600 env file" "$(cat "$HOME/envcheck.log")" "envfile ok 600"
+check "s3 list: env file deleted" "$(ls -A "$HOME/srvtmp")" ""
+s3run s3_backup_list oldpg1
+check "s3 list by uuid" "$rc:$(sed -n 2p <<<"$out")" "0:$(printf 'oldpg1\t2026-10-14T03:00:00+02:00\t2048\t%s/root-0/my-landing-db-oldpg1/pg-dump-app-1760086401.dmp' "$P")"
+check "s3 list by uuid: only that database" "$(sed -n '2,$p' <<<"$out" | cut -f1 | sort -u)" "oldpg1"
+check "s3 list: a full key is kept whole" "$(tail -1 <<<"$out" | cut -f4)" "$P/root-0/my-landing-db-oldpg1/pg-dump-app-1759999999.dmp"
+s3run s3_backup_list gone9
+check "s3 list: no backups for that uuid" "$rc:$out" "1:no backups for database gone9 in s3/my-backups/$P/ (backups there are of: oldpg1 oth2)"
+: > "$HOME/mc-ls.json"
+s3run s3_backup_list
+check "s3 list: empty bucket" "$rc:$out" "1:no backups in s3/my-backups/$P/"
+FAKE_MC_LS_FAIL=1 s3run s3_backup_list
+check "s3 list: mc error" "$rc:$out" "1:listing of s3/my-backups/$P/ failed: The specified bucket does not exist. (wrong key pair or bucket: phase 06 step 1a and 1b)"
+check "s3 list failure: env file deleted" "$(ls -A "$HOME/srvtmp")" ""
+s3run s3_backup_list 'x;rm'
+check "s3 list: bad uuid refused" "$rc:$out" "1:s3_backup_list: not a database uuid: 'x;rm'"
+: > "$HOME/seq.log"
+S3_ENV="$HOME/nope.env" s3run s3_backup_list oldpg1
+check "s3 list without creds refused, no ssh" "$rc:$out:$(cat "$HOME/seq.log")" "1:no S3 credentials: $HOME/nope.env is missing (phase 06 step 1):"
+s3u=$(state_get S3_STORAGE_UUID); state_set S3_STORAGE_UUID ''; VPS_STATE=$VPS_SETUP_STATE state_set S3_STORAGE_UUID ''
+: > "$HOME/seq.log"
+s3run s3_backup_list oldpg1
+check "s3 list without S3_STORAGE_UUID refused, no ssh" "$rc:$out:$(cat "$HOME/seq.log")" "1:s3_backup_list: no S3_STORAGE_UUID in $VPS_SETUP_STATE (phase 06 step 1b):"
+state_set S3_STORAGE_UUID "$s3u"
+# a backup of the old database goes into the new one: fetched into DUMP_DIR/<new>/, so
+# db_restore's guard passes without RESTORE_FROM_DB (source dir == target)
+s3run db_fetch_from_s3 db-pg18 "$P/root-0/my-landing-db-oldpg1/pg-dump-app-1760086401.dmp"
+got="$HOME/dumps/db-pg18/s3-pg-dump-app-1760086401.dmp"
+check "rebuild fetch into the new database" "$rc:$out" "0:$got $(stat -c %s "$got" 2>/dev/null)"
+s3run db_restore db-pg18 "$got"
+check "rebuild restore without RESTORE_FROM_DB" "$rc:$(tail -1 <<<"$out")" "0:restored $got into app"
+printf 'APP_NAME=shop\n' > "$HOME/app.state"; cp "$HOME/mc-ls.full" "$HOME/mc-ls.json"
+VPS_STATE="$HOME/app.state" s3run s3_backup_list oth2
+check "s3 list from an app's state: storage uuid from the setup state" "$rc:$(sed -n 2p <<<"$out" | cut -f1)" "0:oth2"
+
+# rebuild_inventory: read only; survivors, the old server's keys, the commands
+RS="$HOME/rebuild.state"
+printf 'PROVIDER=hetzner\nDOMAIN=example.com\nVPS_IP=203.0.113.9\nADMIN_REGISTERED=1\nDB_UUID=oldpg1\nAPP_UUID=app1\nHOOK_ID=42\nWEBHOOK=github\nS3_BUCKET=my-backups\nS3_STORAGE_UUID=s3-1\nSERVICE_UMAMI_UUID=svc1\nKEY_UUID=\nHANDOVER_DONE=1\nAPP_DIR=/home/u/my-landing\n' > "$RS"
+before=$(cksum < "$RS"); cfg_before=$(cksum < "$COOLIFY_CONFIG"); ls_before=$(ls -A "$(dirname "$COOLIFY_CONFIG")" "$HOME")
+out=$(VPS_SETUP_STATE=$RS VPS_STATE=$RS rebuild_inventory 2>&1); rc=$?
+d=$(date -u +%Y%m%d)
+check "rebuild inventory" "$rc:$out" "0:state: $RS
+survives (kept as is):
+  PROVIDER=hetzner
+  DOMAIN=example.com
+  S3_BUCKET=my-backups
+  APP_DIR=/home/u/my-landing
+belongs to the old server (cleared before phase 01):
+  VPS_IP=203.0.113.9
+  ADMIN_REGISTERED=1
+  DB_UUID=oldpg1
+  APP_UUID=app1
+  HOOK_ID=42
+  WEBHOOK=github
+  S3_STORAGE_UUID=s3-1
+  SERVICE_UMAMI_UUID=svc1
+  HANDOVER_DONE=1
+old database: oldpg1; its backups: s3_backup_list oldpg1 (the copy below keeps the uuid)
+commands, after the user's yes (rebuild_inventory changed nothing):
+  cp -p $RS $RS.before-rebuild-$d
+  state_set VPS_IP ''
+  state_set ADMIN_REGISTERED ''
+  state_set DB_UUID ''
+  state_set APP_UUID ''
+  state_set HOOK_ID ''
+  state_set WEBHOOK ''
+  state_set S3_STORAGE_UUID ''
+  state_set SERVICE_UMAMI_UUID ''
+  state_set HANDOVER_DONE ''
+  mv $COOLIFY_CONFIG $COOLIFY_CONFIG.before-rebuild-$d"
+check "rebuild inventory writes nothing" "$(cksum < "$RS"):$(cksum < "$COOLIFY_CONFIG"):$(ls -A "$(dirname "$COOLIFY_CONFIG")" "$HOME")" "$before:$cfg_before:$ls_before"
+printf 'COOLIFY_PROJECT_UUID=p1\nCOOLIFY_APP_UUID=a1\nCOOLIFY_DOMAIN=https://shop.example.com\nDB_UUID=shopdb\nGH_REPO=u/shop\n' > "$HOME/app.state"
+out=$(VPS_STATE="$HOME/app.state" rebuild_inventory 2>&1); rc=$?
+has "rebuild inventory of an app: keeps the app's URL" "$out" '^  COOLIFY_DOMAIN=https://shop\.example\.com$'
+has "rebuild inventory of an app: sets VPS_STATE first" "$out" "^  VPS_STATE=$HOME/app.state$"
+has "rebuild inventory of an app: clears its uuids" "$out" "^  state_set COOLIFY_APP_UUID ''$"
+case "$out" in *"mv "*) check "rebuild inventory of an app: the Coolify config stays" moved kept ;; *) check "rebuild inventory of an app: the Coolify config stays" ok ok ;; esac
+out=$(VPS_STATE="$HOME/none.state" rebuild_inventory 2>&1); rc=$?
+check "rebuild inventory without state" "$rc:$out" "1:rebuild_inventory: no state in $HOME/none.state"
 
 # alerts (R06a): Coolify notifications to Discord; the webhook URL is handled like the S3 keys
 NE="$HOME/.config/vps-setup/notify.env"; WH=https://discord.com/api/webhooks/1/wh-SECRET-abc

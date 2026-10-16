@@ -611,42 +611,65 @@ db_backup_list() {
 # server (Coolify uploads backups with the mc inside it; minio/mc is no longer on Docker Hub).
 MC_IMAGE=${MC_IMAGE:-}
 
-# db_fetch_from_s3 DB_UUID EXEC_FILENAME -> downloads one backup (the execution's filename, as
-# db_backup_list prints it) from the S3 storage in S3_STORAGE_UUID onto the server, into
-# DUMP_DIR/<DB_UUID>/s3-<basename> (mode 600); prints "<path> <bytes>". Then: db_restore with
-# that path. Runs mc in a throwaway container; the credentials go over the ssh stdin into an env
-# file (mode 600, deleted on exit), never on a command line.
-db_fetch_from_s3() {
-  local db=${1:-} file=${2:-} s3 info endpoint bucket obj base mchost
-  [ -n "$db" ] && [ -n "$file" ] || { echo "usage: db_fetch_from_s3 DB_UUID EXEC_FILENAME" >&2; return 1; }
-  s3=$(state_get S3_STORAGE_UUID)
-  [ -n "$s3" ] || { echo "db_fetch_from_s3: no S3_STORAGE_UUID in $VPS_STATE (phase 06 step 1)" >&2; return 1; }
+# Where Coolify puts database backups, in the bucket as on the server: <bucket>/data/coolify/
+# backups/databases/<team slug>-<team id>/<database name slug>-<database uuid>/<file> [verify].
+S3_BACKUP_PREFIX=data/coolify/backups/databases/
+
+# s3_mc_prepare CALLER -> sets the caller's `bucket` and `mchost` (declare both local first) from
+# the S3 storage in S3_STORAGE_UUID (the app's state, else the setup state: phase 06 records it
+# there) and s3.env. Refuses, before any ssh, without the uuid or a private s3.env.
+s3_mc_prepare() {
+  local s3 info endpoint
+  s3=$(state_get S3_STORAGE_UUID); [ -n "$s3" ] || s3=$(VPS_STATE=$VPS_SETUP_STATE state_get S3_STORAGE_UUID)
+  [ -n "$s3" ] || { echo "$1: no S3_STORAGE_UUID in $VPS_STATE (phase 06 step 1b)" >&2; return 1; }
   s3_env_check || return 1
   info=$(capi GET "/s3-storages/$s3") || return 1
   endpoint=$(jq -r '.endpoint // empty' <<<"$info"); bucket=$(jq -r '.bucket // empty' <<<"$info")
   [ -n "$endpoint" ] && [ -n "$bucket" ] || { echo "S3 storage $s3 has no endpoint or bucket" >&2; return 1; }
-  # Coolify uploads to <bucket>/<filename without the leading slash>.
-  obj=${file#/}; base=${obj##*/}
-  case "$base" in ''|.|..) echo "not a backup file name: $file" >&2; return 1 ;; esac
   # MC_HOST_<alias>=https://KEY:SECRET@host; key and secret percent-encoded [verify].
   mchost=$(S3_K=$(s3_cred S3_KEY) S3_S=$(s3_cred S3_SECRET) jq -nr --arg e "$endpoint" \
     '($e | capture("^(?<s>https?://)?(?<h>.*?)/*$")) as $m
-     | "\($m.s // "https://")\(env.S3_K | @uri):\(env.S3_S | @uri)@\($m.h)"') || return 1
-  {
-    cat <<'EOF'
+     | "\($m.s // "https://")\(env.S3_K | @uri):\(env.S3_S | @uri)@\($m.h)"')
+}
+
+# s3_mc_head MCHOST -> the start of a server script that runs mc: the credentials in an env file
+# (mode 600, deleted on exit; the script text travels over the ssh stdin, never a command line)
+# and mc_image [IMAGE] (IMAGE, or the newest coolify-helper on the server).
+s3_mc_head() {
+  cat <<'EOF'
 set -eu; umask 077
 envf=$(mktemp); trap 'rm -f "$envf"' EXIT
 cat > "$envf" <<'CREDS'
 EOF
-    printf 'MC_HOST_s3=%s\nCREDS\n' "$mchost"
+  printf 'MC_HOST_s3=%s\nCREDS\n' "$1"
+  cat <<'EOF'
+mc_image() {
+  [ -z "${1:-}" ] || { echo "$1"; return 0; }
+  i=$(docker images --format '{{.Repository}}:{{.Tag}}' ghcr.io/coollabsio/coolify-helper | grep -E ':[0-9]' | sort -V | tail -n 1)
+  [ -n "$i" ] || { echo "no coolify-helper image on the server; set MC_IMAGE" >&2; return 1; }
+  echo "$i"
+}
+EOF
+}
+
+# db_fetch_from_s3 DB_UUID EXEC_FILENAME -> downloads one backup (the execution's filename, as
+# db_backup_list prints it, or a key from s3_backup_list) from the S3 storage in S3_STORAGE_UUID
+# onto the server, into DUMP_DIR/<DB_UUID>/s3-<basename> (mode 600); prints "<path> <bytes>".
+# Then: db_restore with that path. Runs mc in a throwaway container; the credentials go over the
+# ssh stdin into an env file (mode 600, deleted on exit), never on a command line.
+db_fetch_from_s3() {
+  local db=${1:-} file=${2:-} bucket mchost obj base
+  [ -n "$db" ] && [ -n "$file" ] || { echo "usage: db_fetch_from_s3 DB_UUID EXEC_FILENAME" >&2; return 1; }
+  s3_mc_prepare db_fetch_from_s3 || return 1
+  # Coolify uploads to <bucket>/<filename without the leading slash>.
+  obj=${file#/}; base=${obj##*/}
+  case "$base" in ''|.|..) echo "not a backup file name: $file" >&2; return 1 ;; esac
+  {
+    s3_mc_head "$mchost"
     cat <<'EOF'
 dir=$4/$1; mkdir -p "$dir"; chmod 700 "$4" "$dir"
 f=$dir/s3-$3
-img=${5:-}
-if [ -z "$img" ]; then
-  img=$(docker images --format '{{.Repository}}:{{.Tag}}' ghcr.io/coollabsio/coolify-helper | grep -E ':[0-9]' | sort -V | tail -n 1)
-  [ -n "$img" ] || { echo "no coolify-helper image on the server; set MC_IMAGE" >&2; exit 1; }
-fi
+img=$(mc_image "${5:-}")
 if docker run --rm --env-file "$envf" -v "$dir:/out" --entrypoint mc "$img" --quiet cp "s3/$2" "/out/s3-$3" >/dev/null && [ -s "$f" ]; then
   chmod 600 "$f"; echo "$f $(stat -c %s "$f")"
 else
@@ -654,6 +677,49 @@ else
 fi
 EOF
   } | rssh "sh -s -- $(printf %q "$db") $(printf %q "$bucket/$obj") $(printf %q "$base") $(printf %q "$DUMP_DIR") $(printf %q "${MC_IMAGE:-}")"
+}
+
+# s3_backup_list [DB_UUID] -> the database backups in the bucket itself (not Coolify's execution
+# list: a new Coolify knows none of the old server's runs), for REBUILD.md. TSV with a header:
+# db_uuid, last_modified, size, key; newest first; only DB_UUID's when given. The key is the
+# argument for db_fetch_from_s3. Runs `mc ls` on the server like db_fetch_from_s3 (credentials over
+# the ssh stdin into an env file, mode 600, deleted on exit). Read only.
+s3_backup_list() {
+  local want=${1:-} bucket mchost res rc found rows
+  case "$want" in *[!A-Za-z0-9]*) echo "s3_backup_list: not a database uuid: '$want'" >&2; return 1 ;; esac
+  s3_mc_prepare s3_backup_list || return 1
+  res=$({
+    s3_mc_head "$mchost"
+    cat <<'EOF'
+img=$(mc_image "${2:-}")
+docker run --rm --env-file "$envf" --entrypoint mc "$img" --json ls --recursive "s3/$1" 2>/dev/null || exit 3
+EOF
+  } | rssh "sh -s -- $(printf %q "$bucket/$S3_BACKUP_PREFIX") $(printf %q "${MC_IMAGE:-}")"); rc=$?
+  if [ "$rc" = 3 ]; then
+    # mc --json reports errors on stdout: {"status":"error","error":{"message", "cause":{"message"}}} [verify]
+    res=$(jq -Rr 'fromjson? | objects | select(.status == "error") | (.error.cause.message // .error.message // empty)' <<<"$res" | head -n 1)
+    echo "listing of s3/$bucket/$S3_BACKUP_PREFIX failed${res:+: $res} (wrong key pair or bucket: phase 06 step 1a and 1b)" >&2
+    return 1
+  fi
+  [ "$rc" = 0 ] || return 1
+  # One JSON object per file: {status, type, lastModified, size, key}; the key is relative to
+  # the listed prefix [verify], a full key is accepted too. Sorted by time, offsets honoured.
+  rows=$(jq -Rnr --arg p "$S3_BACKUP_PREFIX" '
+    def epoch: try (capture("^(?<b>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>.*)$")
+      | (.b + "Z" | fromdateiso8601) - (.z | if test("^[+-][0-9]{2}:[0-9]{2}$")
+          then (if .[0:1] == "-" then -1 else 1 end) * ((.[1:3] | tonumber) * 3600 + (.[4:6] | tonumber) * 60)
+          else 0 end)) catch 0;
+    [inputs | fromjson? | objects | select(.status == "success" and .type == "file")
+      | (.key | ltrimstr($p)) as $rel | ($rel | split("/")) as $parts | select(($parts | length) >= 3)
+      | {db: ($parts[-2] | split("-") | last), t: .lastModified, e: (.lastModified | epoch), size: .size, key: ($p + $rel)}]
+    | sort_by(.e) | reverse | .[] | [.db, .t, (.size | tostring), .key] | @tsv' <<<"$res")
+  [ -n "$rows" ] || { echo "no backups in s3/$bucket/$S3_BACKUP_PREFIX" >&2; return 1; }
+  if [ -n "$want" ]; then
+    found=$(cut -f1 <<<"$rows" | sort -u | paste -sd ' ' -)
+    rows=$(awk -F '\t' -v w="$want" '$1 == w' <<<"$rows")
+    [ -n "$rows" ] || { echo "no backups for database $want in s3/$bucket/$S3_BACKUP_PREFIX (backups there are of: $found)" >&2; return 1; }
+  fi
+  printf 'db_uuid\tlast_modified\tsize\tkey\n%s\n' "$rows"
 }
 
 # --- alerts: Coolify notifications to Discord (R06a, phase 06 step 2) ---
@@ -928,4 +994,52 @@ dns_set_a() {
     return 2
   fi
   return 0
+}
+
+# --- rebuild from nothing (R15, REBUILD.md) ---
+
+# State keys that belong to one server and its Coolify: on a new server they point at nothing,
+# and verify.sh and phase 05 would skip steps while they are set (ADMIN_REGISTERED, APP_UUID,
+# WEBHOOK, HOOK_ID, HANDOVER_DONE). SERVICE_<NAME>_UUID keys count too. Everything else survives.
+REBUILD_CLEAR="VPS_IP SERVER_NAME ADMIN_REGISTERED COOLIFY_VERSION PROJECT_UUID DB_UUID APP_UUID KEY_UUID HOOK_ID WEBHOOK S3_STORAGE_UUID BACKUP_UUID ALERTS HANDOVER_DONE ROLLBACK_COMMIT LAST_DUMP PG_UPGRADE_OLD PG_UPGRADE_NEW PG_UPGRADE_DUMP COOLIFY_PROJECT_UUID COOLIFY_APP_UUID"
+
+rebuild_clears() {
+  case " $REBUILD_CLEAR " in *" $1 "*) return 0 ;; esac
+  case $1 in SERVICE_?*_UUID) return 0 ;; esac
+  return 1
+}
+
+# rebuild_inventory -> read only: which keys of VPS_STATE survive a lost server and which belong
+# to it, the old DB_UUID (its backups in the bucket are named after it) and the exact commands
+# that keep a copy and clear the old keys. Writes nothing; the commands run after the user's yes.
+rebuild_inventory() {
+  local f=$VPS_STATE day line k v keep="" clear="" cmds="" db
+  [ -s "$f" ] || { echo "rebuild_inventory: no state in $f" >&2; return 1; }
+  day=$(date -u +%Y%m%d)
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in [A-Za-z_]*=*) ;; *) continue ;; esac
+    k=${line%%=*}; v=${line#*=}
+    if rebuild_clears "$k"; then
+      [ -n "$v" ] || continue
+      clear+="  $k=$v"$'\n'; cmds+="  state_set $k ''"$'\n'
+    else
+      keep+="  $k=$v"$'\n'
+    fi
+  done < "$f"
+  db=$(state_get DB_UUID)
+  echo "state: $f"
+  printf 'survives (kept as is):\n%s' "${keep:-  (nothing)$'\n'}"
+  printf 'belongs to the old server (cleared before phase 01):\n%s' "${clear:-  (nothing)$'\n'}"
+  if [ -n "$db" ]; then
+    echo "old database: $db; its backups: s3_backup_list $db (the copy below keeps the uuid)"
+  else
+    echo "old database: none in this state"
+  fi
+  echo "commands, after the user's yes (rebuild_inventory changed nothing):"
+  [ "$f" = "$VPS_SETUP_STATE" ] || echo "  VPS_STATE=$(printf %q "$f")"
+  echo "  cp -p $(printf %q "$f") $(printf %q "$f.before-rebuild-$day")"
+  printf '%s' "$cmds"
+  if [ "$f" = "$VPS_SETUP_STATE" ] && [ -f "$COOLIFY_CONFIG" ]; then
+    echo "  mv $(printf %q "$COOLIFY_CONFIG") $(printf %q "$COOLIFY_CONFIG.before-rebuild-$day")"
+  fi
 }
