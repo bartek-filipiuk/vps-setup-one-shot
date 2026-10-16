@@ -47,13 +47,28 @@ so GitHub does not collect orphaned deploy keys (`gh repo deploy-key list --repo
 
 ## 3. Project and Postgres (you)
 
+One Coolify project per client or product, one environment per stage. The setup's own project is
+named after the app and runs in `production`. `project_ensure` finds the project by name or
+creates it, so a second run creates no duplicate; it records `PROJECT_UUID` and `PROJECT_NAME`,
+`env_ensure` records `ENV_NAME`:
+
 ```
-. ./lib.sh; state_set PROJECT_UUID "$(capi POST /projects "$(jq -n --arg n "$(state_get APP_NAME)" '{name:$n}')" | jq -r .uuid)"
-B=$(jq -n --arg p "$(state_get PROJECT_UUID)" --arg s "$(coolify_server)" \
+. ./lib.sh; project_ensure "$(state_get APP_NAME)" "created by vps-setup-one-shot" &&
+env_ensure "$(state_get PROJECT_UUID)" production
+```
+
+If it says that several projects have this name, ask the user which one is theirs and to rename
+the other in the Coolify UI (**Projects**), then run it again.
+
+The database goes into that project and environment (`project_ctx` prints both):
+
+```
+. ./lib.sh; read -r P E < <(project_ctx) &&
+B=$(jq -n --arg p "$P" --arg e "$E" --arg s "$(coolify_server)" \
   --arg n "$(state_get APP_NAME)-db" --arg pw "$(openssl rand -hex 24)" \
-  '{project_uuid:$p, server_uuid:$s, environment_name:"production", name:$n,
+  '{project_uuid:$p, server_uuid:$s, environment_name:$e, name:$n,
     image:"postgres:17-alpine", postgres_user:"app", postgres_password:$pw, postgres_db:"app",
-    is_public:false, instant_deploy:true}')
+    is_public:false, instant_deploy:true}') &&
 state_set DB_UUID "$(capi POST /databases/postgresql "$B" | jq -r .uuid)"; echo "db: $(state_get DB_UUID)"
 ```
 
@@ -69,11 +84,12 @@ Wait until it runs (up to two minutes):
 ## 4. Application (you)
 
 ```
-. ./lib.sh; B=$(jq -n --arg p "$(state_get PROJECT_UUID)" --arg s "$(coolify_server)" \
+. ./lib.sh; read -r P E < <(project_ctx) &&
+B=$(jq -n --arg p "$P" --arg e "$E" --arg s "$(coolify_server)" \
   --arg n "$(state_get APP_NAME)" --arg r "git@github.com:$(state_get GH_REPO).git" --arg k "$(state_get KEY_UUID)" \
-  '{project_uuid:$p, server_uuid:$s, environment_name:"production", name:$n,
+  '{project_uuid:$p, server_uuid:$s, environment_name:$e, name:$n,
     git_repository:$r, git_branch:"main", build_pack:"dockerfile", ports_exposes:"3000",
-    private_key_uuid:$k, instant_deploy:false}')
+    private_key_uuid:$k, instant_deploy:false}') &&
 state_set APP_UUID "$(capi POST /applications/private-deploy-key "$B" | jq -r .uuid)"; echo "app: $(state_get APP_UUID)"
 
 A=$(state_get APP_UUID)
@@ -129,7 +145,7 @@ gh api "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/deliveries" --jq '
 ```
 
 Expect `200`. The user can watch the build: Coolify → **Projects** → their project →
-**production** → the app → **Deployments**. Then `state_set WEBHOOK github`.
+its environment (`production`) → the app → **Deployments**. Then `state_set WEBHOOK github`.
 
 If the PATCH is rejected (this Coolify version has no such field) or deliveries show a non-200
 code you cannot fix, do not improvise: delete the hook (`gh api -X DELETE repos/<repo>/hooks/<id>`),
@@ -151,8 +167,10 @@ They open `https://<APP_DOMAIN>`, enter their email, click **Send me the repo**,
 So the user's other tools (for example a `coolify-deploy` skill) know this app:
 
 ```
-. ./lib.sh; D=$(state_get APP_DIR); printf 'COOLIFY_PROJECT_UUID=%s\nCOOLIFY_APP_UUID=%s\nCOOLIFY_DOMAIN=https://%s\n' \
-  "$(state_get PROJECT_UUID)" "$(state_get APP_UUID)" "$(state_get APP_DOMAIN)" > "$D/.coolify.env" &&
+. ./lib.sh; D=$(state_get APP_DIR)
+printf 'COOLIFY_PROJECT_UUID=%s\nCOOLIFY_APP_UUID=%s\nCOOLIFY_DOMAIN=https://%s\nPROJECT_NAME=%s\nPROJECT_UUID=%s\nENV_NAME=%s\n' \
+  "$(state_get PROJECT_UUID)" "$(state_get APP_UUID)" "$(state_get APP_DOMAIN)" \
+  "$(state_get PROJECT_NAME)" "$(state_get PROJECT_UUID)" "$(state_get ENV_NAME)" > "$D/.coolify.env" &&
 git -C "$D" check-ignore -q .coolify.env && echo "written, gitignored"
 ```
 

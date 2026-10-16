@@ -130,7 +130,15 @@ on a server yet. Do not stop the user's app to try it.
 
 ## 3. SERVER.md (you)
 
-Write a summary the user can keep. No secrets in it.
+First the list of projects and what runs in each (`~/.config/vps-setup/PROJECTS.md`, generated
+from the Coolify API: names, statuses, domains, repos and uuids, no secrets; mode 600). It is
+regenerated after every app and service added later (PREPARE-APP.md step 7, SERVICES.md step 4):
+
+```
+. ./lib.sh; projects_md
+```
+
+Then write a summary the user can keep. No secrets in it.
 
 ```
 . ./lib.sh; f="$HOME/.config/vps-setup/SERVER.md"; cat > "$f" <<EOF
@@ -143,6 +151,7 @@ Write a summary the user can keep. No secrets in it.
 - Backups: $(state_get BACKUPS) $(b=$(state_get S3_BUCKET); [ -n "$b" ] && echo "(S3 bucket $b, S3 keys in ~/.config/vps-setup/s3.env, mode 600)")
 - Alerts: $(state_get ALERTS) $([ "$(state_get ALERTS)" = discord ] && echo "(Coolify notifications to a Discord webhook, URL in ~/.config/vps-setup/notify.env, mode 600; Coolify UI -> Notifications)")
 - Coolify UUIDs: project $(state_get PROJECT_UUID), app $(state_get APP_UUID), database $(state_get DB_UUID)
+- Projects and what runs where: ~/.config/vps-setup/PROJECTS.md (regenerate: cd $(state_get SETUP_DIR) && . ./lib.sh && projects_md)
 - API config (contains the token, mode 600): ~/.config/coolify/config
 - DNS: $([ "$(state_get DNS_PROVIDER)" = cloudflare ] && echo "Cloudflare zone $(state_get CF_ZONE), A records through the API (token in ~/.config/vps-setup/cloudflare.env, mode 600); list a name: cd $(state_get SETUP_DIR) && . ./lib.sh && dns_list <name>" || echo "A records added by hand at the DNS provider")
 - Setup state: ~/.config/vps-setup/state
