@@ -1303,8 +1303,13 @@ rebuild_inventory() {
   echo "commands, after the user's yes (rebuild_inventory changed nothing):"
   [ "$f" = "$VPS_SETUP_STATE" ] || echo "  VPS_STATE=$(printf %q "$f")"
   echo "  cp -p $(printf %q "$f") $(printf %q "$f.before-rebuild-$day")"
-  if [ "$f" = "$VPS_SETUP_STATE" ] && [ -f "${VPS_SETUP_STATE%/*}/SERVER.md" ]; then
-    echo "  cp -p $(printf %q "${VPS_SETUP_STATE%/*}/SERVER.md") $(printf %q "${VPS_SETUP_STATE%/*}/SERVER.md.before-rebuild-$day")"
+  if [ "$f" = "$VPS_SETUP_STATE" ]; then
+    # SERVER.md and PROJECTS.md (which project each app and service was in) are rewritten in
+    # phase 06 step 3 on the new server.
+    for k in SERVER.md PROJECTS.md; do
+      [ -f "${VPS_SETUP_STATE%/*}/$k" ] &&
+        echo "  cp -p $(printf %q "${VPS_SETUP_STATE%/*}/$k") $(printf %q "${VPS_SETUP_STATE%/*}/$k.before-rebuild-$day")"
+    done
   fi
   printf '%s' "$cmds"
   if [ "$f" = "$VPS_SETUP_STATE" ] && [ -f "$COOLIFY_CONFIG" ]; then

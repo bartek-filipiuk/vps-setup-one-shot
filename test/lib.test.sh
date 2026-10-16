@@ -1046,10 +1046,11 @@ commands, after the user's yes (rebuild_inventory changed nothing):
   state_set HANDOVER_DONE ''
   mv $COOLIFY_CONFIG $COOLIFY_CONFIG.before-rebuild-$d"
 check "rebuild inventory writes nothing" "$(cksum < "$RS"):$(cksum < "$COOLIFY_CONFIG"):$(ls -A "$(dirname "$COOLIFY_CONFIG")" "$HOME")" "$before:$cfg_before:$ls_before"
-printf '# old server\n' > "$HOME/SERVER.md"
+printf '# old server\n' > "$HOME/SERVER.md"; printf '# Projects\n' > "$HOME/PROJECTS.md"
 out=$(VPS_SETUP_STATE=$RS VPS_STATE=$RS rebuild_inventory 2>&1)
 check "rebuild inventory: SERVER.md copied before phase 06 overwrites it" "$(grep -c "^  cp -p $HOME/SERVER.md $HOME/SERVER.md.before-rebuild-$d$" <<<"$out")" "1"
-rm -f "$HOME/SERVER.md"
+check "rebuild inventory: PROJECTS.md copied too" "$(grep -c "^  cp -p $HOME/PROJECTS.md $HOME/PROJECTS.md.before-rebuild-$d$" <<<"$out")" "1"
+rm -f "$HOME/SERVER.md" "$HOME/PROJECTS.md"
 printf 'COOLIFY_PROJECT_UUID=p1\nCOOLIFY_APP_UUID=a1\nCOOLIFY_DOMAIN=https://shop.example.com\nDB_UUID=shopdb\nGH_REPO=u/shop\n' > "$HOME/app.state"
 out=$(VPS_STATE="$HOME/app.state" rebuild_inventory 2>&1); rc=$?
 has "rebuild inventory of an app: keeps the app's URL" "$out" '^  COOLIFY_DOMAIN=https://shop\.example\.com$'
