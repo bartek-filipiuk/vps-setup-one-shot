@@ -28,7 +28,7 @@ Or install it as a Claude Code plugin, no clone needed:
 ```
 
 (from a shell: `claude plugin marketplace add bartek-filipiuk/vps-setup-one-shot`, then
-`claude plugin install vps-setup-one-shot@bartek-filipiuk`), then type `/vps-setup`. Later:
+`claude plugin install vps-setup-one-shot@bartek-filipiuk`), then type `/vps-setup` (or `/vps-setup-one-shot:vps-setup` if another command has that name). Later:
 `/vps-status`, `/vps-doctor`, `/vps-checkup`, and in the repo of an app you already have,
 `/vps-prepare-app`.
 

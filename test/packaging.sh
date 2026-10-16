@@ -78,7 +78,9 @@ for skill in skills/*/SKILL.md; do
 done
 
 # --- e. pointers carry no runbook content ---
-funcs=$(grep -oE '^[a-z_]+\(\)' lib.sh | tr -d '()' | paste -sd'|')
+# helper-shaped names only (with an underscore), so plain words like line or section stay usable
+funcs=$(grep -oE '^[a-z0-9_]+\(\)' lib.sh | tr -d '()' | grep '_' | paste -sd'|')
+[ -n "$funcs" ] || fail "lib.sh: no helper names found for the banned list"
 banned="(^|[^A-Za-z_])($funcs|ssh|docker|hcloud|curl|apt-get|jq)([^A-Za-z_]|$)"
 for p in skills/*/SKILL.md .cursor/rules/*.mdc; do
   [ -f "$p" ] || continue
