@@ -216,9 +216,9 @@ In each app's repo, with `VPS_STATE=.coolify.env`:
    application and its environment variables created, nothing deployed (steps 5 and 6 come in
    7.4, after the restore); the repo is already deployable
    (steps 1 to 4 were done back then). The project and stage come back by name:
-   `project_ensure "$(state_get PROJECT_NAME)"` and `env_ensure "$(state_get PROJECT_UUID)" "$(state_get ENV_NAME)"`;
-   apps from before R09 have no `PROJECT_NAME`, they get a project named after the app as before
-   (the old `PROJECTS.md` copy says where they were). The environment variable values are gone with Coolify:
+   `n=$(state_get PROJECT_NAME); project_ensure "${n:-$(state_get APP_NAME)}" && e=$(state_get ENV_NAME); env_ensure "$(state_get PROJECT_UUID)" "${e:-production}"`;
+   apps from before R09 have no `PROJECT_NAME` or `ENV_NAME`, so they get a project named after
+   the app and `production`, as before (the old `PROJECTS.md` copy says where they were). The environment variable values are gone with Coolify:
    the user writes `.env.production` again from the names in `DEPLOY.md` or `.env.example`.
    Generated secrets (`openssl rand -hex 32`) get new values, so every session signed with the
    old one is invalid and users log in again. If the app encrypts stored data with such a secret,

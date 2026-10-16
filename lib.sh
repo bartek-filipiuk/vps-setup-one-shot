@@ -619,7 +619,8 @@ app_domain_default() {
 # is checked before a domain is set.
 domain_in_use() {
   local host apps svcs who
-  host=$(tr '[:upper:]' '[:lower:]' <<<"${1:-}")
+  # Same rule as the fqdns below: no scheme, path, port or trailing dot, so a pasted URL still matches.
+  host=$(tr '[:upper:]' '[:lower:]' <<<"${1:-}" | sed -E 's#^[a-z]+://##; s#/.*$##; s#:[0-9]+$##; s#\.$##')
   [ -n "$host" ] || { echo "usage: domain_in_use HOST" >&2; return 2; }
   apps=$(capi GET /applications) && svcs=$(capi GET /services) || return 2
   # The API answers go through stdin, not argv: an application carries its webhook secrets.

@@ -116,7 +116,7 @@ the pack too, and only theirs: the other projects are the developer's other clie
 
 ```
 . ./lib.sh; d="$HOME/.config/vps-setup/handover"; p="<CLIENT PROJECT>"
-( umask 077; projects_md - | awk -v h="## $p" '/^## / { on = ($0 == h); seen = 1 } on || !seen { print }' > "$d/PROJECTS.md" ) &&
+( umask 077; projects_md - | awk -v h="## $p" '/regenerate with$/ { sub(/; regenerate with$/, "."); print; getline; sub(/^`[^`]*`\. /, ""); print; next } /^## / { on = ($0 == h); seen = 1 } on || !seen { print }' > "$d/PROJECTS.md" ) &&
 grep -qx "## $p" "$d/PROJECTS.md" && echo "written: $d/PROJECTS.md" || echo "no project named $p"
 ```
  Case A: the new owner's agent also needs

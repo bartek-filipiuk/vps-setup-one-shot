@@ -705,6 +705,8 @@ out=$(app_domain_default starter 2>&1); check "app_domain_default usage" "$?:$ou
 out=$(domain_in_use starter.example.com); check "domain_in_use app" "$?:$out" "0:app starter"
 out=$(domain_in_use www.shop.example.com); check "domain_in_use second fqdn with port" "$?:$out" "0:app shop"
 out=$(domain_in_use Up.Example.com); check "domain_in_use service" "$?:$out" "0:service uptime-kuma (uptime-kuma)"
+out=$(domain_in_use https://Starter.example.com:443/x); check "domain_in_use a pasted URL" "$?:$out" "0:app starter"
+out=$(domain_in_use starter.example.com.); check "domain_in_use trailing dot" "$?:$out" "0:app starter"
 out=$(domain_in_use free.example.com); check "domain_in_use free" "$?:$out" "1:"
 out=$(domain_in_use example.com); check "domain_in_use no suffix match" "$?:$out" "1:"
 cp "$COOLIFY_CONFIG" "$HOME/config.good"
