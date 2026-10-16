@@ -96,7 +96,11 @@ Rules that apply to every item:
 - **R16 Monthly checkup.** `CHECKUP.md`, run by the user's agent on a schedule: open ports vs the
   firewall, sshd config, Docker socket exposure, Coolify advisories, certificate renewals, backup
   success rate, disk growth, and what the servers cost this month. Ends with actions, each with a
-  runbook. Done when: it runs on the harness server with no false positives on a clean setup.
+  runbook. `checkup.sh` runs `status.sh` and adds the monthly checks, read-only, with
+  `checkup_server_facts`, `firewall_rules`, `coolify_advisories`, `backup_success_rate`,
+  `server_cost` and the checkup log in `lib.sh` (`hcloud` through `hcloud_json`: list and describe
+  only). Done when: it runs on the harness server with no false positives on a clean setup.
+  (Runbook and helpers done; not run on a server yet.)
 - **R18 DNS through the API.** Cloudflare first, then the providers users ask for: the agent
   creates the records and the `dig` gate becomes a formality. Cloudflare: `cf_check`,
   `dns_set_a`, `dns_list` in `lib.sh` with a one-zone "Edit zone DNS" token (phases 00 and 01,

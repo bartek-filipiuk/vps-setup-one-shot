@@ -37,7 +37,10 @@ which only allows 22, 80 and 443 (phase 01). Only if the user wants it, and afte
 ```
 hcloud firewall add-rule vps-setup-fw --direction in --protocol tcp --port 22222 \
   --source-ips 0.0.0.0/0 --source-ips ::/0
+. ./lib.sh; state_set CHECKUP_PORTS_OK tcp/22222
 ```
+
+The state key tells the monthly checkup (`CHECKUP.md` 3a) that this port is open on purpose.
 
 On `PROVIDER=other` the user adds the same rule in their provider's firewall; `ufw` is not
 enough, because Docker bypasses it.
@@ -157,4 +160,5 @@ Without `--yes` it refuses and sends nothing; never add `--yes` before the user'
 `delete_volumes=true` is what removes the data. The A record stays: this guide never deletes
 DNS records (with `DNS_PROVIDER=cloudflare`, `. ./lib.sh; dns_list "<SERVICE_DOMAIN>"` shows it).
 The user deletes it in their DNS provider (Cloudflare: DNS → Records), and, for Forgejo, the 22222 firewall rule if it was added
-(`hcloud firewall delete-rule vps-setup-fw --direction in --protocol tcp --port 22222 --source-ips 0.0.0.0/0 --source-ips ::/0`).
+(`hcloud firewall delete-rule vps-setup-fw --direction in --protocol tcp --port 22222 --source-ips 0.0.0.0/0 --source-ips ::/0`,
+then `. ./lib.sh; state_set CHECKUP_PORTS_OK ''`).

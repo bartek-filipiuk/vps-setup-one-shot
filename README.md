@@ -105,6 +105,14 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   belonged to the old server, and restores each database from the newest backup of the old
   database in the bucket (`s3_backup_list`). Environment variable values, service volumes and
   everything written after that backup do not come back; the file says so up front.
+- `CHECKUP.md` and `checkup.sh` are the monthly look: `status.sh` first, then the cloud firewall
+  against the setup's three ports and every public port probed from your machine, the SSH
+  daemon's settings and the keys that can log in as root, the Docker API on TCP or the Docker
+  socket in a container that is not Coolify's, Coolify's published security advisories against
+  the installed version, the backup success rate of the last 30 days, disk growth since last
+  month and what the Hetzner servers cost. It ends with a list of actions, each with the runbook
+  that fixes it. Read-only; the one write is a line with the disk numbers and cost in
+  `~/.config/vps-setup/checkup.log` (mode 600) on your machine.
 - With DNS at Cloudflare, phase 01 and `SERVICES.md` create the A records through the
   Cloudflare API (`dns_set_a` in `lib.sh`: DNS only, created or updated, never deleted) from a
   token for that one zone; the `dig` check in phase 04 stays as the proof they resolve.
@@ -181,6 +189,13 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   real server yet**; no server has been rebuilt with them. The layout of the backups in the
   bucket and what `mc ls` prints come from the Coolify 4.3.23 source and the `mc` documentation
   and are marked `[verify]` in `references/coolify-api.md`.
+- `CHECKUP.md` (R16), `checkup.sh` and its helpers in `lib.sh` are tested against a fake Coolify
+  API, a fake GitHub advisories answer, a fake `hcloud` and fake server tools only
+  (`test/lib.test.sh`, `test/checkup.test.sh`) and have **not been run on a real server yet**; the
+  "no false positive on a clean setup" criterion holds against the fakes only. Which containers of
+  a clean Coolify mount the Docker socket, the `hcloud` JSON fields, the advisories answer and how
+  long Coolify keeps backup runs come from the source and API documentation and are marked
+  `[verify]` in `references/coolify-api.md`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 

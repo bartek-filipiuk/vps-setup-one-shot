@@ -88,7 +88,26 @@ def cf(h, method):
     return err(405, 10000, "method not allowed in the fake")
 def seq(line):
     with open(sys.argv[2], "a") as f: f.write(line + "\n")
+# backup runs relative to now (R16 backup_success_rate): (days ago, status, extra fields)
+def ago(d): return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - d * 86400))
+RATE = {"bk-rate": [(1, "success", {"s3_uploaded": True}), (2, "failed", {"message": "pg_dump: error"}),
+                    (3, "success", {"message": "Backup done. Warning: S3 upload failed: Access Denied"}),
+                    (4, "success", {"s3_uploaded": True}), (5, "success", {"s3_uploaded": True}),
+                    (6, "success", {"s3_uploaded": True}), (40, "failed", {}), (0, "running", {})],
+        "bk-local": [(1, "success", {}), (2, "success", {})]}
+schedules["db-rate"] = [{"uuid": "bk-rate", "enabled": True, "frequency": "0 2 * * *", "save_s3": True},
+                        {"uuid": "bk-local", "enabled": True, "frequency": "0 3 * * *", "save_s3": False}]
+# GitHub security advisories of Coolify (R16), as the REST API answers them (fields trimmed)
+ADVISORIES = [
+    {"ghsa_id": "GHSA-old0-0000-0000", "severity": "critical", "published_at": "2025-01-10T00:00:00Z",
+     "vulnerabilities": [{"package": {"ecosystem": "other", "name": "coolify"}, "vulnerable_version_range": "< 4.0.0-beta.420", "patched_versions": "4.0.0-beta.420"}]},
+    {"ghsa_id": "GHSA-new0-0000-0000", "severity": "high", "published_at": "2026-10-01T00:00:00Z",
+     "vulnerabilities": [{"package": {"ecosystem": "other", "name": "coolify"}, "vulnerable_version_range": ">= 4.0.0, <= 4.3.23", "patched_versions": "4.3.24"}]},
+    {"ghsa_id": "GHSA-none-0000-0000", "severity": "medium", "published_at": "2026-02-01T00:00:00Z",
+     "vulnerabilities": [{"package": None, "vulnerable_version_range": None, "patched_versions": None}]}]
 def executions(b):
+    if b in RATE:
+        return [{"uuid": "%s-%d" % (b, i), "status": st, "created_at": ago(d), "finished_at": None} | x for i, (d, st, x) in enumerate(RATE[b])]
     if b not in execs:
         execs[b] = [{"uuid": "ex-old-" + b, "status": "success", "created_at": "2026-10-13T12:08:10+00:00", "finished_at": None,
                      "filename": "/data/coolify/backups/databases/old.dmp", "message": "Backup done", "size": 1000, "s3_uploaded": True}]
@@ -104,6 +123,11 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(body).encode())
     def do_GET(self):
         if self.path.startswith("/client/v4/"): return cf(self, "GET")
+        if self.path.startswith("/gh/"):
+            seq("gh " + self.path)
+            if self.path.startswith("/gh/limit"): return self.send(403, {"message": "API rate limit exceeded"})
+            if self.path.startswith("/gh/odd"): return self.send(200, {"message": "not a list"})
+            return self.send(200, ADVISORIES)
         if self.headers.get("Authorization") != "Bearer 3|abc=def":
             return self.send(401, {"message": "Unauthenticated."})
         p = self.path.removeprefix("/api/v1")
@@ -980,6 +1004,168 @@ check "cf: never a DELETE" "$(grep -c '^cf DELETE' "$HOME/seq.log")" "0"
 check "cf: body temp files deleted" "$(ls -A "$HOME/srvtmp")" ""
 has "cf: token handed to curl on stdin" "$(cat "$HOME/argv.log")" '^curl .* -K - .*/client/v4/user/tokens/verify$'
 unset CF_API
+
+# monthly checkup (R16): advisories, backup success rate, the checkup log, hcloud read-only,
+# the server facts script
+export ADVISORIES_URL="http://127.0.0.1:$PORT/gh/advisories"
+s3run coolify_advisories 4.3.23
+check "advisories: TSV, affected yes/no/unknown" "$rc:$out" "0:$(printf 'ghsa_id\tseverity\tpublished\tvulnerable\tpatched\taffected
+GHSA-old0-0000-0000\tcritical\t2025-01-10\t< 4.0.0-beta.420\t4.0.0-beta.420\tno
+GHSA-new0-0000-0000\thigh\t2026-10-01\t>= 4.0.0, <= 4.3.23\t4.3.24\tyes
+GHSA-none-0000-0000\tmedium\t2026-02-01\t?\t?\tunknown')"
+s3run coolify_advisories v4.3.24
+check "advisories: patched version not affected" "$(cut -f1,6 <<<"$out" | sed -n 3p)" "$(printf 'GHSA-new0-0000-0000\tno')"
+s3run coolify_advisories 4.0.0-beta.419
+check "advisories: a beta before the fix is affected" "$(cut -f1,6 <<<"$out" | sed -n 2p)" "$(printf 'GHSA-old0-0000-0000\tyes')"
+ADVISORIES_URL="http://127.0.0.1:$PORT/gh/limit" s3run coolify_advisories 4.3.23
+check "advisories: rate limit is rc 2" "$rc:$out" "2:GitHub rate limit (HTTP 403; 60 calls an hour without a token)"
+ADVISORIES_URL="http://127.0.0.1:$PORT/gh/odd" s3run coolify_advisories 4.3.23
+check "advisories: not a list is rc 2" "$rc:$out" "2:the advisories answer is not a list"
+ADVISORIES_URL="http://127.0.0.1:9/gh" s3run coolify_advisories 4.3.23
+check "advisories: offline is rc 2" "$rc:$out" "2:GitHub did not answer (offline?)"
+s3run coolify_advisories latest
+check "advisories: version required" "$rc:$out" "1:usage: coolify_advisories VERSION (like 4.3.23)"
+check "advisories: no version compare surprises" "$(jq -rn "$JQ_VERSION"'[("4.0.0-beta.420" | ver) < ("4.0.0" | ver), ("4.3" | ver) == ("4.3.0" | ver),
+  ("4.3.9" | ver) < ("4.3.23" | ver), ("< 4.3.21" | range_match("4.3.21")), (">4.3.0,<4.3.30" | range_match("4.3.23")), ("~4.3" | range_match("4.3.23")),
+  ("< 4.0.0-beta.420.7" | range_match("4.0.0-beta.419")), ("< 4.0.0-beta.420.7" | range_match("4.0.0-beta.420.6")),
+  ("< 4.0.0-beta.420.7" | range_match("4.0.0-beta.420.7")), ("4.0.0-beta.420.6" | ver) < ("4.0.0" | ver)] | map(tostring) | join(" ")')" \
+  "true true true false true null true true false true"
+
+s3run backup_success_rate db-rate
+check "backup rate: last 30 days, running not counted, S3 failures counted" "$rc:$out" "0:$(printf 'schedule\tfrequency\truns\tsuccess\tfailed\ts3\ts3_uploaded\ts3_failed\ts3_unreported\tnewest_failure
+bk-rate\t0 2 * * *\t6\t5\t1\tyes\t4\t1\t0\t%s
+bk-local\t0 3 * * *\t2\t2\t0\tno\t0\t0\t0\t-' "$(date -u -d '-2 days' +%F)")"
+s3run backup_success_rate db-rate 50
+check "backup rate: DAYS widens the window" "$(sed -n 2p <<<"$out" | cut -f3-5)" "$(printf '7\t5\t2')"
+s3run backup_success_rate db-rate 0
+check "backup rate: DAYS 0 refused" "$rc:$out" "1:backup_success_rate: DAYS must be a whole number above 0, got '0'"
+s3run backup_success_rate 'db/../x'
+check "backup rate: bad uuid refused" "$rc:$out" "1:not a Coolify uuid: 'db/../x'"
+s3run backup_success_rate db-empty
+check "backup rate: no schedule is just the header" "$rc:$(wc -l <<<"$out")" "0:1"
+
+# the checkup log: TSV, mode 600, the sample to compare with
+export CHECKUP_LOG="$HOME/.config/vps-setup/checkup.log"; NOW=1790000000
+s3run checkup_sample_append $((NOW - 40 * 86400)) 203.0.113.9 1000 40000 10 20 4.51
+s3run checkup_sample_append $((NOW - 25 * 86400)) 203.0.113.9 2000 40000 10 20 4.51
+s3run checkup_sample_append $((NOW - 5 * 86400)) 203.0.113.9 3000 40000 10 20 -
+s3run checkup_sample_append $((NOW - 30 * 86400)) 198.51.100.4 9000 40000 0 0 9.02
+check "checkup log: four lines, mode 600" "$(wc -l < "$CHECKUP_LOG"):$(stat -c %a "$CHECKUP_LOG" 2>/dev/null || stat -f %Lp "$CHECKUP_LOG")" "4:600"
+check "checkup log: line format" "$(sed -n 1p "$CHECKUP_LOG")" "$(printf '%s\t%s\t203.0.113.9\t1000\t40000\t10\t20\t4.51' "$(date -u -d "@$((NOW - 40 * 86400))" +%F)" "$((NOW - 40 * 86400))")"
+check "checkup prev: newest at least 20 days old" "$(checkup_sample_prev 203.0.113.9 "$NOW" | cut -f4)" "2000"
+check "checkup prev: none old enough -> the oldest" "$(checkup_sample_prev 203.0.113.9 "$NOW" 60 | cut -f4)" "1000"
+check "checkup prev: another server's lines ignored" "$(checkup_sample_prev 198.51.100.4 "$NOW" | cut -f4)" "9000"
+checkup_sample_prev 192.0.2.1 "$NOW" >/dev/null; check "checkup prev: unknown server" "$?" "1"
+CHECKUP_RECORD=0 s3run checkup_sample_append "$NOW" 203.0.113.9 1 2 3 4 5
+check "checkup log: CHECKUP_RECORD=0 writes nothing" "$rc:$(wc -l < "$CHECKUP_LOG")" "0:4"
+s3run checkup_sample_append "$NOW" 'a b' 1 2 3 4 5
+check "checkup log: bad server refused" "$rc:$out:$(wc -l < "$CHECKUP_LOG")" "1:checkup_sample_append: not a server name or address: 'a b':4"
+s3run checkup_sample_append "$NOW" 203.0.113.9 1 2 3 4 '5;rm'
+check "checkup log: bad cost refused" "$rc" "1"
+rm -f "$CHECKUP_LOG"; ( umask 022; touch "$CHECKUP_LOG" )
+s3run checkup_sample_append "$NOW" 203.0.113.9 1 2 3 4 -
+check "checkup log: an existing log made private" "$(stat -c %a "$CHECKUP_LOG" 2>/dev/null || stat -f %Lp "$CHECKUP_LOG")" "600"
+unset CHECKUP_LOG
+
+# hcloud only through hcloud_json: list and describe, never anything that changes something
+mkdir -p "$HOME/hbin"
+cat > "$HOME/hbin/hcloud" <<'STUB'
+#!/bin/sh
+echo "hcloud $*" >> "$HOME/hcloud.log"
+[ "${FAKE_HCLOUD_FAIL:-0}" = 1 ] && { echo 'hcloud: no active context or token' >&2; exit 1; }
+case "$1 $2 $3" in
+  "firewall describe vps-setup-fw") echo '{"id": 7, "name": "vps-setup-fw", "rules": [
+    {"direction": "in", "protocol": "tcp", "port": "22", "source_ips": ["0.0.0.0/0", "::/0"]},
+    {"direction": "in", "protocol": "icmp", "port": null, "source_ips": ["0.0.0.0/0", "::/0"]}],
+    "applied_to": [{"type": "label_selector", "applied_to_resources": [{"type": "server", "server": {"id": 42}}]}]}' ;;
+  "server describe coolify-1") echo '{"id": 42, "name": "coolify-1"}' ;;
+  "server describe other-1") echo '{"id": 43, "name": "other-1"}' ;;
+  "server list -o") echo '[{"id": 42, "name": "coolify-1", "server_type": {"name": "cx22", "prices": [
+    {"location": "nbg1", "price_monthly": {"net": "3.7900000000", "gross": "4.5101000000"}},
+    {"location": "fsn1", "price_monthly": {"net": "3.7900000000", "gross": "4.6000000000"}}]},
+    "datacenter": {"name": "fsn1-dc14", "location": {"name": "fsn1"}}, "backup_window": "22-02"}]' ;;
+  "primary-ip list -o") echo '[{"name": "primary_ip-1", "type": "ipv4", "datacenter": {"location": {"name": "fsn1"}}}]' ;;
+  "volume list -o") echo '[]' ;;
+  *) echo "hcloud: unexpected" >&2; exit 2 ;;
+esac
+STUB
+chmod +x "$HOME/hbin/hcloud"; : > "$HOME/hcloud.log"
+PATH="$HOME/hbin:$PATH" s3run hcloud_json server delete coolify-1
+check "hcloud_json: delete refused" "$rc:$out" "1:hcloud_json: only list and describe are allowed (read-only), got 'server delete'"
+PATH="$HOME/hbin:$PATH" s3run hcloud_json firewall add-rule vps-setup-fw
+check "hcloud_json: add-rule refused" "$rc" "1"
+PATH="$HOME/hbin:$PATH" s3run hcloud_json server describe coolify-1 --poweroff
+check "hcloud_json: flags refused" "$rc:$out" "1:hcloud_json: no flags allowed, got '--poweroff'"
+PATH="$HOME/hbin:$PATH" s3run hcloud_json '--context=x' list
+check "hcloud_json: resource checked" "$rc" "1"
+check "hcloud_json: refusals never ran hcloud" "$(cat "$HOME/hcloud.log")" ""
+PATH="$HOME/hbin:$PATH" s3run firewall_rules
+check "firewall_rules" "$rc:$out" "0:$(printf 'direction\tproto\tport\tsources\nin\ttcp\t22\t0.0.0.0/0,::/0\nin\ticmp\t-\t0.0.0.0/0,::/0')"
+PATH="$HOME/hbin:$PATH" firewall_applied vps-setup-fw coolify-1; check "firewall_applied: through a label selector" "$?" "0"
+PATH="$HOME/hbin:$PATH" firewall_applied vps-setup-fw other-1; check "firewall_applied: another server" "$?" "1"
+PATH="$HOME/hbin:$PATH" s3run server_cost
+check "server_cost: the location's gross price, backups, IPs and volumes" "$rc:$out" "0:$(printf 'kind\tname\ttype\tlocation\tmonthly_gross_eur\tbackups
+server\tcoolify-1\tcx22\tfsn1\t4.6\ton
+primary-ip\tprimary_ip-1\tipv4\tfsn1\t-\t-')"
+FAKE_HCLOUD_FAIL=1 PATH="$HOME/hbin:$PATH" s3run firewall_rules
+check "hcloud failing: said with the phase" "$rc:$out" '1:hcloud firewall describe failed: hcloud: no active context or token (not installed or not logged in? phase 01 step 1)'
+check "hcloud: only list and describe ever ran" "$(grep -cvE '^hcloud [a-z-]+ (list|describe)( [a-z0-9-]+)? -o json$' "$HOME/hcloud.log")" "0"
+PATH=/usr/bin:/bin s3run hcloud_json server list
+check "hcloud missing" "$rc:$out" "1:hcloud not installed or not logged in (phase 01 step 1)"
+
+# checkup_server_facts: the server script runs (here locally, with fake tools) and prints tags
+mkdir -p "$HOME/factbin"
+cat > "$HOME/factbin/ss" <<'STUB'
+#!/bin/sh
+case $1 in
+  -tlnpH) echo 'LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1,fd=3))'
+          echo 'LISTEN 0 4096 [::]:8000 [::]:* users:(("docker-proxy",pid=9,fd=4))'
+          echo 'LISTEN 0 4096 127.0.0.1:5432 0.0.0.0:*' ;;
+  -ulnpH) echo 'UNCONN 0 0 127.0.0.53%lo:53 0.0.0.0:* users:(("systemd-resolve",pid=2,fd=13))' ;;
+esac
+STUB
+cat > "$HOME/factbin/sshd" <<'STUB'
+#!/bin/sh
+printf 'port 22\npasswordauthentication no\npermitrootlogin without-password\nx11forwarding no\n'
+STUB
+cat > "$HOME/factbin/ssh-keygen" <<'STUB'
+#!/bin/sh
+echo '256 SHA256:fakeKeyOne dev@example.invalid (ED25519)'
+STUB
+cat > "$HOME/factbin/ps" <<'STUB'
+#!/bin/sh
+echo '/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375 --containerd=/run/containerd/containerd.sock'
+STUB
+cat > "$HOME/factbin/docker" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "ps -aq") echo c1 ;;
+  "inspect -f") echo '/coolify-proxy traefik:v3.6 false sock:ro' ;;
+  "system df") printf 'Images\t2.1GB\t1.4GB (66%%)\n' ;;
+esac
+STUB
+chmod +x "$HOME/factbin/"*
+cat > "$HOME/factbin/fake-rssh" <<'STUB'
+#!/bin/sh
+cat > "$HOME/facts.stdin"; echo "$*" > "$HOME/facts.args"
+PATH="$HOME/factbin:$PATH" sh "$HOME/facts.stdin"
+STUB
+chmod +x "$HOME/factbin/fake-rssh"
+out=$(CHECKUP_SSH="$HOME/factbin/fake-rssh" checkup_server_facts 2>&1); rc=$?
+check "facts: one ssh call with sh -s" "$rc:$(cat "$HOME/facts.args")" "0:sh -s"
+has "facts: tcp listener with process" "$out" '^listen tcp \[::\]:8000 docker-proxy$'
+has "facts: listener without process" "$out" '^listen tcp 127\.0\.0\.1:5432 \?$'
+has "facts: udp listener" "$out" '^listen udp 127\.0\.0\.53%lo:53 systemd-resolve$'
+has "facts: sshd keys, others dropped" "$out" '^sshd permitrootlogin without-password$'
+check "facts: x11forwarding not asked for" "$(grep -c x11 <<<"$out")" "0"
+has "facts: key without its comment" "$out" '^authkey 256 SHA256:fakeKeyOne \(ED25519\)$'
+check "facts: no key comment (email) printed" "$(grep -c 'example.invalid' <<<"$out")" "0"
+has "facts: dockerd tcp socket" "$out" '^dockerd_tcp tcp://0\.0\.0\.0:2375$'
+has "facts: container with the socket" "$out" '^cont coolify-proxy traefik:v3\.6 false sock:ro$'
+has "facts: disk" "$out" '^df [0-9]+ [0-9]+$'
+has "facts: docker disk use" "$out" "^ddf Images$(printf '\t')2\.1GB"
+has "facts: end marker" "$out" '^facts done$'
+check "facts: the server script changes nothing (no rm, kill, write)" "$(grep -cE '\brm |\bkill|>[^&/]|\btee\b|docker (rm|stop|kill|run)|systemctl' "$HOME/facts.stdin")" "0"
 
 # the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
 leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)

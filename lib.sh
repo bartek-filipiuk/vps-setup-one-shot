@@ -54,6 +54,48 @@ capi() {
   printf '%s\n' "$out"
 }
 
+# --- one-line reports (status.sh, checkup.sh) ---
+
+# report_colors -> sets C_OK, C_WARN, C_FAIL, C_END: ANSI colors on a terminal, empty when piped
+# or with NO_COLOR set.
+report_colors() {
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_OK=$'\033[32m' C_WARN=$'\033[33m' C_FAIL=$'\033[31m' C_END=$'\033[0m'
+  else
+    C_OK='' C_WARN='' C_FAIL='' C_END=''
+  fi
+}
+
+# line MARK label detail  (MARK: OK, WARN, FAIL). API-provided text is stripped of control chars.
+# WARN and FAIL set the caller's `attention` to 1.
+line() {
+  local c
+  # shellcheck disable=SC2034 # attention is read by status.sh and checkup.sh
+  case $1 in OK) c=${C_OK:-} ;; WARN) c=${C_WARN:-}; attention=1 ;; *) c=${C_FAIL:-}; attention=1 ;; esac
+  printf '%s%-5s%s %-28s %s\n' "$c" "$1" "${C_END:-}" "$(tr -d '[:cntrl:]' <<<"$2")" "$(tr -d '[:cntrl:]' <<<"$3")"
+}
+section() { printf '\n%s\n' "$1"; }
+# worst MARK MARK -> the more serious of the two
+worst() { case "$1 $2" in *FAIL*) echo FAIL ;; *WARN*) echo WARN ;; *) echo OK ;; esac; }
+
+# Epoch seconds of an openssl date ("Jan  1 00:00:00 2027 GMT"): GNU date, then BSD date.
+epoch_of() { date -u -d "$1" +%s 2>/dev/null || date -j -u -f "%b %d %T %Y %Z" "$1" +%s 2>/dev/null; }
+
+# jq: Coolify timestamps to epoch. Seen: "2026-10-13T12:08:21.000000Z" (deployments) and
+# "2026-10-13T12:08:10+00:00" (backup executions); a space instead of T is accepted too.
+# Anything else is an error, so a format change shows as "could not read", never as "none".
+# shellcheck disable=SC2016 # $s is a jq variable
+JQ_EPOCH='def epoch:
+  . as $s
+  | [capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2})[T ](?<t>[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})?$")]
+  | if length == 0 then error("unknown date format: \($s)") else .[0] end
+  | ((.d + "T" + .t + "Z") | fromdateiso8601)
+    - (if (.z // "Z") == "Z" then 0
+       else ((.z[1:3] | tonumber) * 3600 + (.z[-2:] | tonumber) * 60) * (if .z[0:1] == "-" then -1 else 1 end) end);'
+
+# X.Y.Z -> "X Y Z" (pre-release suffix dropped); empty when not numeric.
+semver() { local v=${1#v}; v=${v%%-*}; case $v in *[!0-9.]*|'') ;; *) tr '.' ' ' <<<"$v" ;; esac; }
+
 # --- safe deploys: rollback point and database dump before every deploy (ROLLBACK.md) ---
 
 # Dumps live on the server under DUMP_DIR/<DB_UUID>/ (default /root/db-dumps; tests point it elsewhere).
@@ -1047,4 +1089,229 @@ rebuild_inventory() {
   if [ "$f" = "$VPS_SETUP_STATE" ] && [ -f "$COOLIFY_CONFIG" ]; then
     echo "  mv $(printf %q "$COOLIFY_CONFIG") $(printf %q "$COOLIFY_CONFIG.before-rebuild-$day")"
   fi
+}
+
+# --- monthly checkup (R16, CHECKUP.md), read-only ---
+
+# Coolify's own containers that mount the Docker socket on 4.3.23 (docker-compose.prod.yml and
+# the proxy and sentinel it starts) [verify]; checkup.sh flags any other container with it.
+# shellcheck disable=SC2034 # read by checkup.sh
+DOCKER_SOCK_OK="coolify coolify-realtime coolify-proxy coolify-sentinel"
+# Short-lived deploy helpers, by image prefix: Coolify builds in them with the socket [verify].
+# shellcheck disable=SC2034 # read by checkup.sh
+DOCKER_SOCK_OK_IMAGES="ghcr.io/coollabsio/coolify-helper"
+# `sshd -T` keys and the values phase 02 step 3 leaves (the last three are Ubuntu 24.04
+# defaults) [verify]. sshd prints prohibit-password as without-password.
+# shellcheck disable=SC2034 # read by checkup.sh
+SSHD_EXPECT="passwordauthentication=no permitrootlogin=without-password pubkeyauthentication=yes permitemptypasswords=no kbdinteractiveauthentication=no"
+# The cloud firewall of phase 01 step 2 and its inbound rules. A port opened on purpose later
+# (SERVICES.md: Forgejo's 22222) goes into the state key CHECKUP_PORTS_OK, like "tcp/22222".
+FIREWALL_NAME=${FIREWALL_NAME:-vps-setup-fw}
+# shellcheck disable=SC2034 # read by checkup.sh
+FIREWALL_EXPECT="tcp/22 tcp/80 tcp/443 icmp"
+# Published security advisories of the Coolify repo (GitHub REST API, no token: 60 calls an hour).
+ADVISORIES_URL=${ADVISORIES_URL:-https://api.github.com/repos/coollabsio/coolify/security-advisories?state=published&per_page=100}
+
+# hcloud_json RESOURCE list|describe [NAME...] -> the hcloud CLI's JSON answer (-o json). Refuses
+# every other action, and any flag, so a checkup can never change anything at Hetzner. The token
+# is the hcloud context of phase 01 step 1; it is never read here.
+hcloud_json() {
+  local sub=${1:-} action=${2:-} a out errf rc
+  case $action in
+    list|describe) ;;
+    *) echo "hcloud_json: only list and describe are allowed (read-only), got '$sub $action'" >&2; return 1 ;;
+  esac
+  case $sub in ''|-*|*[!a-z-]*) echo "hcloud_json: not an hcloud resource: '$sub'" >&2; return 1 ;; esac
+  shift 2
+  for a in "$@"; do case $a in -*) echo "hcloud_json: no flags allowed, got '$a'" >&2; return 1 ;; esac; done
+  command -v hcloud >/dev/null 2>&1 || { echo "hcloud not installed or not logged in (phase 01 step 1)" >&2; return 1; }
+  errf=$(mktemp) || return 1
+  out=$(hcloud "$sub" "$action" "$@" -o json 2>"$errf"); rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "hcloud $sub $action failed: $(head -n 1 "$errf") (not installed or not logged in? phase 01 step 1)" >&2
+    rm -f "$errf"; return 1
+  fi
+  rm -f "$errf"
+  jq -e . >/dev/null 2>&1 <<<"$out" || { echo "hcloud $sub $action: no JSON in the answer" >&2; return 1; }
+  printf '%s\n' "$out"
+}
+
+# firewall_rules [NAME] -> the rules of the Hetzner cloud firewall (default FIREWALL_NAME) as TSV:
+# direction, proto, port (- for icmp), sources (comma-separated). Read-only.
+firewall_rules() {
+  local r; r=$(hcloud_json firewall describe "${1:-$FIREWALL_NAME}") || return 1
+  printf 'direction\tproto\tport\tsources\n'
+  jq -r '.rules[]? | [(.direction // "?"), (.protocol // "?"), (.port // "-"), ((.source_ips // []) | join(","))] | @tsv' <<<"$r"
+}
+
+# firewall_applied NAME SERVER_NAME -> 0 when the firewall is applied to that server, directly or
+# through a label selector [verify field names]. Read-only.
+firewall_applied() {
+  local fw srv id
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || { echo "usage: firewall_applied NAME SERVER_NAME" >&2; return 1; }
+  fw=$(hcloud_json firewall describe "$1") || return 1
+  srv=$(hcloud_json server describe "$2") || return 1
+  id=$(jq -r '.id // empty' <<<"$srv")
+  [ -n "$id" ] || { echo "no id for server $2 in hcloud's answer" >&2; return 1; }
+  jq -e --argjson id "$id" '[.applied_to[]? | (select(.type == "server") | .server.id),
+    (.applied_to_resources[]? | select(.type == "server") | .server.id)] | any(. == $id)' >/dev/null <<<"$fw"
+}
+
+# checkup_server_facts -> what the checkup needs from the server, in one ssh round trip, as
+# tagged lines. Read-only: ss, sshd -T, ssh-keygen -l, ps, docker inspect, df, du. Key comments
+# (they may carry email addresses) are not printed. CHECKUP_SSH replaces rssh in tests.
+#   listen tcp|udp <local address:port> <process>
+#   sshd <key> <value>
+#   authkey <bits> <fingerprint> <(type)>
+#   dockerd_tcp <tcp://...>            dockerd_hosts <"hosts" from /etc/docker/daemon.json>
+#   cont <name> <image> <privileged true|false> [sock:rw|sock:ro]
+#   df <used kB> <total kB>   du <path> <kB>   ddf <type>\t<size>\t<reclaimable>
+checkup_server_facts() {
+  "${CHECKUP_SSH:-rssh}" 'sh -s' <<'EOF'
+ss -tlnpH 2>/dev/null | awk '{p=$6; sub(/^users:\(\("/, "", p); sub(/".*/, "", p); print "listen tcp", $4, (p == "" ? "?" : p)}'
+ss -ulnpH 2>/dev/null | awk '{p=$6; sub(/^users:\(\("/, "", p); sub(/".*/, "", p); print "listen udp", $4, (p == "" ? "?" : p)}'
+sshd -T 2>/dev/null | grep -E '^(passwordauthentication|permitrootlogin|pubkeyauthentication|permitemptypasswords|kbdinteractiveauthentication|port) ' | sed 's/^/sshd /'
+ssh-keygen -lf /root/.ssh/authorized_keys 2>/dev/null | awk '{print "authkey", $1, $2, $NF}'
+ps -o args= -C dockerd 2>/dev/null | grep -oE 'tcp://[^ ]+' | sed 's/^/dockerd_tcp /'
+grep -o '"hosts"[^]]*]' /etc/docker/daemon.json 2>/dev/null | sed 's/^/dockerd_hosts /'
+docker ps -aq 2>/dev/null | xargs -r docker inspect -f '{{.Name}} {{.Config.Image}} {{.HostConfig.Privileged}}{{range .Mounts}}{{if or (eq .Source "/var/run/docker.sock") (eq .Source "/run/docker.sock")}} sock:{{if .RW}}rw{{else}}ro{{end}}{{end}}{{end}}' | sed 's#^/#cont #'
+df -Pk / | awk 'NR == 2 {print "df", $3, $2}'
+du -sk /data/coolify/backups /root/db-dumps 2>/dev/null | awk '{print "du", $2, $1}'
+docker system df --format '{{.Type}}\t{{.Size}}\t{{.Reclaimable}}' 2>/dev/null | sed 's/^/ddf /'
+echo "facts done"
+EOF
+}
+
+# jq: version strings as comparable arrays. "4.3.23" -> [4,3,23,1,0], "4.0.0-beta.420" ->
+# [4,0,0,0,420]: a pre-release sorts before its release. range_match($v) on a GitHub
+# vulnerable_version_range ("< 4.3.21", ">= 4.0.0, <= 4.3.23", "= 4.1.0"): true, false, or null
+# when the range is missing or cannot be read.
+# shellcheck disable=SC2016 # jq program, not shell
+JQ_VERSION='def ver:
+  ltrimstr("v") | (split("-")[0]) as $b | (split("-")[1:] | join("-")) as $p
+  | (($b | split(".") | map(tonumber? // 0)) + [0, 0, 0])[0:3]
+    + (if $p == "" then [1, 0, 0, 0] else ([0] + (($p | split(".") | map(tonumber? // 0)) + [0, 0, 0])[1:4]) end);
+def range_match($v):
+  if type != "string" or (gsub("\\s"; "") == "") then null
+  else [split(",")[] | gsub("^\\s+|\\s+$"; "") | capture("^(?<op><=|>=|==|<|>|=)?\\s*(?<w>v?[0-9][0-9A-Za-z.-]*)$")] as $c
+    | if ($c | length) != (split(",") | length) then null
+      else all($c[]; (.w | ver) as $w | ($v | ver) as $x | (.op // "=") as $o
+        | if $o == "<" then $x < $w elif $o == "<=" then $x <= $w elif $o == ">" then $x > $w
+          elif $o == ">=" then $x >= $w else $x == $w end) end end;'
+
+# coolify_advisories VERSION -> the published security advisories of Coolify (ADVISORIES_URL) as
+# TSV: ghsa_id, severity, published (date), vulnerable range, patched, affected (yes, no, unknown)
+# for VERSION; an empty field is -. Return 2 when GitHub does not answer (offline, rate limit: 60 calls an hour without
+# a token); the answer's shape is [verify].
+coolify_advisories() {
+  local v=${1:-} out code
+  case $v in v[0-9]*|[0-9]*) ;; *) echo "usage: coolify_advisories VERSION (like 4.3.23)" >&2; return 1 ;; esac
+  out=$(curl -sS --max-time 10 -w '\n%{http_code}' -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2022-11-28' "$ADVISORIES_URL" 2>/dev/null) || { echo "GitHub did not answer (offline?)" >&2; return 2; }
+  code=${out##*$'\n'}; out=${out%$'\n'*}
+  case $code in
+    200) ;;
+    403|429) echo "GitHub rate limit (HTTP $code; 60 calls an hour without a token)" >&2; return 2 ;;
+    *) echo "GitHub answered HTTP $code to the advisories call" >&2; return 2 ;;
+  esac
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || { echo "the advisories answer is not a list" >&2; return 2; }
+  printf 'ghsa_id\tseverity\tpublished\tvulnerable\tpatched\taffected\n'
+  jq -r --arg v "$v" "$JQ_VERSION"'
+    .[] | [(.vulnerabilities // [])[] | {r: .vulnerable_version_range, p: .patched_versions}] as $vs
+    | ($vs | map(.r | range_match($v))) as $m
+    | [(.ghsa_id // "?"), (.severity // "unknown"), ((.published_at // "-")[0:10]),
+       ($vs | map(.r // "?") | join("; ") | if . == "" then "-" else . end),
+       ($vs | map(.p // "?") | join("; ") | if . == "" then "-" else . end),
+       (if any($m[]; . == true) then "yes" elif ($m | length) == 0 or any($m[]; . == null) then "unknown" else "no" end)]
+    | @tsv' <<<"$out"
+}
+
+# backup_success_rate DB_UUID [DAYS] -> per backup schedule of the database, the runs of the
+# last DAYS days (default 30) as TSV: schedule, frequency, runs, success, failed, s3 (yes/no),
+# s3_uploaded, s3_failed, s3_unreported, newest_failure (date or -). Running backups are not
+# counted. Coolify deletes old execution rows with its local retention [verify], so a short
+# history is not a failure. S3 columns use JQ_S3_STATE; they are 0 for a schedule without S3.
+backup_success_rate() {
+  local db=${1:-} days=${2:-30} r id ex now
+  [ -n "$db" ] || { echo "usage: backup_success_rate DB_UUID [DAYS]" >&2; return 1; }
+  service_valid_uuid "$db" || return 1
+  case $days in ''|*[!0-9]*|0*) echo "backup_success_rate: DAYS must be a whole number above 0, got '$days'" >&2; return 1 ;; esac
+  r=$(capi GET "/databases/$db/backups") || return 1
+  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$r" || { echo "backup schedules of $db: not a list" >&2; return 1; }
+  now=$(date +%s)
+  printf 'schedule\tfrequency\truns\tsuccess\tfailed\ts3\ts3_uploaded\ts3_failed\ts3_unreported\tnewest_failure\n'
+  for id in $(jq -r '.[].uuid | strings' <<<"$r"); do
+    service_valid_uuid "$id" || return 1
+    ex=$(db_backup_executions "$db" "$id") || return 1
+    jq -er --argjson s "$(jq -c --arg id "$id" '.[] | select(.uuid == $id)' <<<"$r")" --argjson now "$now" \
+      --argjson days "$days" "$JQ_EPOCH$JQ_S3_STATE"'
+      [.[] | select(.status != "running") | . + {t: ((.created_at // .finished_at) | epoch)}
+        | select(.t >= $now - $days * 86400)] as $w
+      | ($w | map(select(.status == "success"))) as $ok
+      | ($w | map(select(.status != "success"))) as $bad
+      | (if $s.save_s3 == true then $ok | map(. + {st: s3state}) else [] end) as $s3
+      | ($s3 | map(select(.st == "not-uploaded" or .st == "upload-failed"))) as $s3bad
+      | [$s.uuid, ($s.frequency // "?"), ($w | length), ($ok | length), ($bad | length),
+         (if $s.save_s3 == true then "yes" else "no" end),
+         ($s3 | map(select(.st == "uploaded")) | length), ($s3bad | length),
+         ($s3 | map(select(.st == "unreported")) | length),
+         (($bad + $s3bad) | sort_by(.t) | last | if . == null then "-" else .t | todate[0:10] end)]
+      | @tsv' <<<"$ex" 2>/dev/null || { echo "backup runs of schedule $id: could not read" >&2; return 1; }
+  done
+}
+
+# The checkup log on this machine: one line per checkup with the disk numbers and the cost, for
+# the month-over-month growth. Mode 600, no secrets in it.
+checkup_log_file() { echo "${CHECKUP_LOG:-$HOME/.config/vps-setup/checkup.log}"; }
+
+# checkup_sample_append EPOCH SERVER USED_KB TOTAL_KB BACKUPS_KB DUMPS_KB COST -> one TSV line
+# (date, epoch, server, used, total, backups, dumps, cost in EUR or -) in the checkup log.
+# CHECKUP_RECORD=0 writes nothing.
+checkup_sample_append() {
+  local f d n
+  [ "${CHECKUP_RECORD:-1}" = 0 ] && return 0
+  [ "$#" = 7 ] || { echo "usage: checkup_sample_append EPOCH SERVER USED_KB TOTAL_KB BACKUPS_KB DUMPS_KB COST" >&2; return 1; }
+  for n in "$1" "$3" "$4" "$5" "$6"; do
+    case $n in ''|*[!0-9]*) echo "checkup_sample_append: not a whole number: '$n'" >&2; return 1 ;; esac
+  done
+  case $2 in ''|*[!A-Za-z0-9.:_-]*) echo "checkup_sample_append: not a server name or address: '$2'" >&2; return 1 ;; esac
+  case $7 in -) ;; ''|*[!0-9.]*|*.*.*|.*) echo "checkup_sample_append: not a cost: '$7'" >&2; return 1 ;; esac
+  f=$(checkup_log_file)
+  d=$(date -u -d "@$1" +%F 2>/dev/null || date -u -r "$1" +%F)
+  mkdir -p "$(dirname "$f")" || return 1
+  ( umask 077; printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$d" "$@" >> "$f" ) && chmod 600 "$f"
+}
+
+# checkup_sample_prev SERVER NOW [MIN_DAYS] -> the newest line of SERVER in the checkup log that is
+# at least MIN_DAYS (default 20) days older than NOW (epoch), else its oldest line; 1 when there is
+# none.
+checkup_sample_prev() {
+  local f; f=$(checkup_log_file)
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || { echo "usage: checkup_sample_prev SERVER NOW [MIN_DAYS]" >&2; return 1; }
+  [ -f "$f" ] || return 1
+  awk -F '\t' -v s="$1" -v cut="$(( $2 - ${3:-20} * 86400 ))" '
+    $3 == s && $2 ~ /^[0-9]+$/ {
+      if ($2 <= cut && (best == "" || $2 + 0 > bt)) { best = $0; bt = $2 + 0 }
+      if (old == "" || $2 + 0 < ot) { old = $0; ot = $2 + 0 }
+    }
+    END { if (best != "") print best; else if (old != "") print old; else exit 1 }' "$f"
+}
+
+# server_cost -> what the Hetzner project costs a month, from hcloud (read-only) as TSV: kind,
+# name, type, location, monthly gross EUR (servers only; the server type's list price there),
+# backups (on/off, +20% when on). Primary IPs and volumes are listed without a price: hcloud has
+# none for them. Object Storage and traffic are not in hcloud at all [verify field names].
+server_cost() {
+  local s ip vol
+  s=$(hcloud_json server list) || return 1
+  ip=$(hcloud_json primary-ip list) || return 1
+  vol=$(hcloud_json volume list) || return 1
+  printf 'kind\tname\ttype\tlocation\tmonthly_gross_eur\tbackups\n'
+  jq -r '.[]? | (.datacenter.location.name // .location.name // "?") as $loc
+    | ([.server_type.prices[]? | select(.location == $loc) | .price_monthly.gross | tonumber] | first) as $p
+    | ["server", (.name // "?"), (.server_type.name // "?"), $loc,
+       (if $p == null then "?" else ($p * 100 | round / 100 | tostring) end),
+       (if .backup_window != null then "on" else "off" end)] | @tsv' <<<"$s"
+  jq -r '.[]? | ["primary-ip", (.name // "?"), (.type // "?"), (.datacenter.location.name // .location.name // "?"), "-", "-"] | @tsv' <<<"$ip"
+  jq -r '.[]? | ["volume", (.name // "?"), "\(.size // "?") GB", (.location.name // "?"), "-", "-"] | @tsv' <<<"$vol"
 }
