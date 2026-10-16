@@ -1201,7 +1201,7 @@ def range_match($v):
 
 # coolify_advisories VERSION -> the published security advisories of Coolify (ADVISORIES_URL) as
 # TSV: ghsa_id, severity, published (date), vulnerable range, patched, affected (yes, no, unknown)
-# for VERSION. Return 2 when GitHub does not answer (offline, rate limit: 60 calls an hour without
+# for VERSION; an empty field is -. Return 2 when GitHub does not answer (offline, rate limit: 60 calls an hour without
 # a token); the answer's shape is [verify].
 coolify_advisories() {
   local v=${1:-} out code
@@ -1219,8 +1219,9 @@ coolify_advisories() {
   jq -r --arg v "$v" "$JQ_VERSION"'
     .[] | [(.vulnerabilities // [])[] | {r: .vulnerable_version_range, p: .patched_versions}] as $vs
     | ($vs | map(.r | range_match($v))) as $m
-    | [(.ghsa_id // "?"), (.severity // "unknown"), ((.published_at // "")[0:10]),
-       ($vs | map(.r // "?") | join("; ")), ($vs | map(.p // "?") | join("; ")),
+    | [(.ghsa_id // "?"), (.severity // "unknown"), ((.published_at // "-")[0:10]),
+       ($vs | map(.r // "?") | join("; ") | if . == "" then "-" else . end),
+       ($vs | map(.p // "?") | join("; ") | if . == "" then "-" else . end),
        (if any($m[]; . == true) then "yes" elif ($m | length) == 0 or any($m[]; . == null) then "unknown" else "no" end)]
     | @tsv' <<<"$out"
 }
