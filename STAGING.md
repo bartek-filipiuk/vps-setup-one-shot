@@ -164,6 +164,7 @@ separated in `K`):
 ```
 . "$SETUP_DIR/lib.sh"; P="<PROD_STATE>"; S="$(VPS_STATE="$P" state_get APP_DIR)/.coolify.staging.env"
 VPS_STATE=$S; A=$(state_get APP_UUID); K="<AUTH_SECRET SESSION_SECRET>"
+[ -n "$A" ] && [ "$A" != "$(VPS_STATE="$P" state_get APP_UUID)" ] &&
 for k in $K; do openssl rand -hex 32 | app_env_set "$A" "$k"; done
 ```
 
@@ -174,6 +175,7 @@ line, no quotes, only staging and test-mode values. Check it is gitignored
 ```
 . "$SETUP_DIR/lib.sh"; P="<PROD_STATE>"; S="$(VPS_STATE="$P" state_get APP_DIR)/.coolify.staging.env"
 VPS_STATE=$S; A=$(state_get APP_UUID); D=$(state_get APP_DIR)
+[ -n "$A" ] && [ "$A" != "$(VPS_STATE="$P" state_get APP_UUID)" ] &&
 grep -Ev '^[[:space:]]*(#|$)' "$D/.env.staging" | while IFS='=' read -r k v; do printf '%s' "$v" | app_env_set "$A" "$k"; done
 ```
 
@@ -255,13 +257,20 @@ hook, back to back (a push in between is rejected and simply not deployed). Only
 ```
 . "$SETUP_DIR/lib.sh"; P="<PROD_STATE>"; S="$(VPS_STATE="$P" state_get APP_DIR)/.coolify.staging.env"
 VPS_STATE=$S; W=$(openssl rand -hex 24)
-printf '%s' "$W" | apps_webhook_secret "$(VPS_STATE="$P" state_get APP_UUID)" "$(state_get APP_UUID)" &&
+printf '%s' "$W" | apps_webhook_secret "$(state_get APP_UUID)" "$(VPS_STATE="$P" state_get APP_UUID)" &&
 printf '%s' "$W" | jq -Rs '{secret:.}' | gh api -X PATCH "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/config" --input - >/dev/null &&
-echo "one secret on production, staging and the hook"; unset W
+echo "one secret on production, staging and the hook" && unset W
 ```
 
-`apps_webhook_secret` stops at the first app that refuses and says which ones have the new
-value; then run the block again (a fresh value for all three). Test with a push to `staging`
+Staging goes first: if it refuses, production and the hook still share the old secret and
+nothing else changed; run the block again. `apps_webhook_secret` stops at the first app that
+refuses and says which ones have the new value. If staging got it and production refused, or
+the hook PATCH failed after both apps got it, production's push-to-deploy is broken until
+production and the hook agree. In the same shell (`W` is still set; it is unset only on
+success), repeat with the same value:
+`printf '%s' "$W" | apps_webhook_secret <PROD_APP_UUID>`, then
+`printf '%s' "$W" | jq -Rs '{secret:.}' | gh api -X PATCH "repos/<GH_REPO>/hooks/<HOOK_ID>/config" --input -`.
+If that shell is gone, run the whole block again (a fresh value for all three). Test with a push to `staging`
 only (an empty commit made without touching the working tree), and note production's newest
 deployment first:
 

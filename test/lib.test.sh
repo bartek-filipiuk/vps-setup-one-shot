@@ -189,6 +189,7 @@ class H(BaseHTTPRequestHandler):
         if re.match(r"^/applications/[^/]+/envs$", p):
             a = p.split("/")[2]
             return self.send(200, ENVS.get(a, []))
+        if p == "/applications/a-gone": return self.send(404, {"message": "Application not found."})
         if p.startswith("/applications/") and p.count("/") == 2 and p.split("/")[2] in CREATED:
             return self.send(200, CREATED[p.split("/")[2]])
         if p.startswith("/applications/") and p.count("/") == 2:
@@ -1535,7 +1536,7 @@ check "apps_webhook_secret" "$rc:$out" "0:webhook secret set on 2 apps: a-shop a
 check "apps_webhook_secret: both apps" "$(grep webhook= "$HOME/seq.log")" "app PATCH a-shop webhook=ok
 app PATCH a-new webhook=ok"
 out=$(printf 'wh-sec-0123456789abcdef' | apps_webhook_secret a-shop a-down a-new 2>&1); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"
-check "apps_webhook_secret partial" "$rc:$out" "1:apps_webhook_secret: failed on a-down; the new secret is on: a-shop. Pushes to those apps are rejected until the GitHub hook has it too: run it again or rotate again."
+check "apps_webhook_secret partial" "$rc:$out" "1:apps_webhook_secret: failed on a-down; the new secret is on: a-shop. Pushes to those apps are rejected until the GitHub hook has it too: patch the GitHub hook with the same value to restore production's push-to-deploy, or rotate again."
 : > "$HOME/seq.log"
 out=$(printf 'short' | apps_webhook_secret a-shop 2>&1); rc=$?
 check "apps_webhook_secret short secret" "$rc:$out:$(cat "$HOME/seq.log")" "1:apps_webhook_secret: the secret on stdin is missing or shorter than 16 characters; nothing sent:"
@@ -1565,6 +1566,17 @@ DELETE /databases/db-stg?delete_volumes=true"
 check "staging_teardown: states cleared" "$(VPS_STATE=$SS state_get APP_UUID):$(VPS_STATE=$SS state_get DB_UUID):$(VPS_STATE=$PS state_get STAGING_APP_UUID):$(VPS_STATE=$PS state_get APP_UUID)" ":::a-shop"
 s3run staging_teardown "$SS" --yes
 check "staging_teardown rerun: nothing left" "$rc:$out" "1:staging_teardown: no APP_UUID or DB_UUID in $SS; nothing to delete"
+cp -p "$SS" "$HOME/noprod.env"; VPS_STATE=$HOME/noprod.env state_set APP_UUID a-x; VPS_STATE=$HOME/noprod.env state_set PROD_STATE "$HOME/none.env"
+: > "$HOME/seq.log"
+s3run staging_teardown "$HOME/noprod.env" --yes
+check "staging_teardown: missing production state" "$rc:$out:$(cat "$HOME/seq.log")" "1:staging_teardown: the production state $HOME/none.env is missing or empty; nothing sent:"
+VPS_STATE=$SS state_set APP_UUID a-gone; VPS_STATE=$SS state_set DB_UUID db-stg; VPS_STATE=$PS state_set STAGING_APP_UUID a-gone
+: > "$HOME/seq.log"
+s3run staging_teardown "$SS" --yes
+check "staging_teardown: app already gone (404)" "$rc:$(sed -n 1,2p <<<"$out")" "0:staging app a-gone not in Coolify any more (404); cleared from the state
+staging database shop-staging-db (db-stg) deleted with its volume"
+check "staging_teardown 404: only the database DELETE" "$(cat "$HOME/seq.log")" "DELETE /databases/db-stg?delete_volumes=true"
+check "staging_teardown 404: states cleared" "$(VPS_STATE=$SS state_get APP_UUID):$(VPS_STATE=$SS state_get DB_UUID):$(VPS_STATE=$PS state_get STAGING_APP_UUID)" "::"
 check "rebuild clears STAGING_APP_UUID" "$(rebuild_clears STAGING_APP_UUID && echo yes)" "yes"
 check "staging: argv log has the env POSTs" "$(grep -c '^curl .*/applications/a-new/envs' "$HOME/argv.log" | awk '{print ($1 > 0) ? "yes" : "no"}')" "yes"
 

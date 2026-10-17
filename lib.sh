@@ -908,8 +908,9 @@ app_basic_auth() {
 
 # apps_webhook_secret APP_UUID... -> sets the GitHub webhook secret read from stdin on each app
 # (PATCH {manual_webhook_secret_github}); one GitHub hook serves every app of the repo that has
-# the secret. Stops at the first failure and says which apps got it. The secret is never printed;
-# Coolify does not give it back, so it is rotated, not read (STAGING.md step 9).
+# the secret. Stops at the first failure and says which apps got it, so the staging app goes first
+# and production last. The secret is never printed; Coolify does not give it back, so it is
+# rotated, not read (STAGING.md step 9).
 apps_webhook_secret() {
   local s body a done_=""
   [ "$#" -gt 0 ] || { echo "usage: apps_webhook_secret APP_UUID...  (secret on stdin)" >&2; return 1; }
@@ -919,7 +920,7 @@ apps_webhook_secret() {
   body=$(printf '%s' "$s" | jq -Rsc '{manual_webhook_secret_github:.}') || return 1
   for a in "$@"; do
     if ! capi PATCH "/applications/$a" "$body" >/dev/null 2>&1; then
-      echo "apps_webhook_secret: failed on $a; the new secret is on: ${done_:-none}. Pushes to those apps are rejected until the GitHub hook has it too: run it again or rotate again." >&2
+      echo "apps_webhook_secret: failed on $a; the new secret is on: ${done_:-none}. Pushes to those apps are rejected until the GitHub hook has it too: patch the GitHub hook with the same value to restore production's push-to-deploy, or rotate again." >&2
       return 1
     fi
     done_+="${done_:+ }$a"
@@ -941,6 +942,7 @@ staging_teardown() {
   domain=$(VPS_STATE=$f state_get APP_DOMAIN)
   [ -n "$prod" ] && [ "$(VPS_STATE=$f state_get ENV_NAME)" = staging ] ||
     { echo "staging_teardown: $f is not a staging state (no PROD_STATE, or ENV_NAME is not staging); nothing sent" >&2; return 1; }
+  [ -s "$prod" ] || { echo "staging_teardown: the production state $prod is missing or empty; nothing sent" >&2; return 1; }
   [ -n "$app$db" ] || { echo "staging_teardown: no APP_UUID or DB_UUID in $f; nothing to delete" >&2; return 1; }
   for name in "$app" "$db"; do [ -z "$name" ] || service_valid_uuid "$name" || return 1; done
   papp=$(VPS_STATE=$prod state_get APP_UUID); [ -n "$papp" ] || papp=$(VPS_STATE=$prod state_get COOLIFY_APP_UUID)
@@ -953,12 +955,18 @@ staging_teardown() {
     return 1
   fi
   if [ -n "$app" ]; then
-    r=$(capi GET "/applications/$app") || return 1
-    name=$(jq -r '.name // "?"' <<<"$r")
-    capi DELETE "/applications/$app?delete_volumes=true&delete_configurations=true&docker_cleanup=true" >/dev/null || return 1
+    if r=$(capi GET "/applications/$app" 2>&1); then
+      name=$(jq -r '.name // "?"' <<<"$r")
+      capi DELETE "/applications/$app?delete_volumes=true&delete_configurations=true&docker_cleanup=true" >/dev/null || return 1
+      name="staging app $name ($app) deleted with its volumes"
+    elif [ "$(capi_code "$r")" = 404 ]; then
+      name="staging app $app not in Coolify any more (404); cleared from the state"
+    else
+      echo "$r" >&2; return 1
+    fi
     VPS_STATE=$f state_set APP_UUID '' && VPS_STATE=$f state_set COOLIFY_APP_UUID '' || return 1
     [ "$(VPS_STATE=$prod state_get STAGING_APP_UUID)" != "$app" ] || VPS_STATE=$prod state_set STAGING_APP_UUID '' || return 1
-    echo "staging app $name ($app) deleted with its volumes"
+    echo "$name"
   fi
   if [ -n "$db" ]; then
     r=$(capi GET "/databases/$db") || return 1
