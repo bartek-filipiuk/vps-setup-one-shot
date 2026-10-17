@@ -25,6 +25,8 @@ jobs:
         run: bash test/checkup.test.sh
       - name: agent packaging (plugin, Cursor rule and AGENTS.md agree, no runbook content)
         run: bash test/packaging.sh
+      - name: no secrets on a command line (runbooks and scripts)
+        run: bash test/no-secret-argv.sh
 
   shellcheck:
     runs-on: ubuntu-latest

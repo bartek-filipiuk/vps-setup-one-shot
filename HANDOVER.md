@@ -178,8 +178,8 @@ back to back; a push in between is rejected and simply not deployed):
 
 ```
 . ./lib.sh; S=$(openssl rand -hex 24)
-capi PATCH "/applications/$(state_get APP_UUID)" "$(jq -n --arg s "$S" '{manual_webhook_secret_github:$s}')" >/dev/null &&
-jq -n --arg s "$S" '{secret:$s}' | gh api -X PATCH "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/config" --input - >/dev/null && echo "webhook secret rotated"
+capi PATCH "/applications/$(state_get APP_UUID)" "$(printf '%s' "$S" | jq -Rs '{manual_webhook_secret_github:.}')" >/dev/null &&
+printf '%s' "$S" | jq -Rs '{secret:.}' | gh api -X PATCH "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/config" --input - >/dev/null && echo "webhook secret rotated"
 ```
 
 With a staging app (`STAGING_APP_UUID` in the state, `STAGING.md`) the hook serves both apps

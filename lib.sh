@@ -45,9 +45,12 @@ capi() {
   local url token out code
   url=$(coolify_get COOLIFY_URL); token=$(coolify_get COOLIFY_TOKEN)
   [ -n "$url" ] && [ -n "$token" ] || { echo "Coolify config missing in $COOLIFY_CONFIG" >&2; return 1; }
-  # The body goes through stdin, not argv, so keys and passwords never show up in `ps`.
+  case $token in *[\"\\]*) echo "COOLIFY_TOKEN in $COOLIFY_CONFIG contains a quote or backslash" >&2; return 1 ;; esac
+  # The body goes through stdin and the Authorization header through a config on a pipe (-K, a
+  # process substitution; printf is a builtin), not argv, so the token, keys and passwords never
+  # show up in `ps`.
   out=$(printf '%s' "${3:-}" | curl -sS --max-time "${CAPI_MAX_TIME:-30}" -w '\n%{http_code}' -X "$1" "$url/api/v1$2" \
-    -H "Authorization: Bearer $token" -H "Accept: application/json" \
+    -K <(printf 'header = "Authorization: Bearer %s"\n' "$token") -H "Accept: application/json" \
     -H "Content-Type: application/json" ${3:+--data-binary @-}) || return 1
   code=${out##*$'\n'}; out=${out%$'\n'*}
   if [ "$code" -ge 400 ]; then echo "HTTP $code $1 $2: $out" >&2; return 1; fi

@@ -64,10 +64,10 @@ The database goes into that project and environment (`project_ctx` prints both):
 
 ```
 . ./lib.sh; read -r P E < <(project_ctx) &&
-B=$(jq -n --arg p "$P" --arg e "$E" --arg s "$(coolify_server)" \
-  --arg n "$(state_get APP_NAME)-db" --arg pw "$(openssl rand -hex 24)" \
+B=$(openssl rand -hex 24 | jq -Rn --arg p "$P" --arg e "$E" --arg s "$(coolify_server)" \
+  --arg n "$(state_get APP_NAME)-db" \
   '{project_uuid:$p, server_uuid:$s, environment_name:$e, name:$n,
-    image:"postgres:17-alpine", postgres_user:"app", postgres_password:$pw, postgres_db:"app",
+    image:"postgres:17-alpine", postgres_user:"app", postgres_password:input, postgres_db:"app",
     is_public:false, instant_deploy:true}') &&
 state_set DB_UUID "$(capi POST /databases/postgresql "$B" | jq -r .uuid)"; echo "db: $(state_get DB_UUID)"
 ```
@@ -96,7 +96,7 @@ A=$(state_get APP_UUID)
 capi PATCH "/applications/$A" "$(jq -n --arg d "https://$(state_get APP_DOMAIN)" \
   '{domains:$d, health_check_enabled:true, health_check_path:"/api/health", health_check_port:"3000"}')" >/dev/null &&
 URL=$(capi GET "/databases/$(state_get DB_UUID)" | jq -r .internal_db_url) &&
-capi POST "/applications/$A/envs" "$(jq -n --arg v "$URL" '{key:"DATABASE_URL", value:$v, is_preview:false}')" >/dev/null &&
+capi POST "/applications/$A/envs" "$(printf '%s' "$URL" | jq -Rs '{key:"DATABASE_URL", value:., is_preview:false}')" >/dev/null &&
 echo "domain, health check and DATABASE_URL set"
 ```
 
@@ -131,10 +131,10 @@ this app, never the API token.
 
 ```
 . ./lib.sh; if [ -n "$(state_get HOOK_ID)" ]; then echo "hook $(state_get HOOK_ID) exists"; else S=$(openssl rand -hex 24)
-capi PATCH "/applications/$(state_get APP_UUID)" "$(jq -n --arg s "$S" '{manual_webhook_secret_github:$s}')" >/dev/null &&
-H=$(gh api "repos/$(state_get GH_REPO)/hooks" -f name=web -F active=true -f 'events[]=push' \
-  -f "config[url]=$(coolify_get COOLIFY_URL)/webhooks/source/github/events/manual" \
-  -f 'config[content_type]=json' -f "config[secret]=$S" --jq .id) && state_set HOOK_ID "$H" && echo "hook $H"; fi
+capi PATCH "/applications/$(state_get APP_UUID)" "$(printf '%s' "$S" | jq -Rs '{manual_webhook_secret_github:.}')" >/dev/null &&
+H=$(printf '%s' "$S" | jq -Rs --arg u "$(coolify_get COOLIFY_URL)/webhooks/source/github/events/manual" \
+  '{name:"web", active:true, events:["push"], config:{url:$u, content_type:"json", secret:.}}' |
+  gh api -X POST "repos/$(state_get GH_REPO)/hooks" --input - --jq .id) && state_set HOOK_ID "$H" && echo "hook $H"; fi
 ```
 
 Test with a real push:
