@@ -256,7 +256,7 @@ hook, back to back (a push in between is rejected and simply not deployed). Only
 
 ```
 . "$SETUP_DIR/lib.sh"; P="<PROD_STATE>"; S="$(VPS_STATE="$P" state_get APP_DIR)/.coolify.staging.env"
-VPS_STATE=$S; W=$(openssl rand -hex 24)
+VPS_STATE=$S; W=$(openssl rand -hex 24) &&
 printf '%s' "$W" | apps_webhook_secret "$(state_get APP_UUID)" "$(VPS_STATE="$P" state_get APP_UUID)" &&
 printf '%s' "$W" | jq -Rs '{secret:.}' | gh api -X PATCH "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/config" --input - >/dev/null &&
 echo "one secret on production, staging and the hook" && unset W

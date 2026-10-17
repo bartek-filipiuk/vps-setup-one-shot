@@ -130,7 +130,7 @@ A GitHub webhook calls Coolify on every push to `main`. It uses a secret that ca
 this app, never the API token.
 
 ```
-. ./lib.sh; if [ -n "$(state_get HOOK_ID)" ]; then echo "hook $(state_get HOOK_ID) exists"; else S=$(openssl rand -hex 24)
+. ./lib.sh; if [ -n "$(state_get HOOK_ID)" ]; then echo "hook $(state_get HOOK_ID) exists"; else S=$(openssl rand -hex 24) &&
 capi PATCH "/applications/$(state_get APP_UUID)" "$(printf '%s' "$S" | jq -Rs '{manual_webhook_secret_github:.}')" >/dev/null &&
 H=$(printf '%s' "$S" | jq -Rs --arg u "$(coolify_get COOLIFY_URL)/webhooks/source/github/events/manual" \
   '{name:"web", active:true, events:["push"], config:{url:$u, content_type:"json", secret:.}}' |

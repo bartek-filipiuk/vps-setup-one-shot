@@ -177,7 +177,7 @@ Expect the `coolify` deploy key (`read_only=true`) and one hook to
 back to back; a push in between is rejected and simply not deployed):
 
 ```
-. ./lib.sh; S=$(openssl rand -hex 24)
+. ./lib.sh; S=$(openssl rand -hex 24) &&
 capi PATCH "/applications/$(state_get APP_UUID)" "$(printf '%s' "$S" | jq -Rs '{manual_webhook_secret_github:.}')" >/dev/null &&
 printf '%s' "$S" | jq -Rs '{secret:.}' | gh api -X PATCH "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/config" --input - >/dev/null && echo "webhook secret rotated"
 ```

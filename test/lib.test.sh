@@ -1581,8 +1581,9 @@ check "rebuild clears STAGING_APP_UUID" "$(rebuild_clears STAGING_APP_UUID && ec
 check "staging: argv log has the env POSTs" "$(grep -c '^curl .*/applications/a-new/envs' "$HOME/argv.log" | awk '{print ($1 > 0) ? "yes" : "no"}')" "yes"
 
 # the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
-leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-|v-SECRET-1|ba-SECRET-pass1|wh-sec-0123' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
-check "s3 creds, webhook URL, Cloudflare tokens and staging secrets in no argv and no output" "${leaks:-none}" "none"
+leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-|v-SECRET-1|ba-SECRET-pass1|wh-sec-0123|3\|abc=def' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
+check "s3 creds, webhook URL, Coolify and Cloudflare tokens and staging secrets in no argv and no output" "${leaks:-none}" "none"
+has "capi: Coolify token handed to curl as a config on a pipe" "$(cat "$HOME/argv.log")" '^curl .*/api/v1/.* -K /dev/fd/[0-9]+ '
 check "argv log was written" "$(grep -c '^jq ' "$HOME/argv.log" | awk '{print ($1 > 10) ? "yes" : "no"}')" "yes"
 PATH=${PATH#"$HOME/argvbin:"}; unset TMPDIR BACKUP_POLL_SECONDS
 
