@@ -4,5 +4,5 @@ node_modules
 .env.local
 next-env.d.ts
 *.tsbuildinfo
-.coolify.env
+.coolify*.env
 .playwright-cli

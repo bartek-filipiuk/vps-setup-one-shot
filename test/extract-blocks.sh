@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pulls the shell code blocks out of the runbooks (phases/*.md, SETUP.md, PREPARE-APP.md,
-# ROLLBACK.md, RESTORE.md, DOCTOR.md, HANDOVER.md, SERVICES.md, UPGRADE.md, REBUILD.md, CHECKUP.md) and checks each one with
+# STAGING.md, ROLLBACK.md, RESTORE.md, DOCTOR.md, HANDOVER.md, SERVICES.md, UPGRADE.md, REBUILD.md, CHECKUP.md) and checks each one with
 # `bash -n` and shellcheck.
 # Untagged, bash and sh fences are checked; other tags (text, json, ...) are skipped. ``` and
 # ~~~ fences, any length >= 3, may be indented; a fence closes only on the same character, at
@@ -12,7 +12,7 @@ files=()
 for a in "$@"; do case "$a" in /*) files+=("$a") ;; *) files+=("$PWD/$a") ;; esac; done
 cd "$(dirname "$0")/.." || exit 1
 REPO=$PWD
-[ "${#files[@]}" -gt 0 ] || files=(phases/*.md SETUP.md PREPARE-APP.md ROLLBACK.md RESTORE.md DOCTOR.md HANDOVER.md SERVICES.md UPGRADE.md REBUILD.md CHECKUP.md)
+[ "${#files[@]}" -gt 0 ] || files=(phases/*.md SETUP.md PREPARE-APP.md STAGING.md ROLLBACK.md RESTORE.md DOCTOR.md HANDOVER.md SERVICES.md UPGRADE.md REBUILD.md CHECKUP.md)
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
