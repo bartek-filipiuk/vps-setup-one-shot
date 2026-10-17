@@ -164,6 +164,23 @@ everything else is from the 4.3.23 source and not yet exercised **[verify]**.
 | `PUT`/`POST /services/{uuid}/storages/{storage_uuid}/backups[/run]` | volume backups of a service | not used yet; `SERVICES.md` step 5 **[verify]** |
 | (none) | scheduled backups of a database inside a service | `/databases/{uuid}/backups` covers standalone databases only; UI only **[verify]** |
 
+Staging (R11: `staging_init`, `app_env_keys`, `app_env_set`, `app_create`, `app_basic_auth`,
+`apps_webhook_secret`, `staging_teardown`, `STAGING.md`). The two `GET` shapes were checked
+read-only on a live 4.3.23 on 2026-10-17 (`GET /version` = 4.3.23); everything else is from the
+4.3.23 source and docs and not yet exercised **[verify]**.
+
+| Call | Use | Notes |
+|------|-----|-------|
+| `GET /applications/{uuid}` | the staging app's name, branch and domain (`app_create` rerun, `staging_teardown`) | has `git_branch`, `fqdn`, `is_http_basic_auth_enabled`, `http_basic_auth_username`, `noindex_domains` (live GET). It does **not** return `manual_webhook_secret_github`, so the secret is rotated, never read back |
+| `GET /applications/{uuid}/envs` | variable names of production (`app_env_keys`), the uuid of a key to replace (`app_env_set`) | array of `{uuid, key, is_buildtime, is_runtime, is_preview, is_coolify, is_literal, is_multiline, is_shown_once, is_shared, is_required, is_really_required, is_buildpack_control, comment, order, version, created_at, updated_at}` (live GET). The field is `is_buildtime`, and the list carries **no `value`**; preview copies (`is_preview: true`) and Coolify's own (`is_coolify: true`) are skipped |
+| `POST /applications/{uuid}/envs {key, value, is_preview:false}`, `DELETE /applications/{uuid}/envs/{env_uuid}` | staging values (`app_env_set`, value on stdin) | as in the first table; an existing key is deleted first, preview copy included **[verify]** |
+| `POST /applications/private-deploy-key` | the staging app (`app_create`) | the first table's body with `git_branch:"staging"`, `environment_name:"staging"` and production's `private_key_uuid`: one read-only deploy key serves both apps of the repo **[verify]** |
+| `PATCH /applications/{uuid} {is_http_basic_auth_enabled, http_basic_auth_username, http_basic_auth_password}` | staging closed to the public (`app_basic_auth`) | the fields exist on GET (live); writing them through the API, and that Coolify applies them with the next deploy, **[verify]**. A 422 sends the user to the UI: the app → **Advanced** → **HTTP Basic Auth**. Only the HTTP code of a refusal is printed |
+| `PATCH /applications/{uuid} {manual_webhook_secret_github}` | one secret on production and staging (`apps_webhook_secret`) | as in phase 05 step 6, once per app **[verify]** |
+| `DELETE /applications/{uuid}?delete_volumes=true&delete_configurations=true&docker_cleanup=true` | remove the staging app (`staging_teardown`, only with `--yes`) | query names from the 4.3.23 source **[verify]** |
+| `DELETE /databases/{uuid}?delete_volumes=true` | remove the staging database (`staging_teardown`) | **[verify]** |
+| `PATCH https://api.github.com/repos/{owner}/{repo}/hooks/{id}/config {secret}` | the GitHub side of the rotation (`STAGING.md` step 9, `HANDOVER.md` step 3) | GitHub REST, body on stdin (`gh api --input -`); `url` and `content_type` stay as they are |
+
 Upgrades (R14: `db_major`, `pg_major_upgrade_plan`, the `status.sh` updates and postgres lines,
 `UPGRADE.md`). From the 4.3.23 source, `routes/api.php` and the Coolify docs; none of it has been
 exercised on a server yet **[verify]**.
@@ -234,6 +251,12 @@ from the internet only by the cloud firewall **[verify]**.
 - **Realtime (6001) and terminal (6002) behind the instance domain**: once the dashboard works
   through its domain on the Coolify proxy, 8000, 6001 and 6002 can stay closed; realtime and the
   terminal go through 443 (coolify.io/docs/core/infrastructure/servers/firewall).
+- **One GitHub webhook serves every app of the repo whose branch was pushed.** The manual
+  endpoint (`/webhooks/source/github/events/manual`) looks up the applications by repository and
+  `git_branch` and checks the delivery's signature against each one's
+  `manual_webhook_secret_github`, so production (`main`) and staging (`staging`) share one hook
+  and one secret, and a push to `staging` deploys only staging **[verify]**. A second hook is
+  not needed; rotating the secret means all apps of the repo and the hook (`STAGING.md` step 9).
 - **One project cannot be isolated inside a team.** A server belongs to one team, and every
   member sees (and, by role, changes) every project on that team's servers; tokens have no project
   scope either. A client who must see only their project gets their own server in their own team

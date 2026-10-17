@@ -30,7 +30,7 @@ Or install it as a Claude Code plugin, no clone needed:
 (from a shell: `claude plugin marketplace add bartek-filipiuk/vps-setup-one-shot`, then
 `claude plugin install vps-setup-one-shot@bartek-filipiuk`), then type `/vps-setup` (or `/vps-setup-one-shot:vps-setup` if another command has that name). Later:
 `/vps-status`, `/vps-doctor`, `/vps-checkup`, and in the repo of an app you already have,
-`/vps-prepare-app`.
+`/vps-prepare-app` (later `/vps-staging` for a staging copy of it).
 
 Any other agent (Codex, Cursor, ...) works the same way: open it in that folder and say
 `Read SETUP.md and guide me through it.` `AGENTS.md` lists every runbook and the matching command.
@@ -108,6 +108,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   suggest a domain from the project's name and refuse one that is taken; `status.sh` groups apps
   and services by project, and `~/.config/vps-setup/PROJECTS.md` (generated, no secrets) lists
   what runs where. A setup from before keeps its one project as it is.
+- `STAGING.md` adds a staging copy of an app on the same server: the branch `staging` deploys
+  to `staging.<app-domain>` as a second app in the project's `staging` environment, with its own
+  empty database (production data only if you opt in), the variable names from production with
+  staging values, HTTP basic auth so it is not public, and push-to-deploy through the same
+  GitHub webhook. Promotion is a merge into `main`, with the rollback point and a dump first;
+  removal only on your yes.
 - `SERVICES.md` puts a self-hosted tool next to your apps as a Coolify one-click service on its
   own domain: Umami, n8n, Uptime Kuma or Forgejo, with a DNS gate, the HTTPS wait, the first
   login, what is and is not backed up, and removal only on your yes. `status.sh` shows a line
@@ -203,6 +209,14 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   environments and `environment_id` were checked read-only on a live Coolify 4.3.23; creating an
   environment, a domain set twice and duplicate project names come from the API docs and are
   marked `[verify]` in `references/coolify-api.md`.
+- `STAGING.md` (R11), `staging_init`, `app_env_keys`, `app_env_set`, `app_create`,
+  `app_basic_auth`, `apps_webhook_secret` and `staging_teardown` are tested against a fake
+  Coolify API only (`test/lib.test.sh`, `test/status.test.sh`) and have **not been run on a real
+  server yet**; no staging app has been created or promoted with them. The `GET` shapes of an
+  application and its environment variables were checked read-only on a live Coolify 4.3.23; the
+  basic-auth write, the deletes, a second app on the same deploy key and one GitHub webhook
+  serving two branches come from the 4.3.23 source and docs and are marked `[verify]` in
+  `references/coolify-api.md`.
 - `UPGRADE.md` (R14), `db_major`, `pg_major_upgrade_plan`, the `RESTORE_FROM_DB` guard of
   `db_restore` and the `status.sh` updates and postgres lines are tested against a fake Coolify
   API, a stubbed `ssh` and a fake `docker` only (`test/lib.test.sh`, `test/status.test.sh`) and
@@ -238,6 +252,6 @@ Tested with: Coolify 4.3.23, Ubuntu 24.04, Next.js 16.3, Postgres 17.
 
 ## Not included yet
 
-Staging/preview environments, uptime checks from outside with a status page (R06b), apps that
+Preview environments per pull request (R21), uptime checks from outside with a status page (R06b), apps that
 are not Node.js, Git hosts other than GitHub, DNS through the API for providers other than Cloudflare. What comes next, in which order
 and how we will know it is done: [ROADMAP.md](ROADMAP.md).
