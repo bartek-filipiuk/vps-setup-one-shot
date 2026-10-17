@@ -180,7 +180,7 @@ Follow `$SETUP_DIR/phases/05-starter.md` steps 2 to 6 with these differences:
     ```
     . "$SETUP_DIR/lib.sh"; VPS_STATE=.coolify.env; A=$(state_get APP_UUID)
     grep -Ev '^[[:space:]]*(#|$)' .env.production | while IFS='=' read -r k v; do
-      capi POST "/applications/$A/envs" "$(jq -n --arg k "$k" --arg v "$v" '{key:$k, value:$v, is_preview:false}')" >/dev/null && echo "set $k"
+      capi POST "/applications/$A/envs" "$(printf '%s' "$v" | jq -Rs --arg k "$k" '{key:$k, value:., is_preview:false}')" >/dev/null && echo "set $k"
     done
     ```
 

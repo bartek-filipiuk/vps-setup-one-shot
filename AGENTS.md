@@ -95,6 +95,13 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   content (no code fences, no `lib.sh` helper names, no server commands). `claude plugin validate .`
   passes locally (warnings about the missing version are intended, so updates follow commits);
   it is not in CI.
+- `bash test/no-secret-argv.sh` must print `NO SECRETS IN ARGV`: no `jq --arg/--argjson`,
+  `-H/--header`, or (on a `gh`/`curl` line) `-f/-F/-d/--data/-u/-b` in the runbooks or the
+  scripts, continued lines joined, expands a secret-named variable (`S`, `W`, `PW`, `PASS*`,
+  `SECRET*`, `TOKEN*`, `KEY`, `URL`, also with a `FOO_` prefix, ...), `$(openssl rand` or a
+  credential getter (`cf_cred`, `s3_cred`, `cat`, ...); the value goes on stdin instead (`printf '%s' "$S" | jq -Rs`,
+  `gh api --input -`, `curl -K`). It is a name-based grep: a secret under another name is still
+  on you.
 - Shellcheck exclusions. Scripts: only `.shellcheckrc` (`shell=bash`, `disable=SC2015,SC1091`),
   default severity. Doc blocks: the same `.shellcheckrc` (passed with `--rcfile`) plus
   `-e SC2034,SC2154`, because blocks set and read variables across blocks, at severity

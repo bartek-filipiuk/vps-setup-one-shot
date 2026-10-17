@@ -249,11 +249,11 @@ explicit yes for the whole section. Then a dump while nothing has changed yet:
 
 ```
 . ./lib.sh; O=$(state_get DB_UUID); T=18; I=$(capi GET "/databases/$O") && read -r P E < <(project_ctx) &&
-B=$(jq -n --arg p "$P" --arg e "$E" --arg s "$(coolify_server)" --arg t "$T" \
+B=$(openssl rand -hex 24 | jq -Rn --arg p "$P" --arg e "$E" --arg s "$(coolify_server)" --arg t "$T" \
   --arg n "$(jq -r '.name' <<<"$I")-pg$T" --arg u "$(jq -r '.postgres_user // "postgres"' <<<"$I")" \
-  --arg d "$(jq -r '.postgres_db // .postgres_user // "postgres"' <<<"$I")" --arg pw "$(openssl rand -hex 24)" \
+  --arg d "$(jq -r '.postgres_db // .postgres_user // "postgres"' <<<"$I")" \
   '{project_uuid:$p, server_uuid:$s, environment_name:$e, name:$n, image:"postgres:\($t)-alpine",
-    postgres_user:$u, postgres_password:$pw, postgres_db:$d, is_public:false, instant_deploy:true}') &&
+    postgres_user:$u, postgres_password:input, postgres_db:$d, is_public:false, instant_deploy:true}') &&
 N=$(capi POST /databases/postgresql "$B" | jq -r '.uuid // empty') && [ -n "$N" ] &&
 state_set PG_UPGRADE_OLD "$O" && state_set PG_UPGRADE_NEW "$N" && echo "new database: $N (old: $O)"
 ```
@@ -321,7 +321,7 @@ on an existing key makes a duplicate: read, delete, post, `references/coolify-ap
 capi POST "/databases/$O/stop" >/dev/null && echo "old database stopped" &&
 URL=$(capi GET "/databases/$N" | jq -r '.internal_db_url // empty') && [ -n "$URL" ] &&
 for e in $(capi GET "/applications/$A/envs" | jq -r '.[] | select(.key == "DATABASE_URL") | .uuid'); do capi DELETE "/applications/$A/envs/$e" >/dev/null; done &&
-capi POST "/applications/$A/envs" "$(jq -n --arg v "$URL" '{key:"DATABASE_URL", value:$v, is_preview:false}')" >/dev/null &&
+capi POST "/applications/$A/envs" "$(printf '%s' "$URL" | jq -Rs '{key:"DATABASE_URL", value:., is_preview:false}')" >/dev/null &&
 echo "DATABASE_URL now points at $N"
 ```
 
