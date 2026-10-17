@@ -717,6 +717,259 @@ projects_md() {
   echo "wrote $f ($(jq '.projects | length' <<<"$j") projects, $(jq '.resources | length' <<<"$j") resources)"
 }
 
+# --- staging: a second app and database from the staging branch (R11, STAGING.md) ---
+
+# Staging is a second Coolify app in the production app's project, environment "staging", built
+# from the branch "staging", with its own empty Postgres, on staging.<APP_DOMAIN>, behind HTTP
+# basic auth. Its state is a second file with the same keys, <APP_DIR>/.coolify.staging.env, so
+# every helper works on it through VPS_STATE. The production state (an app's .coolify.env, or the
+# setup state for the starter) gets one key, STAGING_APP_UUID. Values of environment variables,
+# the webhook secret and the basic-auth password go to Coolify through stdin, never argv, and
+# are never printed or stored.
+
+# staging_abs FILE -> FILE as an absolute path (the directory must exist).
+staging_abs() {
+  local d
+  d=$(cd "$(dirname "$1")" 2>/dev/null && pwd) || { echo "no directory for $1" >&2; return 1; }
+  printf '%s/%s\n' "$d" "$(basename "$1")"
+}
+
+# capi_code ERROR_TEXT -> the HTTP code from capi's "HTTP <code> <METHOD> <path>: <body>" line.
+capi_code() { sed -n '1s/^HTTP \([0-9]*\) .*/\1/p' <<<"$1"; }
+
+# staging_init PROD_STATE STAGING_STATE -> writes the staging state from the production one, no
+# API call: GH_REPO, KEY_UUID (the same deploy key), APP_DIR, PROJECT_UUID, PROJECT_NAME and
+# HOOK_ID (the same GitHub webhook) copied; APP_NAME <name>-staging, APP_DOMAIN
+# staging.<domain>, ENV_NAME staging, GIT_BRANCH staging, PROD_STATE. Refuses when the
+# production state lacks the app, repo, key, domain or project, and when STAGING_STATE already
+# has an app. Older keys count: COOLIFY_APP_UUID, COOLIFY_PROJECT_UUID, COOLIFY_DOMAIN.
+staging_init() {
+  local prod=${1:-} stg=${2:-} app repo key domain project name k v missing=""
+  [ -n "$prod" ] && [ -n "$stg" ] || { echo "usage: staging_init PROD_STATE STAGING_STATE" >&2; return 1; }
+  [ -s "$prod" ] || { echo "staging_init: no production state in $prod" >&2; return 1; }
+  prod=$(staging_abs "$prod") && stg=$(staging_abs "$stg") || return 1
+  [ "$prod" != "$stg" ] || { echo "staging_init: the staging state must be another file than $prod" >&2; return 1; }
+  app=$(VPS_STATE=$prod state_get APP_UUID); [ -n "$app" ] || app=$(VPS_STATE=$prod state_get COOLIFY_APP_UUID)
+  project=$(VPS_STATE=$prod state_get PROJECT_UUID); [ -n "$project" ] || project=$(VPS_STATE=$prod state_get COOLIFY_PROJECT_UUID)
+  domain=$(VPS_STATE=$prod state_get APP_DOMAIN)
+  [ -n "$domain" ] || domain=$(VPS_STATE=$prod state_get COOLIFY_DOMAIN | sed -E 's#^[a-z]+://##; s#/.*$##')
+  repo=$(VPS_STATE=$prod state_get GH_REPO); key=$(VPS_STATE=$prod state_get KEY_UUID); name=$(VPS_STATE=$prod state_get APP_NAME)
+  [ -n "$app" ] || missing+=" APP_UUID"
+  [ -n "$repo" ] || missing+=" GH_REPO"
+  [ -n "$key" ] || missing+=" KEY_UUID"
+  [ -n "$domain" ] || missing+=" APP_DOMAIN"
+  [ -n "$project" ] || missing+=" PROJECT_UUID"
+  [ -n "$name" ] || missing+=" APP_NAME"
+  [ -z "$missing" ] || { echo "staging_init: $prod has no$missing; production must be set up first (phase 05 or PREPARE-APP.md)" >&2; return 1; }
+  service_valid_uuid "$app" && service_valid_uuid "$project" && service_valid_uuid "$key" || return 1
+  if [ -n "$(VPS_STATE=$stg state_get APP_UUID)" ]; then
+    echo "staging_init: $stg already has APP_UUID=$(VPS_STATE=$stg state_get APP_UUID); staging exists, nothing changed" >&2; return 1
+  fi
+  domain=$(tr '[:upper:]' '[:lower:]' <<<"$domain")
+  cf_valid_name "staging.$domain" || return 1
+  name=$name-staging
+  for k in GH_REPO KEY_UUID APP_DIR PROJECT_NAME HOOK_ID; do
+    v=$(VPS_STATE=$prod state_get "$k"); [ -z "$v" ] || VPS_STATE=$stg state_set "$k" "$v" || return 1
+  done
+  for v in "PROJECT_UUID=$project" "APP_NAME=$name" "APP_DOMAIN=staging.$domain" ENV_NAME=staging GIT_BRANCH=staging "PROD_STATE=$prod"; do
+    VPS_STATE=$stg state_set "${v%%=*}" "${v#*=}" || return 1
+  done
+  chmod 600 "$stg" || return 1
+  k=$(VPS_STATE=$stg state_get PROJECT_NAME)
+  echo "staging plan, nothing created yet: app $name from branch staging on https://staging.$domain, project ${k:-$project} / staging, its own empty database $name-db"
+  echo "state: $stg (production: $prod)"
+}
+
+# app_env_keys APP_UUID -> the app's environment variables as TSV, names only: key, build_time
+# (yes/no), kind: database (DATABASE_URL, the staging database's own URL), secret (the name
+# says SECRET, TOKEN, KEY, PASS or SALT: a new random value if it is the app's own, the user's
+# test value if it belongs to another service), ask (the user gives the staging value).
+# Preview copies and Coolify's own variables are left out. Read-only; values never come out
+# (GET /applications/{uuid}/envs carries none on 4.3.23, and a value field would be ignored).
+app_env_keys() {
+  local r
+  [ -n "${1:-}" ] || { echo "usage: app_env_keys APP_UUID" >&2; return 1; }
+  service_valid_uuid "$1" || return 1
+  r=$(capi GET "/applications/$1/envs") || return 1
+  jq -e 'arrays' <<<"$r" >/dev/null 2>&1 || { echo "app_env_keys: GET /applications/$1/envs is not a list" >&2; return 1; }
+  printf 'key\tbuild_time\tkind\n'
+  jq -r '[.[] | select(.is_preview != true and .is_coolify != true) | select((.key // "") | test("^[A-Za-z_][A-Za-z0-9_]*$"))]
+    | unique_by(.key)[]
+    | [.key, (if .is_buildtime == true then "yes" else "no" end),
+       (if .key == "DATABASE_URL" then "database"
+        elif (.key | ascii_upcase | test("SECRET|TOKEN|KEY|PASS|SALT")) then "secret"
+        else "ask" end)] | @tsv' <<<"$r"
+}
+
+# app_env_set APP_UUID KEY -> sets KEY on the app to the value read from stdin (all of it, one
+# trailing newline dropped): an existing KEY is deleted first (POST would add a duplicate), then
+# POST {key, value, is_preview:false}. The value never goes through argv and is never printed.
+# Build-time variables are marked in the UI afterwards (POST refuses is_buildtime).
+app_env_set() {
+  local app=${1:-} k=${2:-} r body old n=0
+  [ -n "$app" ] && [ -n "$k" ] || { echo "usage: app_env_set APP_UUID KEY  (value on stdin)" >&2; return 1; }
+  service_valid_uuid "$app" || return 1
+  [[ $k =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "not a variable name: '$k'" >&2; return 1; }
+  body=$(jq -Rsc --arg k "$k" 'sub("\n$"; "") | {key:$k, value:., is_preview:false}') || return 1
+  [ "$(jq -r '.value | length' <<<"$body")" -gt 0 ] || { echo "app_env_set: no value on stdin for $k; nothing sent" >&2; return 1; }
+  r=$(capi GET "/applications/$app/envs") || return 1
+  while IFS= read -r old; do
+    [ -n "$old" ] || continue
+    service_valid_uuid "$old" || return 1
+    capi DELETE "/applications/$app/envs/$old" >/dev/null || return 1
+    n=$((n + 1))
+  done < <(jq -r --arg k "$k" '.[]? | select(.key == $k) | .uuid // empty' <<<"$r")
+  capi POST "/applications/$app/envs" "$body" >/dev/null || return 1
+  if [ "$n" -gt 0 ]; then echo "set $k (replaced)"; else echo "set $k"; fi
+}
+
+# app_create BRANCH PORT HEALTH_PATH [BASE_DIR] -> the application APP_NAME from GH_REPO at
+# BRANCH with the deploy key KEY_UUID, in the project and environment of project_ctx, on
+# https://APP_DOMAIN with a health check, not deployed (all from VPS_STATE). Records APP_UUID and
+# the classic COOLIFY_PROJECT_UUID, COOLIFY_APP_UUID, COOLIFY_DOMAIN. APP_DOMAIN must be free
+# (domain_in_use exit 1) before anything is sent. A second run finds APP_UUID and only sets the
+# domain if it is missing. Phase 05 step 4 keeps its own block for the starter.
+app_create() {
+  local branch=${1:-} port=${2:-} health=${3:-} base=${4:-} name repo key domain app ctx project env server body r who rc
+  [ -n "$branch" ] && [ -n "$port" ] && [ -n "$health" ] || { echo "usage: app_create BRANCH PORT HEALTH_PATH [BASE_DIR]" >&2; return 1; }
+  [[ $branch =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] && [[ $branch != *..* ]] || { echo "not a branch name: '$branch'" >&2; return 1; }
+  [[ $port =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || { echo "not a port: '$port'" >&2; return 1; }
+  [[ $health =~ ^/[A-Za-z0-9._/-]*$ ]] || { echo "not a health check path: '$health' (like /api/health)" >&2; return 1; }
+  [ -z "$base" ] || [[ $base =~ ^/[A-Za-z0-9._/-]*$ ]] || { echo "not a base directory: '$base' (like /starter)" >&2; return 1; }
+  name=$(state_get APP_NAME); repo=$(state_get GH_REPO); key=$(state_get KEY_UUID); domain=$(state_get APP_DOMAIN)
+  [ -n "$name" ] && [ -n "$repo" ] && [ -n "$key" ] && [ -n "$domain" ] ||
+    { echo "app_create: APP_NAME, GH_REPO, KEY_UUID and APP_DOMAIN must be in $VPS_STATE" >&2; return 1; }
+  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "not a GitHub repo: '$repo' (owner/name)" >&2; return 1; }
+  service_valid_uuid "$key" && cf_valid_name "$domain" || return 1
+  app=$(state_get APP_UUID)
+  if [ -n "$app" ]; then
+    service_valid_uuid "$app" || return 1
+    r=$(capi GET "/applications/$app") || { echo "app_create: APP_UUID=$app in $VPS_STATE is not readable in Coolify; nothing created" >&2; return 1; }
+    if jq -e --arg d "$domain" '(.fqdn // "") | split(",") | map(gsub("^\\s+|\\s+$"; "") | sub("^[a-z]+://"; "") | split("/")[0] | ascii_downcase) | index($d)' <<<"$r" >/dev/null; then
+      echo "app $name: $app (existing, on https://$domain)"; return 0
+    fi
+  fi
+  who=$(domain_in_use "$domain"); rc=$?
+  case $rc in
+    1) ;;
+    0) echo "app_create: $domain is already used by $(paste -sd ',' - <<<"$who" | sed 's/,/, /g'); pick another domain or free it first. Nothing was sent." >&2; return 1 ;;
+    *) echo "app_create: could not check whether $domain is free; nothing was sent" >&2; return 1 ;;
+  esac
+  if [ -z "$app" ]; then
+    ctx=$(project_ctx 2>&1) || { echo "app_create: $ctx" >&2; return 1; }
+    read -r project env <<<"$ctx"
+    server=$(coolify_server) && [ -n "$server" ] || { echo "app_create: no Coolify server found (phase 04 step 4)" >&2; return 1; }
+    body=$(jq -n --arg p "$project" --arg e "$env" --arg s "$server" --arg n "$name" --arg r "git@github.com:$repo.git" \
+      --arg b "$branch" --arg port "$port" --arg k "$key" --arg base "$base" \
+      '{project_uuid:$p, server_uuid:$s, environment_name:$e, name:$n, git_repository:$r, git_branch:$b,
+        build_pack:"dockerfile", ports_exposes:$port, private_key_uuid:$k, instant_deploy:false}
+       + (if $base != "" then {base_directory:$base} else {} end)') || return 1
+    r=$(capi POST /applications/private-deploy-key "$body") || return 1
+    app=$(jq -r '.uuid // empty' <<<"$r")
+    service_valid_uuid "$app" 2>/dev/null || { echo "no uuid in the answer to POST /applications/private-deploy-key" >&2; return 1; }
+    state_set APP_UUID "$app" && state_set COOLIFY_APP_UUID "$app" && state_set COOLIFY_PROJECT_UUID "$project" &&
+      state_set COOLIFY_DOMAIN "https://$domain" || return 1
+    echo "app $name: $app (created in $project / $env, branch $branch, not deployed)"
+  fi
+  capi PATCH "/applications/$app" "$(jq -n --arg d "https://$domain" --arg port "$port" --arg h "$health" \
+    '{domains:$d, health_check_enabled:true, health_check_path:$h, health_check_port:$port}')" >/dev/null ||
+    { echo "app_create: app $app exists but its domain and health check are not set; run app_create again" >&2; return 1; }
+  echo "domain https://$domain and health check $health on port $port set"
+}
+
+# app_basic_auth APP_UUID USER -> turns on Coolify's HTTP basic auth for the app, the password
+# read from stdin (never argv, never printed); app_basic_auth APP_UUID off turns it off.
+# PATCH {is_http_basic_auth_enabled, http_basic_auth_username, http_basic_auth_password}
+# [verify]. When Coolify refuses the fields, says where to do it in the UI and returns 1.
+app_basic_auth() {
+  local app=${1:-} user=${2:-} body res code
+  [ -n "$app" ] && [ -n "$user" ] || { echo "usage: app_basic_auth APP_UUID USER  (password on stdin) | app_basic_auth APP_UUID off" >&2; return 1; }
+  service_valid_uuid "$app" || return 1
+  if [ "$user" = off ]; then
+    body='{"is_http_basic_auth_enabled":false}'
+  else
+    [[ $user =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "not a basic-auth user name: '$user' (letters, digits, . _ -)" >&2; return 1; }
+    body=$(jq -Rsc --arg u "$user" 'sub("\n$"; "") | {is_http_basic_auth_enabled:true, http_basic_auth_username:$u, http_basic_auth_password:.}') || return 1
+    [ "$(jq -r '.http_basic_auth_password | length' <<<"$body")" -ge 8 ] ||
+      { echo "app_basic_auth: the password on stdin is missing or shorter than 8 characters; nothing sent" >&2; return 1; }
+  fi
+  if ! res=$(capi PATCH "/applications/$app" "$body" 2>&1); then
+    # Only the code: the answer to a refused PATCH could quote the password back.
+    code=$(capi_code "$res")
+    if [ "$code" = 422 ]; then
+      echo "Coolify refused the basic-auth fields (HTTP 422). Set it in the UI instead: the app -> Advanced -> HTTP Basic Auth (user $user when turning it on), then Save and redeploy." >&2
+    else
+      echo "app_basic_auth: PATCH /applications/$app failed (HTTP ${code:-?})" >&2
+    fi
+    return 1
+  fi
+  if [ "$user" = off ]; then echo "basic auth off for $app"; else echo "basic auth on for $app, user $user; Coolify applies it with the next deploy [verify]"; fi
+}
+
+# apps_webhook_secret APP_UUID... -> sets the GitHub webhook secret read from stdin on each app
+# (PATCH {manual_webhook_secret_github}); one GitHub hook serves every app of the repo that has
+# the secret. Stops at the first failure and says which apps got it. The secret is never printed;
+# Coolify does not give it back, so it is rotated, not read (STAGING.md step 9).
+apps_webhook_secret() {
+  local s body a done_=""
+  [ "$#" -gt 0 ] || { echo "usage: apps_webhook_secret APP_UUID...  (secret on stdin)" >&2; return 1; }
+  for a in "$@"; do service_valid_uuid "$a" || return 1; done
+  s=$(cat); s=${s%$'\n'}
+  [ "${#s}" -ge 16 ] || { echo "apps_webhook_secret: the secret on stdin is missing or shorter than 16 characters; nothing sent" >&2; return 1; }
+  body=$(printf '%s' "$s" | jq -Rsc '{manual_webhook_secret_github:.}') || return 1
+  for a in "$@"; do
+    if ! capi PATCH "/applications/$a" "$body" >/dev/null 2>&1; then
+      echo "apps_webhook_secret: failed on $a; the new secret is on: ${done_:-none}. Pushes to those apps are rejected until the GitHub hook has it too: run it again or rotate again." >&2
+      return 1
+    fi
+    done_+="${done_:+ }$a"
+  done
+  echo "webhook secret set on $# apps: $done_"
+}
+
+# staging_teardown STAGING_STATE --yes -> deletes the staging app and its database with their
+# volumes (DELETE /applications/{uuid}?delete_volumes=true&delete_configurations=true&docker_cleanup=true,
+# DELETE /databases/{uuid}?delete_volumes=true [verify]), clears APP_UUID and DB_UUID in the
+# staging state and STAGING_APP_UUID in the production state. Refuses without --yes (nothing
+# sent), for a file staging_init did not write, and when an uuid is production's. The DNS record,
+# the staging branch and the shared GitHub hook stay.
+staging_teardown() {
+  local f=${1:-} prod app db papp pdb name dname domain r
+  [ -n "$f" ] || { echo "usage: staging_teardown STAGING_STATE --yes" >&2; return 1; }
+  [ -s "$f" ] || { echo "staging_teardown: no staging state in $f" >&2; return 1; }
+  prod=$(VPS_STATE=$f state_get PROD_STATE); app=$(VPS_STATE=$f state_get APP_UUID); db=$(VPS_STATE=$f state_get DB_UUID)
+  domain=$(VPS_STATE=$f state_get APP_DOMAIN)
+  [ -n "$prod" ] && [ "$(VPS_STATE=$f state_get ENV_NAME)" = staging ] ||
+    { echo "staging_teardown: $f is not a staging state (no PROD_STATE, or ENV_NAME is not staging); nothing sent" >&2; return 1; }
+  [ -n "$app$db" ] || { echo "staging_teardown: no APP_UUID or DB_UUID in $f; nothing to delete" >&2; return 1; }
+  for name in "$app" "$db"; do [ -z "$name" ] || service_valid_uuid "$name" || return 1; done
+  papp=$(VPS_STATE=$prod state_get APP_UUID); [ -n "$papp" ] || papp=$(VPS_STATE=$prod state_get COOLIFY_APP_UUID)
+  pdb=$(VPS_STATE=$prod state_get DB_UUID)
+  if { [ -n "$app" ] && [ "$app" = "$papp" ]; } || { [ -n "$db" ] && [ "$db" = "$pdb" ]; }; then
+    echo "staging_teardown: $f points at production's app or database ($prod); nothing sent" >&2; return 1
+  fi
+  if [ "${2:-}" != --yes ]; then
+    echo "staging_teardown: refusing without --yes. This deletes the staging app ${app:-(none)} and its database ${db:-(none)} with their volumes: the staging data is gone for good. Ask the user, then: staging_teardown $f --yes" >&2
+    return 1
+  fi
+  if [ -n "$app" ]; then
+    r=$(capi GET "/applications/$app") || return 1
+    name=$(jq -r '.name // "?"' <<<"$r")
+    capi DELETE "/applications/$app?delete_volumes=true&delete_configurations=true&docker_cleanup=true" >/dev/null || return 1
+    VPS_STATE=$f state_set APP_UUID '' && VPS_STATE=$f state_set COOLIFY_APP_UUID '' || return 1
+    [ "$(VPS_STATE=$prod state_get STAGING_APP_UUID)" != "$app" ] || VPS_STATE=$prod state_set STAGING_APP_UUID '' || return 1
+    echo "staging app $name ($app) deleted with its volumes"
+  fi
+  if [ -n "$db" ]; then
+    r=$(capi GET "/databases/$db") || return 1
+    dname=$(jq -r '.name // "?"' <<<"$r")
+    capi DELETE "/databases/$db?delete_volumes=true" >/dev/null || return 1
+    VPS_STATE=$f state_set DB_UUID '' || return 1
+    echo "staging database $dname ($db) deleted with its volume"
+  fi
+  echo "left as they are: the DNS record ${domain:-of the staging domain} (remove it at the DNS provider if it should go), the staging branch, and the GitHub webhook (production uses it)"
+}
+
 # --- off-site backups: Coolify scheduled backups copied to S3-compatible storage (RESTORE.md) ---
 
 # S3 credentials: S3_KEY= and S3_SECRET= lines in S3_ENV (default ~/.config/vps-setup/s3.env,
@@ -1266,8 +1519,9 @@ dns_set_a() {
 
 # State keys that belong to one server and its Coolify: on a new server they point at nothing,
 # and verify.sh and phase 05 would skip steps while they are set (ADMIN_REGISTERED, APP_UUID,
-# WEBHOOK, HOOK_ID, HANDOVER_DONE). SERVICE_<NAME>_UUID keys count too. Everything else survives.
-REBUILD_CLEAR="VPS_IP SERVER_NAME ADMIN_REGISTERED COOLIFY_VERSION PROJECT_UUID DB_UUID APP_UUID KEY_UUID HOOK_ID WEBHOOK S3_STORAGE_UUID BACKUP_UUID ALERTS HANDOVER_DONE ROLLBACK_COMMIT LAST_DUMP PG_UPGRADE_OLD PG_UPGRADE_NEW PG_UPGRADE_DUMP COOLIFY_PROJECT_UUID COOLIFY_APP_UUID"
+# WEBHOOK, HOOK_ID, HANDOVER_DONE). SERVICE_<NAME>_UUID keys count too, and STAGING_APP_UUID (the
+# staging app is made again with STAGING.md, its database empty). Everything else survives.
+REBUILD_CLEAR="VPS_IP SERVER_NAME ADMIN_REGISTERED COOLIFY_VERSION PROJECT_UUID DB_UUID APP_UUID KEY_UUID HOOK_ID WEBHOOK S3_STORAGE_UUID BACKUP_UUID ALERTS HANDOVER_DONE ROLLBACK_COMMIT LAST_DUMP PG_UPGRADE_OLD PG_UPGRADE_NEW PG_UPGRADE_DUMP COOLIFY_PROJECT_UUID COOLIFY_APP_UUID STAGING_APP_UUID"
 
 rebuild_clears() {
   case " $REBUILD_CLEAR " in *" $1 "*) return 0 ;; esac
