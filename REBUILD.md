@@ -4,9 +4,10 @@ You are an AI coding agent helping a user whose server is gone for good: deleted
 the provider account closed, or broken past what `DOCTOR.md` can fix. Or they move on purpose
 to a new server (a new Ubuntu release, another Hetzner project). Work from the repo root of
 `vps-setup-one-shot`; every command starts with `. ./lib.sh` and, for an app set up through
-PREPARE-APP, `VPS_STATE=.coolify.env` in that app's repo. Rules from `SETUP.md` apply: API only
-via `capi`, server commands only via `rssh`, nothing destructive without the user's yes, prove
-every step.
+PREPARE-APP, `VPS_STATE=.coolify.env` in that app's repo (a staging app's
+`.coolify.staging.env` is not rebuilt this way, see step 7). Rules from `SETUP.md` apply: API
+only via `capi`, server commands only via `rssh`, nothing destructive without the user's yes,
+prove every step.
 
 **Not run on a real server yet.** `s3_backup_list` and `rebuild_inventory` are tested against a
 fake Coolify API, a stubbed `ssh` and a fake `docker` only (`test/lib.test.sh`). No server has
@@ -227,6 +228,12 @@ In each app's repo, with `VPS_STATE=.coolify.env`:
 3. Step 5 of this file for the app's database (the old uuid from the app's
    `.coolify.env.before-rebuild-<DATE>`), before its first deploy.
 4. `PREPARE-APP.md` step 6: deploy and check, with the app's own table for the row count.
+
+A staging app (`STAGING.md`, a `.coolify.staging.env` next to the app's state) comes back in a
+second round, after its production app works: no restore, its database starts empty, as the
+first time. Move the old file aside (`mv .coolify.staging.env .coolify.staging.env.before-rebuild-<DATE>`;
+it holds uuids only and the old server's hook id), then `STAGING.md` from step 1. Its
+`STAGING_APP_UUID` in the production state is among the keys `rebuild_inventory` clears.
 
 ## 8. Backups, alerts, services
 

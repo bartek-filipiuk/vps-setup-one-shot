@@ -135,8 +135,13 @@ Rules that apply to every item:
   and phase 06 use them. Done when: the harness runs two projects side by side.
   (Helpers, runbook changes and PROJECTS.md generation done; not run on a server yet.)
 - **R11 Staging without a second server.** A `staging` branch deploys to `staging.<app-domain>`
-  as a second app with its own database; promotion is a merge to `main`. Done when: the harness
-  pushes to `staging`, sees it change, merges, sees production change.
+  as a second app with its own database; promotion is a merge to `main`. `STAGING.md` and
+  `staging_init`, `app_env_keys`, `app_env_set`, `app_create`, `app_basic_auth`,
+  `apps_webhook_secret` and `staging_teardown` in `lib.sh`: the same project in the `staging`
+  environment, an empty database (production data only on an explicit opt-in), variable names
+  from production but never values, basic auth, one GitHub webhook with a shared secret, teardown
+  only on the user's yes. Done when: the harness pushes to `staging`, sees it change, merges, sees
+  production change. (Runbook and helpers done; not run on a server yet.)
 
 ## Ideas
 

@@ -205,6 +205,15 @@ check "projects: two projects sorted, unknown environment last" \
   "$(sed -n '/^Apps$/,/^Services$/p' <<<"$out" | grep -E '^  |^OK +app ' | sed 's/  */ /g; s/ running.*//' | paste -sd '|' -)" \
   " project acme / production|OK app blog| project acme / staging|OK app shop| project starter / production|OK app starter| (no project)|OK app lost"
 check "projects: grouped run exit" "$rc" "0"
+# staging (R11): the staging app of STAGING.md sits under its project's staging environment,
+# with its own certificate line (basic auth does not change the TLS check)
+run '.project.p1.environments += [{id: 5, uuid: "e5", name: "staging", project_id: 1}]
+  | .apps += [{uuid: "a5", name: "starter-staging", status: "running:healthy", fqdn: "https://staging.app.example.test", environment_id: 5}]
+  | .deploys.a5 = .deploys.a1'
+check "staging: group, app and its cert under project starter / staging" \
+  "$(sed -n '/^Apps$/,/^Services$/p' <<<"$out" | grep -E '^  project |^OK +(app|cert) ' | sed 's/  */ /g; s/ running.*//; s/ [0-9]* days left//' | paste -sd '|' -)" \
+  " project starter / production|OK app starter|OK cert app.example.test| project starter / staging|OK app starter-staging|OK cert staging.app.example.test"
+check "staging: exit" "$rc" "0"
 expect "projects 404" 1 '^WARN +projects +n/a \(could not read; apps and services listed without their project\)$' 'del(.projects)'
 has "projects 404: apps still listed" "$out" '^OK +app starter +running:healthy'
 check "projects 404: no group lines" "$(grep -cE '^  (project |\(no project\))' <<<"$out")" "0"

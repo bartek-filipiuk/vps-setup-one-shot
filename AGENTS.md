@@ -18,6 +18,7 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 | the app is down, a deploy failed, 502, certificate error | `DOCTOR.md` | `/vps-doctor` |
 | the monthly checkup | `CHECKUP.md` | `/vps-checkup` |
 | an existing app onto the server, from its repo | `PREPARE-APP.md` | `/vps-prepare-app` |
+| a staging copy of an app from its staging branch, promotion by merge | `STAGING.md` | `/vps-staging` |
 | back to the previous version after a bad deploy | `ROLLBACK.md` | `/vps-rollback` |
 | a database back from an off-site backup | `RESTORE.md` | `/vps-restore` |
 | a self-hosted tool on its own domain | `SERVICES.md` | `/vps-services` |
@@ -28,7 +29,8 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 ## Layout
 
 `SETUP.md` (entry point the user's agent reads), `phases/` (00–06, one file per step),
-`PREPARE-APP.md` (moving an existing app onto the server), `ROLLBACK.md` (back to the previous
+`PREPARE-APP.md` (moving an existing app onto the server), `STAGING.md` (a staging app and
+database from the `staging` branch on the same server, promotion by merge, teardown), `ROLLBACK.md` (back to the previous
 version after a bad deploy), `RESTORE.md` (a database back from an off-site S3 backup), `DOCTOR.md`
 (from "my app is down" to a fix or to "this needs a human"), `HANDOVER.md` (a server or a
 project to a client, or a colleague joining, and removing the old access), `SERVICES.md`
@@ -39,7 +41,9 @@ backups), `CHECKUP.md` (the monthly checkup: `checkup.sh`, what each line means,
 `lib.sh`
 (state file, Coolify API helpers, deploy with dump and rollback point, rollback, restore, app logs,
 S3 storage and off-site backups, Coolify notifications to Discord, team members and stored keys,
-one-click services, projects and environments and the generated PROJECTS.md, Postgres major
+one-click services, projects and environments and the generated PROJECTS.md, staging (the
+staging state, environment variable names, a second app, basic auth, the shared webhook
+secret, teardown), Postgres major
 versions, DNS records through the Cloudflare API, the
 rebuild inventory and the backups in the bucket, the read-only checkup helpers: hcloud list and
 describe only, advisories, backup success rate, the checkup log), `verify.sh` (reads the real
@@ -84,7 +88,7 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
   every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md`,
-  `PREPARE-APP.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md` and `CHECKUP.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
+  `PREPARE-APP.md`, `STAGING.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md` and `CHECKUP.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
   `json`, ...). `bash test/extract-blocks.test.sh` is its self-test and must print `ALL PASSED`.
 - `bash test/packaging.sh` must print `ALL POINTERS OK`: the "Entry points" table, the plugin and
   marketplace manifests, `skills/` and the Cursor rule agree, and the pointers carry no runbook

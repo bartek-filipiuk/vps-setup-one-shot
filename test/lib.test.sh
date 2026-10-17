@@ -59,6 +59,19 @@ APPS = [
   {"uuid": "a-orphan", "name": "orphan|pipe", "status": "running:unknown", "fqdn": None, "git_repository": None, "environment_id": 99}]
 DBS = [{"uuid": "db-pg", "name": "starter-db", "status": "running:healthy", "database_type": "standalone-postgresql", "environment_id": 1,
         "internal_db_url": "postgres://app:pw-SECRET-123@db-pg:5432/app", "postgres_password": "pw-SECRET-123"}]
+# staging (R11): env lists as the live 4.3.23 GET /applications/{uuid}/envs answers (no value field);
+# apps created through POST /applications/private-deploy-key live in CREATED
+def env(u, k, build=False, preview=False, coolify=False):
+    return {"uuid": u, "key": k, "is_buildtime": build, "is_runtime": True, "is_preview": preview, "is_coolify": coolify,
+            "is_literal": False, "is_multiline": False, "is_shown_once": False, "is_shared": False, "is_required": False,
+            "is_really_required": False, "is_buildpack_control": False, "comment": None, "order": None, "version": "4.3.23",
+            "created_at": "2026-10-16T10:00:00.000000Z", "updated_at": "2026-10-16T10:00:00.000000Z"}
+ENVS = {"a-shop": [env("ev1", "DATABASE_URL"), env("ev2", "AUTH_SECRET"), env("ev3", "NEXT_PUBLIC_SITE_URL", build=True),
+                   env("ev4", "AUTH_SECRET", preview=True), env("ev5", "SMTP_HOST"), env("ev6", "STRIPE_API_KEY"),
+                   env("ev7", "SOURCE_COMMIT", coolify=True)],
+        "a-new": [env("ev8", "AUTH_SECRET"), env("ev9", "AUTH_SECRET", preview=True)]}
+ENV_VAL = "v-SECRET-1|a=b c\nline 2"
+CREATED = {}
 import os
 DOWN = os.path.join(os.path.dirname(sys.argv[2]), "projects.down")   # touch it: GET /projects answers 500
 # Discord settings as the live GET answers (no URL in it); PATCH accepts only these keys plus the URL.
@@ -173,6 +186,12 @@ class H(BaseHTTPRequestHandler):
             seq("logs %s %s" % (a, q))
             if a == "stopped-app": return self.send(400, {"message": "Application is not running."})
             return self.send(200, {"logs": "2026-10-14T10:00:00Z ready on :::3000\nGET /api/health 200\n  stack line \"quoted\""})
+        if re.match(r"^/applications/[^/]+/envs$", p):
+            a = p.split("/")[2]
+            return self.send(200, ENVS.get(a, []))
+        if p == "/applications/a-gone": return self.send(404, {"message": "Application not found."})
+        if p.startswith("/applications/") and p.count("/") == 2 and p.split("/")[2] in CREATED:
+            return self.send(200, CREATED[p.split("/")[2]])
         if p.startswith("/applications/") and p.count("/") == 2:
             a = p.split("/")[2]
             return self.send(200, {"uuid": a, "status": "exited:unhealthy" if a == "stopped-app" else "running:healthy"})
@@ -188,6 +207,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"uuid": u, "name": u + "-db", "database_type": "standalone-postgresql",
                                    "image": "postgres:latest" if u == "db-latest" else "postgres:%s-alpine" % u[5:],
                                    "postgres_user": "app", "postgres_db": "app", "postgres_password": "pw-SECRET-123"})
+        if p == "/databases/db-stg":
+            return self.send(200, {"uuid": "db-stg", "name": "shop-staging-db", "status": "running:healthy"})
         if p == "/databases/db-redis":
             return self.send(200, {"uuid": "db-redis", "database_type": "standalone-redis", "image": "redis:7.2"})
         if p == "/s3-storages": return self.send(200, list(storages.values()))
@@ -278,6 +299,16 @@ class H(BaseHTTPRequestHandler):
             if "invalid.example.com" in url:
                 return self.send(422, {"message": "Validation failed.", "errors": {"urls.0.name": ["Service 'x' does not exist in the compose file."]}})
             return self.send(201, {"uuid": "svc-new", "domains": [url]})
+        if p == "/applications/private-deploy-key":
+            b = json.loads(body); seq("app POST %s" % json.dumps(b, sort_keys=True, separators=(",", ":")))
+            u = "a-new" if b["name"] == "shop-staging" else "a-" + b["name"]
+            CREATED[u] = {"uuid": u, "name": b["name"], "status": "exited", "fqdn": None, "git_branch": b["git_branch"]}
+            return self.send(201, {"uuid": u})
+        if re.match(r"^/applications/[^/]+/envs$", p):
+            b = json.loads(body); a = p.split("/")[2]
+            seq("env POST %s %s preview=%s value=%s" % (a, b["key"], b.get("is_preview"), "ok" if b.get("value") == ENV_VAL else "ok2" if b.get("value") == "v-SECRET-1 a=b|c" else "other"))
+            ENVS.setdefault(a, []).append(env("ev-new", b["key"]))
+            return self.send(201, {"uuid": "ev-new", "echo": b})   # the value comes back: the lib must not print it
         if p.endswith("/rollback"):
             seq("rollback " + p.split("/")[2] + " " + json.loads(body)["commit"])
             return self.send(200, {"message": "Rollback deployment queued.", "deployment_uuid": "d-good"})
@@ -298,6 +329,20 @@ class H(BaseHTTPRequestHandler):
                 "ok" if u == WEBHOOK else "absent" if u is None else "other"))
             # with a read:sensitive token the response carries the URL: the lib must never print it
             return self.send(200, {"message": "Notification settings updated.", "data": notif | {"discord_webhook_url": u}})
+        if p.startswith("/applications/") and p.count("/") == 2:
+            a = p.split("/")[2]
+            seq("app PATCH %s %s" % (a, ",".join(sorted(b))))
+            if a == "a-down": return self.send(500, {"message": "Server Error"})
+            if a == "a-noauth" and b.get("is_http_basic_auth_enabled"):   # a refusal that quotes the password back
+                return self.send(422, {"message": "Validation failed.", "errors": {"http_basic_auth_password": ["bad: %s" % b.get("http_basic_auth_password")]}})
+            if "domains" in b: seq("app PATCH %s domains=%s health=%s:%s" % (a, b["domains"], b.get("health_check_path"), b.get("health_check_port")))
+            if "is_http_basic_auth_enabled" in b:
+                seq("app PATCH %s basic_auth=%s user=%s password=%s" % (a, b["is_http_basic_auth_enabled"], b.get("http_basic_auth_username"),
+                    "absent" if "http_basic_auth_password" not in b else "ok" if b["http_basic_auth_password"] == "ba-SECRET-pass1" else "other"))
+            if "manual_webhook_secret_github" in b:
+                seq("app PATCH %s webhook=%s" % (a, "ok" if b["manual_webhook_secret_github"] == "wh-sec-0123456789abcdef" else "other"))
+            if a in CREATED and "domains" in b: CREATED[a]["fqdn"] = b["domains"]
+            return self.send(200, {"uuid": a})
         if p.startswith("/s3-storages/"):
             u = p.split("/")[2]; storages[u].update({k: v for k, v in b.items() if k not in ("key", "secret")})
             seq("s3 PATCH %s creds=%s" % (u, "ok" if (b.get("key"), b.get("secret")) == (S3_KEY, S3_SECRET) else "bad"))
@@ -320,6 +365,9 @@ class H(BaseHTTPRequestHandler):
         p = self.path.removeprefix("/api/v1")
         seq("DELETE " + p)
         if p.startswith("/services/"): return self.send(200, {"message": "Deletion request queued."})
+        if p.startswith("/applications/") or p.startswith("/databases/"):
+            if p.startswith("/applications/a-gone"): return self.send(404, {"message": "Application not found."})
+            return self.send(200, {"message": "Deletion request queued."})
         self.send(404, {"message": "not found"})
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 EOF
@@ -1356,9 +1404,185 @@ has "facts: docker disk use" "$out" "^ddf Images$(printf '\t')2\.1GB"
 has "facts: end marker" "$out" '^facts done$'
 check "facts: the server script changes nothing (no rm, kill, write)" "$(grep -cE '\brm |\bkill|>[^&/]|\btee\b|docker (rm|stop|kill|run)|systemctl' "$HOME/facts.stdin")" "0"
 
+# staging (R11): the staging state from production's, env names without values, the second app
+# from the staging branch, basic auth, the shared webhook secret, teardown only with --yes.
+# Runs under the jq and curl argv wrappers: no value, password or secret on a command line.
+SD=$HOME/shop; mkdir -p "$SD"; PS=$SD/.coolify.env; SS=$SD/.coolify.staging.env; rm -f "$SS"
+printf '%s\n' APP_UUID=a-shop GH_REPO=acme/shop KEY_UUID=key-gh APP_DOMAIN=shop.acme.example.com PROJECT_UUID=p-acme \
+  "PROJECT_NAME=Acme Corp" ENV_NAME=production APP_NAME=shop "APP_DIR=$SD" HOOK_ID=42 WEBHOOK=github DB_UUID=db-pg > "$PS"
+: > "$HOME/seq.log"
+s3run staging_init "$PS" "$SS"
+check "staging_init rc:output" "$rc:$out" "0:staging plan, nothing created yet: app shop-staging from branch staging on https://staging.shop.acme.example.com, project Acme Corp / staging, its own empty database shop-staging-db
+state: $SS (production: $PS)"
+check "staging_init: exact file" "$(cat "$SS")" "GH_REPO=acme/shop
+KEY_UUID=key-gh
+APP_DIR=$SD
+PROJECT_NAME=Acme Corp
+HOOK_ID=42
+PROJECT_UUID=p-acme
+APP_NAME=shop-staging
+APP_DOMAIN=staging.shop.acme.example.com
+ENV_NAME=staging
+GIT_BRANCH=staging
+PROD_STATE=$PS"
+check "staging_init: mode 600" "$(stat -c %a "$SS" 2>/dev/null || stat -f %Lp "$SS")" "600"
+check "staging_init: no API call" "$(cat "$HOME/seq.log")" ""
+check "staging_init: production state untouched" "$(grep -c . "$PS")" "12"
+check "staging: project_ctx of the staging state" "$(VPS_STATE=$SS project_ctx 2>&1)" "p-acme staging"
+printf 'COOLIFY_APP_UUID=a-old\nCOOLIFY_PROJECT_UUID=p-old\nCOOLIFY_DOMAIN=https://old.example.com\nGH_REPO=u/old\nKEY_UUID=key-gh\nAPP_NAME=old\n' > "$HOME/old-prod.env"
+s3run staging_init "$HOME/old-prod.env" "$HOME/old-stg.env"
+check "staging_init: a pre-R09 .coolify.env" "$rc:$(VPS_STATE=$HOME/old-stg.env state_get PROJECT_UUID):$(VPS_STATE=$HOME/old-stg.env state_get APP_DOMAIN)" "0:p-old:staging.old.example.com"
+s3run staging_init "$PS" "$SS"
+check "staging_init: a rerun before the app exists writes the same file" "$rc:$(grep -c . "$SS")" "0:11"
+VPS_STATE=$SS state_set APP_UUID a-stg
+s3run staging_init "$PS" "$SS"
+check "staging_init: refuses an existing staging app" "$rc:$out" "1:staging_init: $SS already has APP_UUID=a-stg; staging exists, nothing changed"
+VPS_STATE=$SS state_set APP_UUID ''
+grep -v '^KEY_UUID=' "$PS" > "$HOME/nokey.env"
+s3run staging_init "$HOME/nokey.env" "$HOME/x.env"
+check "staging_init: production without a deploy key" "$rc:$out" "1:staging_init: $HOME/nokey.env has no KEY_UUID; production must be set up first (phase 05 or PREPARE-APP.md)"
+s3run staging_init "$PS" "$PS"
+check "staging_init: same file refused" "$rc:$out" "1:staging_init: the staging state must be another file than $PS"
+s3run staging_init "$HOME/none.env" "$SS"
+check "staging_init: no production state" "$rc:$out" "1:staging_init: no production state in $HOME/none.env"
+check "staging_init: refusals wrote nothing" "$([ -e "$HOME/x.env" ] && echo written || echo none)" "none"
+
+# app_env_keys: names, build flag, kind; preview copies and Coolify's own left out
+T=$'\t'
+s3run app_env_keys a-shop
+check "app_env_keys" "$rc:$out" "0:key${T}build_time${T}kind
+AUTH_SECRET${T}no${T}secret
+DATABASE_URL${T}no${T}database
+NEXT_PUBLIC_SITE_URL${T}yes${T}ask
+SMTP_HOST${T}no${T}ask
+STRIPE_API_KEY${T}no${T}secret"
+s3run app_env_keys ../x; check "app_env_keys bad uuid" "$rc" "1"
+
+# app_env_set: the old key deleted (also its preview copy), then one POST; value from stdin only
+: > "$HOME/seq.log"
+out=$(printf 'v-SECRET-1|a=b c\nline 2\n' | app_env_set a-new AUTH_SECRET 2>&1); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"
+check "app_env_set rc:output" "$rc:$out" "0:set AUTH_SECRET (replaced)"
+check "app_env_set: DELETE both, then POST with the value" "$(cat "$HOME/seq.log")" "DELETE /applications/a-new/envs/ev8
+DELETE /applications/a-new/envs/ev9
+env POST a-new AUTH_SECRET preview=False value=ok"
+: > "$HOME/seq.log"
+out=$(printf 'v-SECRET-1|a=b c\nline 2' | app_env_set a-new NEW_ONE 2>&1); rc=$?
+check "app_env_set new key: no DELETE" "$rc:$out:$(cat "$HOME/seq.log")" "0:set NEW_ONE:env POST a-new NEW_ONE preview=False value=ok"
+: > "$HOME/seq.log"
+out=$(printf 'x' | app_env_set a-new 'BAD-KEY' 2>&1); rc=$?
+check "app_env_set bad key" "$rc:$out" "1:not a variable name: 'BAD-KEY'"
+out=$(app_env_set a-new EMPTY </dev/null 2>&1); rc=$?
+check "app_env_set no value" "$rc:$out" "1:app_env_set: no value on stdin for EMPTY; nothing sent"
+check "app_env_set refused: nothing sent" "$(cat "$HOME/seq.log")" ""
+# STAGING.md step 5: the .env.staging upload loop, '=' and '|' kept in values, comments skipped
+printf '# staging values\n\nSMTP_HOST=v-SECRET-1 a=b|c\nNEXT_PUBLIC_SITE_URL=v-SECRET-1 a=b|c\n' > "$SD/.env.staging"
+: > "$HOME/seq.log"
+out=$(grep -Ev '^[[:space:]]*(#|$)' "$SD/.env.staging" | while IFS='=' read -r k v; do printf '%s' "$v" | app_env_set a-new "$k"; done 2>&1)
+printf '%s\n' "$out" >> "$HOME/outputs.log"
+check "staging upload loop" "$out:$(grep -c 'value=ok2$' "$HOME/seq.log")" "set SMTP_HOST
+set NEXT_PUBLIC_SITE_URL:2"
+
+# app_create: the domain must be free; then POST from the state and PATCH domain and health check
+: > "$HOME/seq.log"
+VPS_STATE=$SS s3run app_create staging 3000 /api/health
+check "app_create: domain in use refused" "$rc:$out" "1:app_create: staging.shop.acme.example.com is already used by app shop; pick another domain or free it first. Nothing was sent."
+check "app_create refused: no POST or PATCH" "$(grep -cE 'POST|PATCH' "$HOME/seq.log")" "0"
+VPS_STATE=$SS state_set APP_DOMAIN staging.shop2.acme.example.com
+: > "$HOME/seq.log"
+VPS_STATE=$SS s3run app_create staging 3000 /api/health
+check "app_create rc:output" "$rc:$out" "0:app shop-staging: a-new (created in p-acme / staging, branch staging, not deployed)
+domain https://staging.shop2.acme.example.com and health check /api/health on port 3000 set"
+check "app_create: exact POST, then PATCH" "$(grep -E '^app ' "$HOME/seq.log")" 'app POST {"build_pack":"dockerfile","environment_name":"staging","git_branch":"staging","git_repository":"git@github.com:acme/shop.git","instant_deploy":false,"name":"shop-staging","ports_exposes":"3000","private_key_uuid":"key-gh","project_uuid":"p-acme","server_uuid":"s2"}
+app PATCH a-new domains,health_check_enabled,health_check_path,health_check_port
+app PATCH a-new domains=https://staging.shop2.acme.example.com health=/api/health:3000'
+check "app_create: state" "$(VPS_STATE=$SS state_get APP_UUID):$(VPS_STATE=$SS state_get COOLIFY_APP_UUID):$(VPS_STATE=$SS state_get COOLIFY_DOMAIN):$(VPS_STATE=$SS state_get COOLIFY_PROJECT_UUID)" \
+  "a-new:a-new:https://staging.shop2.acme.example.com:p-acme"
+: > "$HOME/seq.log"
+VPS_STATE=$SS s3run app_create staging 3000 /api/health
+check "app_create rerun: existing, nothing sent" "$rc:$out:$(grep -cE 'POST|PATCH' "$HOME/seq.log")" "0:app shop-staging: a-new (existing, on https://staging.shop2.acme.example.com):0"
+out=$({ app_create "a b" 3000 /h; app_create staging 99999 /h; app_create staging 3000 health; } 2>&1)
+has "app_create: bad branch" "$out" "^not a branch name: 'a b'$"
+has "app_create: bad port" "$out" "^not a port: '99999'$"
+has "app_create: bad health path" "$out" "^not a health check path: 'health' \(like /api/health\)$"
+printf 'APP_NAME=x\nGH_REPO=u/x\nKEY_UUID=k1\nAPP_DOMAIN=staging.x.example.com\nPROJECT_UUID=p-acme\nENV_NAME=staging\n' > "$HOME/base.env"
+: > "$HOME/seq.log"
+VPS_STATE=$HOME/base.env app_create staging 8080 /healthz /starter >/dev/null 2>&1
+has "app_create: base_directory sent" "$(cat "$HOME/seq.log")" '^app POST \{"base_directory":"/starter",.*"ports_exposes":"8080"'
+
+# app_basic_auth: password from stdin, never in argv or output; off; a 422 that quotes it back
+: > "$HOME/seq.log"
+out=$(printf 'ba-SECRET-pass1\n' | app_basic_auth a-new preview 2>&1); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"
+check "app_basic_auth on" "$rc:$out" "0:basic auth on for a-new, user preview; Coolify applies it with the next deploy [verify]"
+check "app_basic_auth: fields sent" "$(cat "$HOME/seq.log")" "app PATCH a-new http_basic_auth_password,http_basic_auth_username,is_http_basic_auth_enabled
+app PATCH a-new basic_auth=True user=preview password=ok"
+: > "$HOME/seq.log"
+s3run app_basic_auth a-new off
+check "app_basic_auth off" "$rc:$out:$(sed -n 2p "$HOME/seq.log")" "0:basic auth off for a-new:app PATCH a-new basic_auth=False user=None password=absent"
+out=$(printf 'ba-SECRET-pass1' | app_basic_auth a-noauth preview 2>&1); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"
+check "app_basic_auth 422: UI fallback" "$rc:$out" "1:Coolify refused the basic-auth fields (HTTP 422). Set it in the UI instead: the app -> Advanced -> HTTP Basic Auth (user preview when turning it on), then Save and redeploy."
+out=$(printf 'ba-SECRET-pass1' | app_basic_auth a-down preview 2>&1); rc=$?
+check "app_basic_auth other error: code only" "$rc:$out" "1:app_basic_auth: PATCH /applications/a-down failed (HTTP 500)"
+: > "$HOME/seq.log"
+out=$(printf 'short' | app_basic_auth a-new preview 2>&1); rc=$?
+check "app_basic_auth short password" "$rc:$out" "1:app_basic_auth: the password on stdin is missing or shorter than 8 characters; nothing sent"
+out=$(printf 'ba-SECRET-pass1' | app_basic_auth a-new 'a:b' 2>&1); rc=$?
+check "app_basic_auth bad user" "$rc:$out" "1:not a basic-auth user name: 'a:b' (letters, digits, . _ -)"
+check "app_basic_auth refused: nothing sent" "$(cat "$HOME/seq.log")" ""
+
+# apps_webhook_secret: one secret onto production and staging; partial failure said plainly
+: > "$HOME/seq.log"
+out=$(printf 'wh-sec-0123456789abcdef\n' | apps_webhook_secret a-shop a-new 2>&1); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"
+check "apps_webhook_secret" "$rc:$out" "0:webhook secret set on 2 apps: a-shop a-new"
+check "apps_webhook_secret: both apps" "$(grep webhook= "$HOME/seq.log")" "app PATCH a-shop webhook=ok
+app PATCH a-new webhook=ok"
+out=$(printf 'wh-sec-0123456789abcdef' | apps_webhook_secret a-shop a-down a-new 2>&1); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"
+check "apps_webhook_secret partial" "$rc:$out" "1:apps_webhook_secret: failed on a-down; the new secret is on: a-shop. Pushes to those apps are rejected until the GitHub hook has it too: patch the GitHub hook with the same value to restore production's push-to-deploy, or rotate again."
+: > "$HOME/seq.log"
+out=$(printf 'short' | apps_webhook_secret a-shop 2>&1); rc=$?
+check "apps_webhook_secret short secret" "$rc:$out:$(cat "$HOME/seq.log")" "1:apps_webhook_secret: the secret on stdin is missing or shorter than 16 characters; nothing sent:"
+
+# staging_teardown: only with --yes, never production's uuids, both deletes, the link cleared
+VPS_STATE=$SS state_set DB_UUID db-stg; VPS_STATE=$PS state_set STAGING_APP_UUID a-new
+: > "$HOME/seq.log"
+s3run staging_teardown "$SS"
+check "staging_teardown without --yes" "$rc:$out" "1:staging_teardown: refusing without --yes. This deletes the staging app a-new and its database db-stg with their volumes: the staging data is gone for good. Ask the user, then: staging_teardown $SS --yes"
+s3run staging_teardown "$SS" yes
+check "staging_teardown 'yes' (not --yes) refused" "$rc" "1"
+s3run staging_teardown "$PS" --yes
+check "staging_teardown of the production state" "$rc:$out" "1:staging_teardown: $PS is not a staging state (no PROD_STATE, or ENV_NAME is not staging); nothing sent"
+cp -p "$SS" "$HOME/twisted.env"; VPS_STATE=$HOME/twisted.env state_set APP_UUID a-shop
+s3run staging_teardown "$HOME/twisted.env" --yes
+check "staging_teardown: production's app refused" "$rc:$out" "1:staging_teardown: $HOME/twisted.env points at production's app or database ($PS); nothing sent"
+VPS_STATE=$HOME/twisted.env state_set APP_UUID a-new; VPS_STATE=$HOME/twisted.env state_set DB_UUID db-pg
+s3run staging_teardown "$HOME/twisted.env" --yes
+check "staging_teardown: production's database refused" "$rc" "1"
+check "staging_teardown refused: no request sent" "$(cat "$HOME/seq.log")" ""
+s3run staging_teardown "$SS" --yes
+check "staging_teardown rc:output" "$rc:$out" "0:staging app shop-staging (a-new) deleted with its volumes
+staging database shop-staging-db (db-stg) deleted with its volume
+left as they are: the DNS record staging.shop2.acme.example.com (remove it at the DNS provider if it should go), the staging branch, and the GitHub webhook (production uses it)"
+check "staging_teardown: app, then database" "$(cat "$HOME/seq.log")" "DELETE /applications/a-new?delete_volumes=true&delete_configurations=true&docker_cleanup=true
+DELETE /databases/db-stg?delete_volumes=true"
+check "staging_teardown: states cleared" "$(VPS_STATE=$SS state_get APP_UUID):$(VPS_STATE=$SS state_get DB_UUID):$(VPS_STATE=$PS state_get STAGING_APP_UUID):$(VPS_STATE=$PS state_get APP_UUID)" ":::a-shop"
+s3run staging_teardown "$SS" --yes
+check "staging_teardown rerun: nothing left" "$rc:$out" "1:staging_teardown: no APP_UUID or DB_UUID in $SS; nothing to delete"
+cp -p "$SS" "$HOME/noprod.env"; VPS_STATE=$HOME/noprod.env state_set APP_UUID a-x; VPS_STATE=$HOME/noprod.env state_set PROD_STATE "$HOME/none.env"
+: > "$HOME/seq.log"
+s3run staging_teardown "$HOME/noprod.env" --yes
+check "staging_teardown: missing production state" "$rc:$out:$(cat "$HOME/seq.log")" "1:staging_teardown: the production state $HOME/none.env is missing or empty; nothing sent:"
+VPS_STATE=$SS state_set APP_UUID a-gone; VPS_STATE=$SS state_set DB_UUID db-stg; VPS_STATE=$PS state_set STAGING_APP_UUID a-gone
+: > "$HOME/seq.log"
+s3run staging_teardown "$SS" --yes
+check "staging_teardown: app already gone (404)" "$rc:$(sed -n 1,2p <<<"$out")" "0:staging app a-gone not in Coolify any more (404); cleared from the state
+staging database shop-staging-db (db-stg) deleted with its volume"
+check "staging_teardown 404: only the database DELETE" "$(cat "$HOME/seq.log")" "DELETE /databases/db-stg?delete_volumes=true"
+check "staging_teardown 404: states cleared" "$(VPS_STATE=$SS state_get APP_UUID):$(VPS_STATE=$SS state_get DB_UUID):$(VPS_STATE=$PS state_get STAGING_APP_UUID)" "::"
+check "rebuild clears STAGING_APP_UUID" "$(rebuild_clears STAGING_APP_UUID && echo yes)" "yes"
+check "staging: argv log has the env POSTs" "$(grep -c '^curl .*/applications/a-new/envs' "$HOME/argv.log" | awk '{print ($1 > 0) ? "yes" : "no"}')" "yes"
+
 # the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
-leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
-check "s3 creds, webhook URL and Cloudflare tokens in no argv and no output" "${leaks:-none}" "none"
+leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-|v-SECRET-1|ba-SECRET-pass1|wh-sec-0123' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
+check "s3 creds, webhook URL, Cloudflare tokens and staging secrets in no argv and no output" "${leaks:-none}" "none"
 check "argv log was written" "$(grep -c '^jq ' "$HOME/argv.log" | awk '{print ($1 > 10) ? "yes" : "no"}')" "yes"
 PATH=${PATH#"$HOME/argvbin:"}; unset TMPDIR BACKUP_POLL_SECONDS
 
