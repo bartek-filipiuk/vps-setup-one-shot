@@ -112,16 +112,15 @@ the UI) is used as it is.
 
 ## 4. The database (you)
 
-The same body as phase 05 step 3, with the staging state; skip when S already has a `DB_UUID`
-that `capi GET "/databases/<uuid>"` finds:
+The same body as phase 05 step 3, with the staging state; the password reaches `jq` on stdin,
+not as an argument. Skip when S already has a `DB_UUID` that `capi GET "/databases/<uuid>"` finds:
 
 ```
 . "$SETUP_DIR/lib.sh"; P="<PROD_STATE>"; S="$(VPS_STATE="$P" state_get APP_DIR)/.coolify.staging.env"
 VPS_STATE=$S; read -r PU E < <(project_ctx) && [ "$E" = staging ] &&
-B=$(jq -n --arg p "$PU" --arg e "$E" --arg s "$(coolify_server)" \
-  --arg n "$(state_get APP_NAME)-db" --arg pw "$(openssl rand -hex 24)" \
+B=$(openssl rand -hex 24 | jq -Rn --arg p "$PU" --arg e "$E" --arg s "$(coolify_server)" --arg n "$(state_get APP_NAME)-db" \
   '{project_uuid:$p, server_uuid:$s, environment_name:$e, name:$n,
-    image:"postgres:17-alpine", postgres_user:"app", postgres_password:$pw, postgres_db:"app",
+    image:"postgres:17-alpine", postgres_user:"app", postgres_password:input, postgres_db:"app",
     is_public:false, instant_deploy:true}') &&
 state_set DB_UUID "$(capi POST /databases/postgresql "$B" | jq -r .uuid)"; echo "db: $(state_get DB_UUID)"
 ```

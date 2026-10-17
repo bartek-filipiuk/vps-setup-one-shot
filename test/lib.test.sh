@@ -305,7 +305,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(201, {"uuid": u})
         if re.match(r"^/applications/[^/]+/envs$", p):
             b = json.loads(body); a = p.split("/")[2]
-            seq("env POST %s %s preview=%s value=%s" % (a, b["key"], b.get("is_preview"), "ok" if b.get("value") == ENV_VAL else "other"))
+            seq("env POST %s %s preview=%s value=%s" % (a, b["key"], b.get("is_preview"), "ok" if b.get("value") == ENV_VAL else "ok2" if b.get("value") == "v-SECRET-1 a=b|c" else "other"))
             ENVS.setdefault(a, []).append(env("ev-new", b["key"]))
             return self.send(201, {"uuid": "ev-new", "echo": b})   # the value comes back: the lib must not print it
         if p.endswith("/rollback"):
@@ -1473,6 +1473,13 @@ check "app_env_set bad key" "$rc:$out" "1:not a variable name: 'BAD-KEY'"
 out=$(app_env_set a-new EMPTY </dev/null 2>&1); rc=$?
 check "app_env_set no value" "$rc:$out" "1:app_env_set: no value on stdin for EMPTY; nothing sent"
 check "app_env_set refused: nothing sent" "$(cat "$HOME/seq.log")" ""
+# STAGING.md step 5: the .env.staging upload loop, '=' and '|' kept in values, comments skipped
+printf '# staging values\n\nSMTP_HOST=v-SECRET-1 a=b|c\nNEXT_PUBLIC_SITE_URL=v-SECRET-1 a=b|c\n' > "$SD/.env.staging"
+: > "$HOME/seq.log"
+out=$(grep -Ev '^[[:space:]]*(#|$)' "$SD/.env.staging" | while IFS='=' read -r k v; do printf '%s' "$v" | app_env_set a-new "$k"; done 2>&1)
+printf '%s\n' "$out" >> "$HOME/outputs.log"
+check "staging upload loop" "$out:$(grep -c 'value=ok2$' "$HOME/seq.log")" "set SMTP_HOST
+set NEXT_PUBLIC_SITE_URL:2"
 
 # app_create: the domain must be free; then POST from the state and PATCH domain and health check
 : > "$HOME/seq.log"
