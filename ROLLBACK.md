@@ -3,7 +3,8 @@
 You are an AI coding agent helping a user whose last deploy went wrong. Work from the repo root
 of `vps-setup-one-shot` (or with `SETUP_DIR` pointing at it, as in `PREPARE-APP.md`); every
 command starts with `. ./lib.sh` and, for an app set up through PREPARE-APP, `VPS_STATE=.coolify.env`
-in that app's repo. Rules from `SETUP.md` apply: API only via `capi`, server commands only via
+in that app's repo, or `VPS_STATE=<APP_DIR>/.coolify.staging.env` for its staging app
+(`STAGING.md`). Rules from `SETUP.md` apply: API only via `capi`, server commands only via
 `rssh`, nothing destructive without the user's yes, prove every step.
 
 **Not run on a real server yet.** The functions are tested against a fake Coolify API only

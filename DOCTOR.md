@@ -4,9 +4,10 @@ You are an AI coding agent helping a user whose app does not work: the site is d
 failed, the browser shows 502 or a certificate error, or the server does not answer. Work from
 the repo root of `vps-setup-one-shot` (or with `SETUP_DIR` pointing at it, as in
 `PREPARE-APP.md`); every command starts with `. ./lib.sh` and, for an app set up through
-PREPARE-APP, `VPS_STATE=.coolify.env` in that app's repo. Rules from `SETUP.md` apply: API only
-via `capi`, server commands only via `rssh`, nothing destructive without the user's yes, prove
-every step.
+PREPARE-APP, `VPS_STATE=.coolify.env` in that app's repo, or
+`VPS_STATE=<APP_DIR>/.coolify.staging.env` for a staging app (`STAGING.md`; a `401` there is its
+basic auth, not a fault). Rules from `SETUP.md` apply: API only via `capi`, server commands only
+via `rssh`, nothing destructive without the user's yes, prove every step.
 
 **Not run on a real server yet.** `app_logs` is tested against a fake Coolify API only
 (`test/lib.test.sh`); `GET /applications/{uuid}/logs` was checked on a live Coolify 4.3.23, its

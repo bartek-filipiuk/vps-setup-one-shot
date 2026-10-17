@@ -4,7 +4,8 @@ You are an AI coding agent helping a user who hands a server or a project to som
 client who takes it over, or a colleague who joins. Work from the repo root of
 `vps-setup-one-shot` (or with `SETUP_DIR` pointing at it, as in `PREPARE-APP.md`); every command
 starts with `. ./lib.sh` and, for an app set up through PREPARE-APP, `VPS_STATE=.coolify.env` in
-that app's repo. Rules from `SETUP.md` apply: API only via `capi`, server commands only via
+that app's repo, or `VPS_STATE=<APP_DIR>/.coolify.staging.env` for its staging app
+(`STAGING.md`). Rules from `SETUP.md` apply: API only via `capi`, server commands only via
 `rssh`, nothing destructive without the user's yes, prove every step.
 
 In this file **you** is the agent of whoever runs the step, **the developer** is the person
@@ -181,6 +182,9 @@ capi PATCH "/applications/$(state_get APP_UUID)" "$(jq -n --arg s "$S" '{manual_
 jq -n --arg s "$S" '{secret:$s}' | gh api -X PATCH "repos/$(state_get GH_REPO)/hooks/$(state_get HOOK_ID)/config" --input - >/dev/null && echo "webhook secret rotated"
 ```
 
+With a staging app (`STAGING_APP_UUID` in the state, `STAGING.md`) the hook serves both apps
+with one secret: rotate with `STAGING.md` step 9's block instead, so both get the new value.
+
 Then the test push from phase 05 step 6; expect `200`.
 
 ## 4. DNS (the developer and the new owner)
@@ -217,6 +221,7 @@ token.
 | Database password | Coolify (the database, the app's `DATABASE_URL`) | unchanged | optional, see below |
 | Hetzner API token and project | the developer's `hcloud` context `vps-setup` | the new owner's project and token | the project or its servers move in the Hetzner Console **[verify]**; the developer deletes the token (Console → **Security** → **API tokens**) and `hcloud context delete vps-setup` |
 | GitHub webhook secret | Coolify and the GitHub hook | new value | step 3 |
+| Staging basic-auth password (`STAGING.md`) | the developer's password manager and Coolify (the staging app) | a new one the new owner makes | `STAGING.md` step 6, in their own terminal |
 
 Hetzner: whether a project, or a server inside it, can move to another account is the Console's
 business and has not been tried here **[verify]**. If it cannot, the options are: the developer's

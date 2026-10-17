@@ -92,7 +92,8 @@ Use `$SETUP_DIR/starter/Dockerfile` as the model. Lessons already paid for:
 - pnpm/yarn: `corepack enable` in the build stages and the matching frozen-lockfile install.
 - `NEXT_PUBLIC_*` variables: declare `ARG NEXT_PUBLIC_X` and `ENV NEXT_PUBLIC_X=$NEXT_PUBLIC_X`
   in the build stage, otherwise they are empty in the browser bundle.
-- `.dockerignore`: `node_modules`, `.next`, `.git`, `.env*` (keep `.env.example`), `.coolify.env`.
+- `.dockerignore`: `node_modules`, `.next`, `.git`, `.env*` (keep `.env.example`), `.coolify*.env`
+  (also covers the staging state of `STAGING.md`).
 - Health route (e.g. `/api/health`): 200 when the app and its database work, 503 otherwise,
   no error details in the response.
 - Migrations must run automatically before the new version serves traffic and must fail the
@@ -218,3 +219,6 @@ Then regenerate the server's list of projects, so the new app shows up in it:
 ```
 . "$SETUP_DIR/lib.sh"; projects_md
 ```
+
+A staging copy of this app later (branch `staging`, its own database, `staging.<domain>`,
+promotion by merge): `$SETUP_DIR/STAGING.md`.
