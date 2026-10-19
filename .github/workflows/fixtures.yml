@@ -1,0 +1,31 @@
+name: fixtures
+
+on:
+  pull_request:
+    paths: ['fixtures/**', 'test/fixtures.sh', 'test/fixtures-compose.ci.yaml', '.github/workflows/fixtures.yml']
+  push:
+    branches: [main]
+    paths: ['fixtures/**', 'test/fixtures.sh', 'test/fixtures-compose.ci.yaml', '.github/workflows/fixtures.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [static, python-fastapi, go, compose]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: docker and compose versions
+        run: docker version --format '{{.Server.Version}}' && docker compose version
+      - name: build and health-check the ${{ matrix.fixture }} fixture (no server)
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+        run: bash test/fixtures.sh "$FIXTURE"

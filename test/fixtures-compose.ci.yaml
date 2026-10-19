@@ -1,0 +1,6 @@
+# Override for test/fixtures.sh only: publishes web on a random port of 127.0.0.1 so the test
+# can reach it from the host. The committed fixtures/compose/compose.yaml publishes no ports.
+services:
+  web:
+    ports:
+      - "127.0.0.1::8080"
