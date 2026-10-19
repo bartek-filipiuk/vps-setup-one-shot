@@ -52,8 +52,8 @@ server state and says which phase is next), `status.sh` (one-screen health check
 disk growth and cost, ending with the actions; read-only),
 `references/` (Coolify and Cloudflare API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `fixtures/` (the smallest app of each further stack: static,
-FastAPI, Go, compose; the model `PREPARE-APP.md` uses, see `fixtures/README.md`), `test/` (checks that need no server), `ROADMAP.md` (the plan,
-ids R01…, mirrored in `starter/app/roadmap.ts`), `.claude-plugin/` (the Claude Code plugin
+FastAPI, Go, compose; the model `PREPARE-APP.md` uses, see `fixtures/README.md`), `test/`
+(checks that need no server), `ROADMAP.md` (the plan, ids R01…, mirrored in `starter/app/roadmap.ts`), `.claude-plugin/` (the Claude Code plugin
 and marketplace manifests), `skills/` (one pointer per entry point, the plugin's commands),
 `.cursor/rules/` (the Cursor rule, the same pointers).
 
@@ -85,8 +85,9 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   probes go to 127.0.0.1 only; seams `CHECKUP_SSH`, `CHECKUP_LOG`, `CHECKUP_RECORD`,
   `ADVISORIES_URL`, `CHECKUP_PROBE_TIMEOUT` plus `status.sh`'s). A clean setup must give no `WARN`
   or `FAIL` line.
-- `bash test/fixtures.sh` must print `ALL FIXTURES OK` (needs Docker with compose v2.1+; builds
-  every fixture, checks its health contract, removes what it created by name, never prunes).
+- `bash test/fixtures.sh` must print `ALL FIXTURES OK` (needs Docker with a recent compose v2,
+  for `up --wait --wait-timeout`; builds every fixture, checks its health contract, removes what
+  it created by name, never prunes).
   CI runs it per fixture when `fixtures/` changes (`.github/workflows/fixtures.yml`).
 - `shellcheck lib.sh verify.sh status.sh checkup.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins);
   `bash -n` on every other changed shell file.

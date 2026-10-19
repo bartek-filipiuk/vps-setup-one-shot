@@ -233,7 +233,7 @@ from the internet only by the cloud firewall **[verify]**.
 ## Compose applications (R08, not used yet)
 
 `fixtures/compose` is built in CI only; nothing below has been sent to a Coolify yet, and no
-`lib.sh` helper uses it. From the 4.3.23 API docs, all **[verify]**:
+`lib.sh` helper uses it. From memory of the API docs; none checked against the docs or a server, all **[verify]**:
 
 | Call or field | Notes |
 |------|-------|

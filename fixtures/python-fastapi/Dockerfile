@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN useradd --system --uid 10001 --no-create-home app
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes --root-user-action=ignore -r requirements.txt
 COPY app.py ./
 USER app
 ENV PORT=8000

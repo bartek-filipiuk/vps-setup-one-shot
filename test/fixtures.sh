@@ -3,7 +3,7 @@
 # {"status":"ok","db":<expected>} on 127.0.0.1, the same answer on [::1] inside the container,
 # the image's HEALTHCHECK passing, a non-root user, and for fixtures with a database 503
 # {"status":"error","db":"error"} once the database is stopped. No server; needs Docker with
-# compose v2.1+, curl, jq and openssl.
+# a recent compose v2 (up --wait --wait-timeout), curl, jq and openssl.
 # Everything it creates is named vps-fixture-<name>-<pid> and removed by that name on exit;
 # nothing is pruned. The Postgres password comes from openssl rand and goes through the
 # environment, never argv.
@@ -94,6 +94,9 @@ in_container() {
     *) check "$name: runs as a non-root user" non-root non-root ;; esac
 }
 
+# tail_out TEXT: the last 40 lines of a failed build or compose up, indented
+tail_out() { tail -n 40 <<<"$1" | sed 's/^/     /'; }
+
 dump_logs() { echo "     logs of $1:"; docker logs --tail 30 "$1" 2>&1 | sed 's/^/     /'; }
 
 run_dockerfile() {
@@ -109,7 +112,10 @@ run_dockerfile() {
     docker run -d --name "$n-db" --network "$n" -e POSTGRES_PASSWORD -e POSTGRES_USER -e POSTGRES_DB \
       "$PG_IMAGE" >/dev/null || { check "$name: postgres started" failed ok; return; }
   fi
-  if ! docker build -q -t "$n" "fixtures/$name" >/dev/null; then check "$name: docker build" failed ok; return; fi
+  local out
+  if ! out=$(docker build -t "$n" "fixtures/$name" 2>&1); then
+    tail_out "$out"; check "$name: docker build" failed ok; return
+  fi
   images+=("$n")
   echo "ok   $name: docker build"
   if [ "$db" = ok ]; then
@@ -139,7 +145,9 @@ run_compose() {
   SERVICE_PASSWORD_DB=$(openssl rand -hex 16) || { check "$name: openssl rand" failed ok; return; }
   export SERVICE_PASSWORD_DB
   projects+=("$p")
-  if ! "${dc[@]}" up -d --build --wait --wait-timeout "$WAIT" >/dev/null 2>&1; then
+  local out
+  if ! out=$("${dc[@]}" up -d --build --wait --wait-timeout "$WAIT" 2>&1); then
+    tail_out "$out"
     check "$name: compose up --wait" failed ok
     "${dc[@]}" logs --tail 30 2>&1 | sed 's/^/     /'
     return
@@ -161,7 +169,11 @@ docker compose version >/dev/null 2>&1 || { echo "FAIL docker compose (v2) is no
 want=("$@")
 [ "${#want[@]}" -gt 0 ] || mapfile -t want < <(cut -d' ' -f1 <<<"$TABLE")
 for w in "${want[@]}"; do
-  row=$(grep -E "^$w " <<<"$TABLE") || { echo "FAIL unknown fixture: $w"; fails=$((fails + 1)); continue; }
+  row=$(awk -v w="$w" '$1 == w' <<<"$TABLE")
+  if [ -z "$row" ]; then
+    echo "FAIL unknown fixture: $w (known: $(cut -d' ' -f1 <<<"$TABLE" | paste -sd' ' -))"
+    fails=$((fails + 1)); continue
+  fi
   read -r name port db kind <<<"$row"
   case $kind in
     dockerfile) run_dockerfile "$name" "$port" "$db" ;;

@@ -25,11 +25,14 @@ comes up, like `starter/lib/db.ts`.
 The compose stack keeps its data in its own volume: it is outside Coolify's database backups and
 outside the dump `deploy_and_wait` takes before a deploy.
 
-Proof, with Docker and compose v2.1+ on your machine (no server): `bash test/fixtures.sh` builds
-all four and prints `ALL FIXTURES OK`; `bash test/fixtures.sh go` runs one. It checks the answer
-on `127.0.0.1` and on `[::1]` inside the container, the image's `HEALTHCHECK`, the non-root user,
-and `503` once the database is stopped. It removes everything it created by name. CI runs it per
-fixture (`.github/workflows/fixtures.yml`).
+Proof, with Docker and a recent compose v2 (`up --wait --wait-timeout`) on your machine (no
+server): `bash test/fixtures.sh` builds all four and prints `ALL FIXTURES OK`;
+`bash test/fixtures.sh go` runs one. It checks the answer on `127.0.0.1` and on `[::1]` inside
+the container, the image's `HEALTHCHECK`, the non-root user, and `503` once the database is
+stopped. On exit it removes the containers, images, networks and volumes it created, by name;
+pulled base images and the build cache stay, and nothing is pruned. CI runs it per fixture
+(`.github/workflows/fixtures.yml`).
 
 Lockfiles are generated, never written by hand: `go.sum` by `go mod tidy` (golang:1.25-alpine),
-`python-fastapi/requirements.txt` by `pip-compile` from `requirements.in` (python:3.12-slim).
+`python-fastapi/requirements.txt` by `pip-compile --generate-hashes` from `requirements.in`
+(python:3.12-slim), installed with `--require-hashes`.

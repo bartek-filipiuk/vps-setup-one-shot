@@ -2,6 +2,7 @@
 # SERVICE_PASSWORD_DB comes from the environment (Coolify generates SERVICE_PASSWORD_* [verify];
 # locally test/fixtures.sh exports one from openssl rand). No ports are published here: Coolify's
 # proxy reaches web on 8080, and the db is reachable only inside the stack.
+# Plain ${SERVICE_PASSWORD_DB}, no ${...:?} guard: how Coolify parses that syntax is unverified.
 # The db volume is outside Coolify's database backups and deploy_and_wait's dump.
 services:
   web:
