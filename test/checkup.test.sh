@@ -203,6 +203,16 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   curl -s -o /dev/null "http://127.0.0.1:$PORT/latest" && break; sleep 0.3
 done
 
+# The secrets vault (VAULT.md), exported once with a fake age: the real one reads the passphrase
+# from the terminal. The checkup reads only the manifest and the file's header.
+cat > "$HOME/bin/fake-age" <<'STUB'
+#!/bin/sh
+out=; while [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done
+{ printf 'age-encryption.org/v1\n-> scrypt FAKESALT 18\nFAKEBODY\n--- FAKEMAC\n'; cat; } > "$out"
+STUB
+chmod +x "$HOME/bin/fake-age"
+VAULT_AGE="$HOME/bin/fake-age" bash -c ". '$REPO/lib.sh'; vault_export" > "$HOME/vault.out" 2>&1 || { echo "FAIL vault_export for the checkup test:"; cat "$HOME/vault.out"; exit 1; }
+
 # A clean setup: no WARN, no FAIL anywhere (the R16 done criterion), one log line, mode 600
 : > "$HOME/hcloud.log"
 run .
@@ -221,6 +231,7 @@ has "clean: advisories" "$out" '^OK +advisories +none of 2 published advisories 
 has "clean: backup rate" "$out" '^OK +backup rate starter-db +2/2 runs succeeded; S3: 2 uploaded$'
 has "clean: disk growth, first sample" "$out" '^OK +disk growth +11\.4 GB of 38\.1 GB; first sample, growth from the next checkup; backups 1\.2 GB, dumps 0\.3 GB, docker reclaimable 2\.1GB images, 1GB build cache$'
 has "clean: cost" "$out" '^OK +cost +coolify-1: 4\.60 EUR a month; list price, gross; primary IPs 1, volumes 0 \(0 GB\): their prices, Object Storage and traffic in the Hetzner Console -> Usage$'
+has "clean: vault current" "$out" "^OK +vault +2 files, exported $(date -u +%F) \\(0 days ago\\); $HOME/vps-setup-vault-[0-9]{8}\\.age here, age with a passphrase$"
 has "clean: Actions none" "$(sed -n '/^Actions$/,/^RESULT/p' <<<"$out")" '^  none$'
 has "clean: RESULT" "$out" '^RESULT: all OK$'
 check "clean: one RESULT line (status.sh's dropped)" "$(grep -c '^RESULT' <<<"$out")" "1"
@@ -342,6 +353,18 @@ rm -f "$LOG"
 FAKE_BACKUP_WINDOW='"22-02"' expect "cost: with backups" 0 '^OK +cost +coolify-1: 5\.52 EUR a month with backups \(\+0\.92\); list price'
 FAKE_TWO_SERVERS=1 expect "cost: two servers" 1 '^WARN +cost +2 servers in the project \(coolify-1, coolify-old\): 9\.20 EUR a month; an old one left after REBUILD\.md step 10\?; '
 has "cost: Actions" "$out" '^  WARN +cost .* -> CHECKUP\.md 3g$'
+rm -f "$LOG"
+
+# secrets vault (VAULT.md): a changed secret file or no vault at all is a WARN with the runbook
+CFG="$HOME/.config/coolify/config"; cp -p "$CFG" "$HOME/config.ref"
+touch -d '+1 hour' "$CFG"
+expect "vault: the Coolify config changed since the export" 1 '^WARN +vault +2 files, exported .*; stale, changed since: \.config/coolify/config \(run vault_export again, VAULT\.md step 2\)$'
+has "vault: Actions" "$out" '^  WARN +vault .* -> VAULT\.md step 2$'
+touch -r "$HOME/config.ref" "$CFG"
+mv "$HOME/.config/vps-setup/vault.manifest" "$HOME/manifest.bak"
+expect "vault: none yet" 1 '^WARN +vault +no vault yet: the user runs vault_export in their own terminal \(VAULT\.md step 2\)$'
+mv "$HOME/manifest.bak" "$HOME/.config/vps-setup/vault.manifest"
+expect "vault: back to current" 0 '^OK +vault +2 files'
 rm -f "$LOG"
 
 # status.sh findings come into the Actions with their runbooks; unreachable is exit 2

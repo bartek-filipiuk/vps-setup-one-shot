@@ -158,12 +158,22 @@ Rules that apply to every item:
   a project's page on a second domain with its own certificate, `status.sh` says so, and
   `kuma_domain_remove` takes it away again with the page and checks intact.
   (Code and fake-API tests done; not run on a server yet.)
+- **R23 Secrets vault on the user's machine.** `VAULT.md`: one `age`-encrypted (passphrase)
+  export of `~/.config/vps-setup/`, `~/.config/coolify/config`, the `hcloud` config and the ssh
+  key pair, made and restored only in the user's own terminal (`vault_export`, `vault_import`;
+  `age` reads the passphrase from the terminal, the agent never decrypts); `vault_check` and a
+  `vault` line in `checkup.sh` say when it is missing or stale; a rotation runbook per secret
+  (Coolify, Hetzner and Cloudflare tokens, the S3 pair, the Discord webhook, the GitHub webhook
+  secret, deploy keys, Kuma, database, staging and app secrets, the ssh key, the passphrase).
+  Covers a lost laptop or a leaked backup, not malware in the user's session (the runbook says
+  so). Done when: a clean second machine restores the vault and passes `verify.sh` and
+  `status.sh`, and the S3 pair is rotated end to end on the harness. (Code, fake-age tests and a
+  real-age round trip done; not run on a server yet.)
 
 ## Ideas
 
 - **R21 Preview deployment per pull request**, if Coolify's GitHub App source becomes drivable
   without the UI.
-- **R23 Secrets vault on the user's machine** (`age` or `sops`) with a rotation runbook.
 - **R24 Starter variants:** the same plumbing with auth and transactional mail; a cron-and-queue
   worker example as a second app from the same repo.
 

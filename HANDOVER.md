@@ -220,7 +220,8 @@ Run them before and after the move. Any other answer: phase 01 step 4 (the recor
 ## 5. Secrets: who holds them after, how to rotate
 
 Case C changes none of these. Case B: only the webhook secret (step 3) and the client's own
-token.
+token. The steps for each secret on its own, with the check after it, are in `VAULT.md` step 6;
+this table says who holds what afterwards.
 
 | Secret | Where | After (case A) | Rotate |
 |--------|-------|----------------|--------|
@@ -336,7 +337,9 @@ vps-setup` in the new owner's context, and their own key added if they want one.
 
 When the new owner confirms all of the above, the developer deletes, after a yes:
 `~/.config/coolify/config`, `~/.config/vps-setup/` (state, `s3.env`, `notify.env`, `SERVER.md`,
-`handover/`) and the `hcloud` context. Their local copy of the app repo is theirs to keep or
+`handover/`) and the `hcloud` context, and every copy of their vault file (`VAULT.md`), wherever
+they put it: it holds the same secrets. The new owner makes their own vault (`VAULT.md` step 2)
+once their tokens and keys are in place. Their local copy of the app repo is theirs to keep or
 delete.
 
 ## 7. Done when

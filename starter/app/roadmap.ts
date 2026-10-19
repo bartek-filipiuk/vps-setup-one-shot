@@ -32,10 +32,10 @@ const en: { lanes: Record<LaneKey, Item[]>; shipped: Shipped[] } = {
       { id: "R09", name: "Projects and clients", value: "One Coolify project per client or product, names and domains derived from it, a file listing what runs where, status grouped by project.", done: "Two projects run side by side in the harness. (Helpers, runbook changes and PROJECTS.md generation done; not run on a server yet.)" },
       { id: "R11", name: "Staging without a second server", value: "A staging branch deploys to staging.<your-domain> with its own database. Promotion is a merge to main.", done: "Push to staging changes staging; the merge changes production. (Runbook and helpers done; not run on a server yet.)" },
       { id: "R22", name: "A status page per client", value: "The project's status page from R06b on the client's own domain, such as status.client.com, with its own certificate. The client adds one DNS record; nothing else of theirs is touched.", done: "The test serves a project's page on a second domain with its own certificate, status says so, and removing it leaves the page and its checks intact. (Code and fake-API tests done; not run on a server yet.)" },
+      { id: "R23", name: "Secrets vault on your machine", value: "The tokens and the key of your setup in one file encrypted with age and a passphrase, kept off your laptop. A new laptop gets everything back from that file; a runbook rotates each secret without breaking the server.", done: "A clean second machine restores the vault and passes every check, and the backup keys are rotated with backups still green. (Code and tests done; not run on a server yet.)" },
     ],
     ideas: [
       { id: "R21", name: "Preview deployment per pull request", value: "If Coolify's GitHub App source becomes drivable without the UI." },
-      { id: "R23", name: "Secrets vault on your machine", value: "age or sops, with a rotation runbook." },
       { id: "R24", name: "Starter variants", value: "The same plumbing with auth and transactional mail; a worker example as a second app from the same repo." },
     ],
   },
@@ -73,10 +73,10 @@ const pl: typeof en = {
       { id: "R09", name: "Projekty i klienci", value: "Jeden projekt Coolify na klienta albo produkt, nazwy i domeny wyprowadzone z niego, plik z listą co gdzie działa, status pogrupowany po projektach.", done: "Dwa projekty działają obok siebie w teście. (Funkcje pomocnicze, zmiany w runbookach i generowanie PROJECTS.md gotowe; jeszcze nieuruchomione na serwerze.)" },
       { id: "R11", name: "Staging bez drugiego serwera", value: "Gałąź staging wdraża się na staging.<twoja-domena> z własną bazą. Promocja to merge do main.", done: "Push na staging zmienia staging; merge zmienia produkcję. (Runbook i funkcje pomocnicze gotowe; jeszcze nieuruchomione na serwerze.)" },
       { id: "R22", name: "Strona statusu dla każdego klienta", value: "Strona statusu projektu z R06b na domenie klienta, np. status.klient.pl, z własnym certyfikatem. Klient dodaje jeden rekord DNS; nic więcej po jego stronie nie jest ruszane.", done: "Test serwuje stronę projektu na drugiej domenie z własnym certyfikatem, status to pokazuje, a usunięcie zostawia stronę i jej monitory bez zmian. (Kod i testy na udawanym API gotowe; jeszcze nieuruchomione na serwerze.)" },
+      { id: "R23", name: "Sejf na sekrety na Twoim komputerze", value: "Tokeny i klucz Twojej instalacji w jednym pliku zaszyfrowanym przez age z hasłem, trzymanym poza laptopem. Nowy laptop odzyskuje wszystko z tego pliku; runbook zmienia każdy sekret bez psucia serwera.", done: "Czysty drugi komputer odtwarza sejf i przechodzi wszystkie testy; klucze do backupów zmienione, backupy dalej działają. (Kod i testy gotowe; jeszcze nieuruchomione na serwerze.)" },
     ],
     ideas: [
       { id: "R21", name: "Podgląd dla każdego pull requesta", value: "Jeśli źródło GitHub App w Coolify da się ustawić bez klikania." },
-      { id: "R23", name: "Sejf na sekrety na Twoim komputerze", value: "age albo sops, z runbookiem rotacji." },
       { id: "R24", name: "Warianty startera", value: "Ta sama instalacja z logowaniem i mailem transakcyjnym; przykład workera jako druga apka z tego samego repo." },
     ],
   },
