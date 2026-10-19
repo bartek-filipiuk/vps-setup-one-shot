@@ -1,0 +1,4 @@
+# Direct dependencies; requirements.txt is generated from this file by pip-compile.
+fastapi
+uvicorn
+psycopg[binary]
