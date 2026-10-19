@@ -12,8 +12,10 @@ STATUS_SSH=${STATUS_SSH:-rssh}
 STATUS_OPENSSL=${STATUS_OPENSSL:-openssl}
 STATUS_LATEST_URL=${STATUS_LATEST_URL:-https://api.github.com/repos/coollabsio/coolify/releases/latest}
 # Tests only: a base URL the client host of a status page is appended to (<base>/<host>/api/entry-page);
-# empty is https://<host>/api/entry-page.
+# empty is https://<host>/api/entry-page. Honoured only with a fake ssh as well (STATUS_SSH not
+# rssh), so a stray variable in a real shell cannot point the page check somewhere else.
 STATUS_ENTRY_URL=${STATUS_ENTRY_URL:-}
+[ "$STATUS_SSH" != rssh ] || STATUS_ENTRY_URL=
 # `timeout` (Linux) or `gtimeout` (macOS with coreutils); "none" skips certificate checks.
 STATUS_TIMEOUT=${STATUS_TIMEOUT:-$(command -v timeout || command -v gtimeout || echo none)}
 export CAPI_MAX_TIME=15   # per Coolify API call, read by capi in lib.sh

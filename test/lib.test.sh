@@ -291,8 +291,11 @@ class H(BaseHTTPRequestHandler):
             seq("deploy " + p.split("=")[1])
             return self.send(200, {"deployments": [{"deployment_uuid": "d-" + p.split("=")[1]}]})
         m = re.match(r"^/services/([^/]+)/restart$", p)
-        if m:   # R22: no body; Coolify queues the restart [verify]
+        if m:   # R22: no body; Coolify queues the restart [verify]. touch $HOME/restart.fail: one 500
             seq("service restart " + m.group(1))
+            fl = os.path.join(os.path.dirname(sys.argv[2]), "restart.fail")
+            if os.path.exists(fl):
+                os.remove(fl); return self.send(500, {"message": "Server Error"})
             return self.send(200, {"message": "Service restarting request queued."})
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if p == "/s3-storages":
@@ -1836,10 +1839,15 @@ FAKE_DIG_A="203.0.113.9 198.51.100.1" s3run dns_check status.acme.com
 check "dns_check: a second address" "$rc:$out" "1:status.acme.com A=198.51.100.1 203.0.113.9 AAAA= CNAME= (want A=203.0.113.9, no AAAA)"
 s3run dns_check status.acme.com
 check "dns_check: nothing yet" "$rc:$out" "1:status.acme.com A= AAAA= CNAME= (want A=203.0.113.9, no AAAA)"
-out=$(PATH=/nonexistent dns_check status.acme.com 203.0.113.9 2>&1); rc=$?
+mkdir -p "$HOME/nodig"; ln -sf "$(command -v tr)" "$HOME/nodig/tr"
+out=$(PATH=$HOME/nodig dns_check status.acme.com 203.0.113.9 2>&1); rc=$?
 check "dns_check: no dig" "$rc:$out" "2:dns_check: dig is not installed (Debian/Ubuntu: dnsutils; macOS: it ships with the system)"
 s3run dns_check 'a b'
-check "dns_check: not a host" "$rc:$out" "2:not a host name: 'a b' (lower case, like app.example.com)"
+check "dns_check: not a host" "$rc:$out" "2:not a host name: 'a b'"
+s3run dns_check 'stätus.acme.com'
+check "dns_check: an IDN" "$rc:$out" "2:not a host name: 'stätus.acme.com' (an IDN as punycode, xn--...)"
+FAKE_DIG_A=203.0.113.9 s3run dns_check Status.Acme.COM.
+check "dns_check: upper case and a trailing dot" "$rc:$out" "0:status.acme.com A=203.0.113.9 AAAA= CNAME= (want A=203.0.113.9, no AAAA)"
 
 s3run service_app svc-kuma-up uptime-kuma
 check "service_app: uuid and fqdn" "$rc:$out" "0:sa3${T}https://Status.Example.com:443/"
@@ -1865,6 +1873,10 @@ s3run kuma_domain_add acme-corp https://status.acme.com
 check "kuma_domain_add: a URL, not a host" "$rc:$out" "1:not a host name: 'https://status.acme.com' (the host only, like status.client.com, no https://)"
 s3run kuma_domain_add acme-corp Status.Example.com.
 check "kuma_domain_add: Kuma's own domain" "$rc:$out" "1:status.example.com is Kuma's own domain; a client's status page needs a host of its own (UPTIME.md step 9)"
+out=$(coolify_get() { echo "https://Panel.Example.com:8443/"; }; kuma_domain_add acme-corp panel.example.com 2>&1); rc=$?
+check "kuma_domain_add: the Coolify panel's domain" "$rc:$out" "1:panel.example.com is the Coolify panel's domain; a client's status page needs a host of its own (UPTIME.md step 9)"
+s3run kuma_domain_add acme-corp 'stätus.acme.com'
+check "kuma_domain_add: an IDN" "$rc:$out" "1:not a host name: 'stätus.acme.com' (the host only, like status.client.com, no https://) (an IDN as punycode, xn--...)"
 s3run kuma_domain_add nope status.acme.com
 check "kuma_domain_add: a page kuma_sync did not make" "$rc:$out" "1:status page nope is not in UPTIME_PAGES; run kuma_sync for it first (UPTIME.md step 5)"
 FAKE_DIG_A=198.51.100.9 s3run kuma_domain_add acme-corp status.acme.com
@@ -1873,7 +1885,7 @@ DNS of status.acme.com does not point at this server (203.0.113.9) yet; nothing 
 FAKE_DIG_A=203.0.113.9 FAKE_DIG_AAAA=2001:db8::1 s3run kuma_domain_add acme-corp status.acme.com
 check "kuma_domain_add: an AAAA record" "$rc:$(tail -n 1 <<<"$out")" "1:DNS of status.acme.com does not point at this server (203.0.113.9) yet; nothing changed (UPTIME.md step 9b, then the gate in 9c)"
 FAKE_DIG_A=203.0.113.9 s3run kuma_domain_add acme-corp stats.example.com
-check "kuma_domain_add: the host belongs to another resource" "$rc:$(tail -n 1 <<<"$out")" "1:stats.example.com is already used by service umami (umami) in Coolify; nothing changed"
+check "kuma_domain_add: the host belongs to another resource" "$rc:$(tail -n 1 <<<"$out")" "1:stats.example.com is already used by service umami (umami) in Coolify; nothing changed (if a previous run mapped it in Kuma: kuma_domain_remove acme-corp stats.example.com --yes undoes that)"
 check "kuma_domain_add: refusals sent nothing (no ssh, no PATCH, no restart)" "$(cat "$HOME/seq.log"):$(test -e "$HOME/kuma.stdin" && echo ran || echo none)" ":none"
 FAKE_DIG_CNAME=status.example.com FAKE_DIG_A=203.0.113.9 FAKE_KUMA=domain_ok s3run kuma_domain_add acme-corp Status.Acme.com
 check "kuma_domain_add rc:output" "$rc:$out" "0:status.acme.com A=203.0.113.9 AAAA= CNAME=status.example.com (want A=203.0.113.9, no AAAA)
@@ -1915,6 +1927,9 @@ FAKE_KUMA=sync_ok s3run kuma_sync shop-status Shop
 check "kuma_sync: no client domain on another page" "$(grep -c '^also at' <<<"$out")" "0"
 
 : > "$HOME/seq.log"; rm -f "$HOME/kuma.stdin"
+s3run kuma_domain_remove shop-status status.acme.com --yes
+check "kuma_domain_remove: recorded under another page, nothing sent" "$rc:$out:$(cat "$HOME/seq.log"):$(test -e "$HOME/kuma.stdin" && echo ran || echo none)" \
+  "1:status.acme.com is recorded for status page acme-corp, not shop-status; nothing changed (kuma_domain_remove acme-corp status.acme.com --yes)::none"
 s3run kuma_domain_remove acme-corp status.acme.com
 check "kuma_domain_remove without --yes: refused, nothing sent" "$rc:$out:$(cat "$HOME/seq.log")" "1:kuma_domain_remove: refusing without --yes. This stops https://status.acme.com from serving status page acme-corp. Ask the user, then: kuma_domain_remove acme-corp status.acme.com --yes:"
 FAKE_KUMA=domain_removed s3run kuma_domain_remove acme-corp status.acme.com --yes
@@ -1929,8 +1944,36 @@ check "kuma_domain_remove: the remove plan" "$(cat "$HOME/kuma.stdin")" '{"actio
 check "kuma_domain_remove: state cleared" "$(state_get UPTIME_DOMAINS)" ""
 : > "$HOME/seq.log"
 FAKE_KUMA=domain_absent s3run kuma_domain_remove acme-corp status.acme.com --yes
-check "kuma_domain_remove again: nothing to remove, no restart" "$rc:$(sed '$d' <<<"$out"):$(cat "$HOME/seq.log")" "0:Coolify: status.acme.com is not a domain of the Kuma service; no restart
-Kuma: status.acme.com was not on status page acme-corp:ssh"
+check "kuma_domain_remove again: not recorded any more, refused, nothing sent" "$rc:$out:$(cat "$HOME/seq.log")" \
+  "1:status.acme.com is not recorded in UPTIME_DOMAINS for any page; nothing changed. If it was mapped by hand, remove it by hand: in Coolify the Kuma service's domains (then restart it), in Kuma the page's Domain Names (UPTIME.md step 9f):"
+
+# a restart that fails (500 once): nothing recorded, and the next run only restarts
+: > "$HOME/seq.log"; touch "$HOME/restart.fail"
+FAKE_DIG_A=203.0.113.9 FAKE_KUMA=domain_ok s3run kuma_domain_add acme-corp status2.acme.com
+check "kuma_domain_add: restart failed" "$rc:$(sed 1,3d <<<"$out")" "1:HTTP 500 POST /services/svc-kuma-up/restart: {\"message\": \"Server Error\"}
+the restart of service svc-kuma-up failed (it needs a token with the deploy ability); run: service_restart svc-kuma-up
+Coolify has status2.acme.com, Traefik does not route it yet; nothing recorded: run kuma_domain_add acme-corp status2.acme.com again"
+check "kuma_domain_add: restart failed, not recorded" "$(state_get UPTIME_DOMAINS)" ""
+: > "$HOME/seq.log"
+FAKE_DIG_A=203.0.113.9 FAKE_KUMA=domain_same s3run kuma_domain_add acme-corp status2.acme.com
+check "kuma_domain_add again: the due restart only" "$rc:$(sed 1,2d <<<"$out" | sed '$d'):$(cat "$HOME/seq.log")" "0:Coolify: status2.acme.com is already a domain of the Kuma service; its restart is still due
+service svc-kuma-up restarting: Traefik picks up its domains; Kuma's checks pause for about a minute:ssh
+service restart svc-kuma-up"
+check "kuma_domain_add again: recorded after the restart" "$(state_get UPTIME_DOMAINS)" "acme-corp=status2.acme.com"
+: > "$HOME/seq.log"; touch "$HOME/restart.fail"
+FAKE_KUMA=domain_removed s3run kuma_domain_remove acme-corp status2.acme.com --yes
+check "kuma_domain_remove: restart failed, Kuma not touched, still recorded" "$rc:$(sed 1d <<<"$out"):$(cat "$HOME/seq.log"):$(state_get UPTIME_DOMAINS)" \
+  "1:HTTP 500 POST /services/svc-kuma-up/restart: {\"message\": \"Server Error\"}
+the restart of service svc-kuma-up failed (it needs a token with the deploy ability); run: service_restart svc-kuma-up
+Coolify no longer has status2.acme.com; Kuma still maps it: run kuma_domain_remove acme-corp status2.acme.com --yes again:svcapp PATCH svc-kuma-up sa3 url=https://status.example.com:443/
+service restart svc-kuma-up:acme-corp=status2.acme.com"
+: > "$HOME/seq.log"
+FAKE_KUMA=domain_removed s3run kuma_domain_remove acme-corp status2.acme.com --yes
+check "kuma_domain_remove again: the due restart, then Kuma" "$rc:$(sed '$d' <<<"$out"):$(cat "$HOME/seq.log"):$(state_get UPTIME_DOMAINS)" "0:Coolify: status2.acme.com is no longer a domain of the Kuma service; its restart is still due
+service svc-kuma-up restarting: Traefik picks up its domains; Kuma's checks pause for about a minute
+Kuma: status2.acme.com no longer serves status page acme-corp:service restart svc-kuma-up
+ssh:"
+check "R22: the restart flag was used up" "$(test -e "$HOME/restart.fail" && echo left || echo used)" "used"
 check "R22: the dig stub never left the machine" "$(grep -vc '@1\.1\.1\.1$' "$HOME/dig.log")" "0"
 rm -f "$HOME/bin/dig"
 if command -v node >/dev/null 2>&1; then

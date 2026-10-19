@@ -768,14 +768,28 @@ kuma_status() {
 # host too, exactly as on Kuma's own domain [verify]. The pairs live in UPTIME_DOMAINS as
 # space-separated <slug>=<host>. This guide never touches the client's DNS.
 
+# host_idn_hint TEXT -> " (an IDN as punycode, xn--...)" when TEXT has a non-ASCII character, else
+# nothing: for the "not a host name" messages. cf_valid_name's [a-z] can match letters like a
+# with an umlaut in a UTF-8 locale, so the callers refuse any TEXT this prints something for.
+host_idn_hint() {
+  [ -z "$(printf '%s' "${1:-}" | LC_ALL=C tr -d '\000-\177')" ] || printf ' (an IDN as punycode, xn--...)'
+}
+
+# url_host URL -> the host of URL (or of a bare host): lower case, no scheme, path, port or trailing dot.
+url_host() { tr '[:upper:]' '[:lower:]' <<<"${1:-}" | sed -E 's#^[a-z]+://##; s#/.*$##; s#:[0-9]+$##; s#\.$##'; }
+
 # kuma_valid_host HOST -> prints HOST lower case without a trailing dot when it is a host name
-# (cf_valid_name's rule) and not Kuma's own domain (UPTIME_URL).
+# (cf_valid_name's rule) and neither Kuma's own domain (UPTIME_URL) nor the Coolify panel's
+# (COOLIFY_URL).
 kuma_valid_host() {
-  local h kuma
+  local h
   h=$(tr '[:upper:]' '[:lower:]' <<<"${1:-}"); h=${h%.}
-  cf_valid_name "$h" 2>/dev/null || { echo "not a host name: '${1:-}' (the host only, like status.client.com, no https://)" >&2; return 1; }
-  kuma=$(state_get UPTIME_URL | tr '[:upper:]' '[:lower:]' | sed -E 's#^[a-z]+://##; s#/.*$##; s#:[0-9]+$##; s#\.$##')
-  [ "$h" != "$kuma" ] || { echo "$h is Kuma's own domain; a client's status page needs a host of its own (UPTIME.md step 9)" >&2; return 1; }
+  [ -z "$(host_idn_hint "$h")" ] && cf_valid_name "$h" 2>/dev/null ||
+    { echo "not a host name: '${1:-}' (the host only, like status.client.com, no https://)$(host_idn_hint "${1:-}")" >&2; return 1; }
+  [ "$h" != "$(url_host "$(state_get UPTIME_URL)")" ] ||
+    { echo "$h is Kuma's own domain; a client's status page needs a host of its own (UPTIME.md step 9)" >&2; return 1; }
+  [ "$h" != "$(url_host "$(coolify_get COOLIFY_URL)")" ] ||
+    { echo "$h is the Coolify panel's domain; a client's status page needs a host of its own (UPTIME.md step 9)" >&2; return 1; }
   printf '%s\n' "$h"
 }
 
@@ -784,9 +798,10 @@ kuma_valid_host() {
 # CNAME to Kuma's domain passes. Exit 0 when the addresses are exactly IPV4 (default: VPS_IP of
 # the setup state) and there is no AAAA, 1 otherwise, 2 when it cannot check (no dig, bad input).
 dns_check() {
-  local h=${1:-} ip=${2:-} four six a aaaa cname
-  [ -n "$h" ] || { echo "usage: dns_check HOST [IPV4]" >&2; return 2; }
-  cf_valid_name "$h" || return 2
+  local h ip=${2:-} four six a aaaa cname
+  [ -n "${1:-}" ] || { echo "usage: dns_check HOST [IPV4]" >&2; return 2; }
+  h=$(tr '[:upper:]' '[:lower:]' <<<"$1"); h=${h%.}
+  [ -z "$(host_idn_hint "$h")" ] && cf_valid_name "$h" 2>/dev/null || { echo "not a host name: '$1'$(host_idn_hint "$1")" >&2; return 2; }
   command -v dig >/dev/null 2>&1 || { echo "dns_check: dig is not installed (Debian/Ubuntu: dnsutils; macOS: it ships with the system)" >&2; return 2; }
   [ -n "$ip" ] || ip=$(VPS_STATE=$VPS_SETUP_STATE state_get VPS_IP)
   [ -n "$ip" ] || { echo "dns_check: no IPV4 given and no VPS_IP in $VPS_SETUP_STATE" >&2; return 2; }
@@ -853,12 +868,14 @@ service_app_urls_set() {
 
 # service_restart UUID -> restarts the service (POST /services/{uuid}/restart [verify]): Coolify
 # writes the Traefik labels again from the domains, so a new domain gets its router and
-# certificate. The containers are recreated; their checks pause for about a minute.
+# certificate. The containers are recreated; their checks pause for about a minute. The call
+# needs a token with the deploy ability (the domain PATCH needs write) [verify].
 service_restart() {
   local uuid=${1:-}
   [ -n "$uuid" ] || { echo "usage: service_restart UUID" >&2; return 1; }
   service_valid_uuid "$uuid" || return 1
-  capi POST "/services/$uuid/restart" >/dev/null || return 1
+  capi POST "/services/$uuid/restart" >/dev/null ||
+    { echo "the restart of service $uuid failed (it needs a token with the deploy ability); run: service_restart $uuid" >&2; return 1; }
   echo "service $uuid restarting: Traefik picks up its domains; Kuma's checks pause for about a minute"
 }
 
@@ -898,7 +915,7 @@ kuma_domain_run() {
 # Traefik gets a certificate for it. Records <slug>=<host> in UPTIME_DOMAINS. A second run
 # changes nothing and restarts nothing. Never touches DNS.
 kuma_domain_add() {
-  local slug=${1:-} host ctx c suuid ip who rc res row app fqdn doms
+  local slug=${1:-} host ctx c suuid ip who rc res row app fqdn doms cur
   [ -n "$slug" ] && [ -n "${2:-}" ] || { echo "usage: kuma_domain_add SLUG HOST  (a page of kuma_sync; the client's host, like status.client.com)" >&2; return 1; }
   kuma_valid_slug "$slug" || return 1
   host=$(kuma_valid_host "$2") || return 1
@@ -919,7 +936,7 @@ kuma_domain_add() {
   case $rc in
     1) ;;
     0) [ "$who" = "service $(state_get UPTIME_SERVICE) (uptime-kuma)" ] ||
-         { echo "$host is already used by $(paste -sd ',' - <<<"$who" | sed 's/,/, /g') in Coolify; nothing changed" >&2; return 1; } ;;
+         { echo "$host is already used by $(paste -sd ',' - <<<"$who" | sed 's/,/, /g') in Coolify; nothing changed (if a previous run mapped it in Kuma: kuma_domain_remove $slug $host --yes undoes that)" >&2; return 1; } ;;
     *) echo "could not read Coolify to check $host; nothing changed" >&2; return 1 ;;
   esac
   # Kuma first: once Traefik routes the host, / must already be the page, not Kuma's login.
@@ -928,25 +945,33 @@ kuma_domain_add() {
   else echo "Kuma: $host is already on status page $slug"; fi
   row=$(service_app "$suuid" uptime-kuma) || return 1
   app=${row%%$'\t'*}; fqdn=${row#*$'\t'}
-  if [ "$(fqdn_list "$fqdn" "$host")" != "$(fqdn_list "$fqdn")" ]; then
-    echo "Coolify: $host is already a domain of the Kuma service; no restart"
-  else
-    doms=$(fqdn_list "$fqdn")
-    service_app_urls_set "$suuid" "$app" "${doms:+$doms,}https://$host" ||
-      { echo "Kuma has $host on the page, Coolify does not route it yet: fix the cause and run kuma_domain_add $slug $host again" >&2; return 1; }
-    service_restart "$suuid" || return 1
-  fi
   doms=$(state_get UPTIME_DOMAINS)
+  # The pair is recorded only after a restart that worked: the host in Coolify without it means
+  # a restart is still due (an earlier run stopped there).
+  if [ "$(fqdn_list "$fqdn" "$host")" != "$(fqdn_list "$fqdn")" ]; then
+    case " $doms " in
+      *" $slug=$host "*) echo "Coolify: $host is already a domain of the Kuma service; no restart" ;;
+      *) echo "Coolify: $host is already a domain of the Kuma service; its restart is still due"
+         service_restart "$suuid" || { echo "nothing recorded yet; run kuma_domain_add $slug $host again after it" >&2; return 1; } ;;
+    esac
+  else
+    cur=$(fqdn_list "$fqdn")
+    service_app_urls_set "$suuid" "$app" "${cur:+$cur,}https://$host" ||
+      { echo "Kuma has $host on the page, Coolify does not route it yet: fix the cause and run kuma_domain_add $slug $host again" >&2; return 1; }
+    service_restart "$suuid" || { echo "Coolify has $host, Traefik does not route it yet; nothing recorded: run kuma_domain_add $slug $host again" >&2; return 1; }
+  fi
   case " $doms " in *" $slug=$host "*) ;; *) state_set UPTIME_DOMAINS "${doms:+$doms }$slug=$host" || return 1 ;; esac
   echo "recorded $slug=$host in UPTIME_DOMAINS; next: the HTTPS wait on https://$host/api/entry-page (UPTIME.md step 9e)"
 }
 
-# kuma_domain_remove SLUG HOST --yes -> the reverse of kuma_domain_add: HOST off the Kuma service's
-# domains in Coolify (and a restart, so Traefik stops routing it), then off the page in Kuma, and
+# kuma_domain_remove SLUG HOST --yes -> the reverse of kuma_domain_add, for a pair it recorded
+# (SLUG=HOST in UPTIME_DOMAINS; anything else is refused before anything is sent): HOST off the
+# Kuma service's domains in Coolify and a restart, so Traefik stops routing it (the restart again
+# when an earlier run removed the domain but the restart failed), then off the page in Kuma, and
 # the pair off UPTIME_DOMAINS. The page, its checks and its other domains stay. Without --yes it
 # refuses and sends nothing. Never touches DNS: the client deletes their record.
 kuma_domain_remove() {
-  local slug=${1:-} host ctx c suuid row app fqdn rest res doms pair out=''
+  local slug=${1:-} host ctx c suuid row app fqdn rest res pair other='' out=''
   [ -n "$slug" ] && [ -n "${2:-}" ] || { echo "usage: kuma_domain_remove SLUG HOST --yes" >&2; return 1; }
   kuma_valid_slug "$slug" || return 1
   host=$(kuma_valid_host "$2") || return 1
@@ -954,17 +979,31 @@ kuma_domain_remove() {
     echo "kuma_domain_remove: refusing without --yes. This stops https://$host from serving status page $slug. Ask the user, then: kuma_domain_remove $slug $host --yes" >&2
     return 1
   fi
+  case " $(state_get UPTIME_DOMAINS) " in
+    *" $slug=$host "*) ;;
+    *)
+      for pair in $(state_get UPTIME_DOMAINS); do [ "${pair#*=}" = "$host" ] && other=${pair%%=*}; done
+      if [ -n "$other" ]; then
+        echo "$host is recorded for status page $other, not $slug; nothing changed (kuma_domain_remove $other $host --yes)" >&2
+      else
+        echo "$host is not recorded in UPTIME_DOMAINS for any page; nothing changed. If it was mapped by hand, remove it by hand: in Coolify the Kuma service's domains (then restart it), in Kuma the page's Domain Names (UPTIME.md step 9f)" >&2
+      fi
+      return 1 ;;
+  esac
   ctx=$(kuma_domain_ctx) || return 1
   read -r c suuid <<<"$ctx"
   row=$(service_app "$suuid" uptime-kuma) || return 1
   app=${row%%$'\t'*}; fqdn=${row#*$'\t'}
   rest=$(fqdn_list "$fqdn" "$host")
   if [ "$rest" = "$(fqdn_list "$fqdn")" ]; then
-    echo "Coolify: $host is not a domain of the Kuma service; no restart"
+    # recorded but no longer in Coolify: an earlier run stopped before or at the restart
+    echo "Coolify: $host is no longer a domain of the Kuma service; its restart is still due"
+    service_restart "$suuid" || return 1
   elif [ -z "$rest" ]; then
     echo "Coolify: $host is the Kuma service's only domain; refusing to leave Kuma without one. Nothing changed." >&2; return 1
   else
-    service_app_urls_set "$suuid" "$app" "$rest" && service_restart "$suuid" || return 1
+    service_app_urls_set "$suuid" "$app" "$rest" || return 1
+    service_restart "$suuid" || { echo "Coolify no longer has $host; Kuma still maps it: run kuma_domain_remove $slug $host --yes again" >&2; return 1; }
   fi
   res=$(kuma_domain_run "$c" "$slug" "" "$host") || return 1
   if jq -e '.changed == true' <<<"$res" >/dev/null; then echo "Kuma: $host no longer serves status page $slug"

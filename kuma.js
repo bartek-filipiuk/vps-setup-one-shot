@@ -76,7 +76,10 @@ function validatePlan(p) {
       if (!Array.isArray(p[k])) throw fail("the plan's " + k + " is not a list");
       p[k] = p[k].map((h) => {
         const n = typeof h === "string" ? normHost(h) : "";
-        if (!HOST_RE.test(n)) throw fail("not a host name: " + JSON.stringify(h) + " (the host only, like status.acme.com)");
+        if (!HOST_RE.test(n)) {
+          throw fail("not a host name: " + JSON.stringify(h) + " (the host only, like status.acme.com)" +
+            (/[^\x00-\x7f]/.test(String(h)) ? " (an IDN as punycode, xn--...)" : ""));
+        }
         return n;
       });
     }
@@ -328,7 +331,9 @@ async function domain(plan, deps) {
     await waitFor(() => pageList, deps.listMs == null ? 15000 : deps.listMs, "Kuma sent no status page list within 15 s of the login; nothing changed");
     const slug = plan.slug;
     const page = await emitAck(s, "getStatusPage", slug);
-    if (!page || page.ok !== true || !page.config) throw fail("no status page " + slug + " in Kuma; run kuma_sync for it first (nothing changed)");
+    if (!page || page.ok !== true || !page.config) {
+      throw fail("Kuma did not give status page " + slug + " (" + kumaMsg(page) + "); if it does not exist, run kuma_sync for it first (nothing changed)");
+    }
     const others = {};
     for (const p of (Array.isArray(pageList) ? pageList : Object.values(pageList || {}))) {
       if (!p || String(p.slug || "").toLowerCase() === slug) continue;

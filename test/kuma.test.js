@@ -289,7 +289,7 @@ ok("validatePlan refuses bad domain plans", () => {
     [domPlan({ add: [], remove: [] }), /adds and removes no domain/], [domPlan({ add: "status.acme.com" }), /add is not a list/],
     [domPlan({ add: ["https://status.acme.com"] }), /not a host name/], [domPlan({ add: ["acme"] }), /not a host name/],
     [domPlan({ add: ["a b.acme.com"] }), /not a host name/], [domPlan({ add: [7] }), /not a host name/],
-    [domPlan({ add: ["-x.acme.com"] }), /not a host name/], [domPlan({ add: ["x".repeat(64) + ".acme.com"] }), /not a host name/],
+    [domPlan({ add: ["-x.acme.com"] }), /not a host name/], [domPlan({ add: ["stätus.acme.com"] }), /not a host name: .*\(an IDN as punycode, xn--\.\.\.\)$/], [domPlan({ add: ["x".repeat(64) + ".acme.com"] }), /not a host name/],
     [domPlan({ add: ["status.acme.com"], remove: ["STATUS.acme.com"] }), /to add and to remove at once: status\.acme\.com/],
     [domPlan({ password: "" }), /no password/],
   ];
@@ -336,7 +336,7 @@ ok("domain add: a host of another page is refused, nothing saved", async () => {
 });
 ok("domain add: no such page -> run kuma_sync first, never creates one", async () => {
   const { st, deps } = fakeKuma({ users: { admin: PW }, pages: { beta: twoPages().beta } });
-  await assert.rejects(K.run(K.validatePlan(domPlan()), deps), /no status page acme in Kuma; run kuma_sync for it first \(nothing changed\)/);
+  await assert.rejects(K.run(K.validatePlan(domPlan()), deps), /^Error: Kuma did not give status page acme \(No slug\?\); if it does not exist, run kuma_sync for it first \(nothing changed\)$/);
   assert.ok(!st.events.some((e) => NO_WRITE.includes(e) || e === "saveStatusPage"), st.events.join(","));
 });
 ok("domain add: the groups cannot be read -> nothing saved", async () => {

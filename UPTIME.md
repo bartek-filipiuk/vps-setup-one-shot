@@ -255,11 +255,18 @@ nothing and does not restart. What else it can say:
 - `2FA is on for the Kuma admin`: step 8.
 - `Kuma has <host> on the page, Coolify does not route it yet`: fix what the line above it says
   and run the same command again.
+- `the restart of service <uuid> failed (it needs a token with the deploy ability)`: the
+  Coolify token can change domains (write) but not restart (deploy) [verify]. The user makes a
+  token that has it (Keys & Tokens; phase 04 step 3 writes it), then the same command again:
+  it sees the domain in Coolify, restarts and records the pair.
+- `... is already used by ... in Coolify; nothing changed (if a previous run mapped it in
+  Kuma: ...)`: if an earlier run got as far as Kuma, run the `kuma_domain_remove` it names; when
+  that pair was never recorded, it refuses and says how to remove the mapping by hand.
 
 ### 9e. HTTPS, then the user looks (you, then the user)
 
 Coolify asks Let's Encrypt for the certificate once Traefik has the new router (a minute or
-two after the restart):
+two after the restart [verify]):
 
 ```
 . ./lib.sh; for i in $(seq 1 30); do
@@ -284,6 +291,7 @@ the first one (`kuma_init` and Coolify's `SERVICE_URL_UPTIMEKUMA_3001` take the 
 ```
 
 Coolify first (the host stops routing, Kuma restarts), then Kuma drops the mapping; the page,
-its checks and its other domains stay. Then the client deletes their record; this guide never
+its checks and its other domains stay. It works only on a pair `kuma_domain_add` recorded
+(`UPTIME_DOMAINS`); a failed restart is redone by running it again. Then the client deletes their record; this guide never
 deletes DNS records. After a rebuild (`REBUILD.md`) the mapping is gone with the old Kuma: run
 9d again on the new server (a CNAME to `<KUMA_DOMAIN>` already points there).
