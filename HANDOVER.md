@@ -104,12 +104,14 @@ cp "$HOME/.config/vps-setup/SERVER.md" "$d/SERVER.md" && cat >> "$d/SERVER.md" <
 - Hetzner project (server, Hetzner backups, Object Storage): account of <...>
 - S3 keys (s3.env): <...>
 - Alerts: Discord webhook in <...>'s Discord server, channel <...>
+- Status page: https://<CLIENT STATUS HOST> (record at <REGISTRAR>, account of <...>); served by <the developer's Kuma|the client's own Kuma>
 - Database password: only in Coolify (the database and the app's DATABASE_URL)
 EOF
 chmod 600 "$d/SERVER.md"; echo "written: $d/SERVER.md"
 ```
 
-Show the user the file. Case B: delete the lines about the server, SSH, panel access and the
+The status page line is for a project whose page is on the client's own domain (`UPTIME.md`
+step 9; the pairs are in `UPTIME_DOMAINS`); without one, delete the line. Show the user the file. Case B: delete the lines about the server, SSH, panel access and the
 teardown before it goes out; they are not the client's. The client's own section of
 `PROJECTS.md` (their apps, services, databases, domains and stages; uuids, no secrets) goes into
 the pack too, and only theirs: the other projects are the developer's other clients. Replace
@@ -204,8 +206,16 @@ The records this setup needs, from `SERVER.md` (case B: only the app's):
 done
 ```
 
-Run it before and after the move. Any other answer: phase 01 step 4 (the records) and phase 04 step 1 (the check), and
-`DOCTOR.md` (certificate error).
+A client's status page domain (`UPTIME.md` step 9) is a CNAME to Kuma's domain or an A record
+to the server, in the client's zone; `dns_check` follows the CNAME (want A=<the server's IP>, no
+AAAA):
+
+```
+. ./lib.sh; for p in $(VPS_STATE=$VPS_SETUP_STATE state_get UPTIME_DOMAINS); do dns_check "${p#*=}"; done
+```
+
+Run them before and after the move. Any other answer: phase 01 step 4 (the records) and phase 04 step 1 (the check), and
+`DOCTOR.md` (certificate error); for the status page domain `UPTIME.md` step 9b.
 
 ## 5. Secrets: who holds them after, how to rotate
 
@@ -222,6 +232,7 @@ token.
 | Hetzner API token and project | the developer's `hcloud` context `vps-setup` | the new owner's project and token | the project or its servers move in the Hetzner Console **[verify]**; the developer deletes the token (Console → **Security** → **API tokens**) and `hcloud context delete vps-setup` |
 | GitHub webhook secret | Coolify and the GitHub hook | new value | step 3 |
 | Staging basic-auth password (`STAGING.md`) | the developer's password manager and Coolify (the staging app) | a new one the new owner makes | `STAGING.md` step 6, in their own terminal |
+| Client status page domain (`UPTIME.md` step 9; a record, no secret) | the client's zone, mapped in the developer's Kuma and Coolify | case B: stays on the developer's Kuma; case A, or the project moves to its own server: `UPTIME.md` step 9 on that server's Kuma, then the client points the record there | `kuma_domain_remove` on the developer's server, on the user's yes, once the new one serves it |
 
 Hetzner: whether a project, or a server inside it, can move to another account is the Console's
 business and has not been tried here **[verify]**. If it cannot, the options are: the developer's

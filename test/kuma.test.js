@@ -20,7 +20,7 @@ function ok(name, fn) {
 function fakeKuma(opts = {}) {
   const st = Object.assign({
     dbNeedSetup: false, users: {}, monitors: {}, pages: {}, nextId: 1, events: [], connectFails: 0,
-    tokenRequired: false, publicDown: false, sendMonitorList: true, cache: {}, adds: [],
+    tokenRequired: false, publicDown: false, sendMonitorList: true, sendPageList: true, cache: {}, adds: [],
   }, opts);
   function handle(sock, ev, args) {
     st.events.push(ev);
@@ -40,6 +40,11 @@ function fakeKuma(opts = {}) {
         sock.loggedIn = true;
         reply({ ok: true, token: "jwt" });
         if (st.sendMonitorList) setImmediate(() => sock.push("monitorList", Object.assign({}, st.monitors)));
+        // like Kuma 2.5.6 sendStatusPageList: an object keyed by page id, one toJSON() per page [verify]
+        if (st.sendPageList) {
+          setImmediate(() => sock.push("statusPageList", Object.fromEntries(Object.entries(st.pages).map(([slug, pg], i) =>
+            [String(i + 1), { id: i + 1, slug, title: pg.config.title, domainNameList: (pg.config.domainNameList || []).slice() }]))));
+        }
         return;
       }
       default:
@@ -263,11 +268,113 @@ ok("sync: no monitor list after the login -> error", async () => {
   const { deps } = fakeKuma({ users: { admin: PW }, sendMonitorList: false }); deps.listMs = 200;
   await assert.rejects(K.run(syncPlan(), deps), /no monitor list within 15 s/);
 });
+// --- the domain action (R22, UPTIME.md step 9) ---
+const domPlan = (over = {}) => Object.assign({ action: "domain", user: "admin", password: PW, slug: "acme", add: ["status.acme.com"], remove: [] }, over);
+// a page with a hand-made group, an icon of its own, CSS and a domain; another page with a domain
+const twoPages = () => ({
+  acme: { config: { slug: "acme", title: "Acme", icon: "/upload/logo.png", customCSS: "body{}", footerText: "hi", domainNameList: ["old.acme.com"] },
+    groups: [{ id: 1, name: "Infra", weight: 1, monitorList: [{ id: 9, sendUrl: 1, url: "https://x" }] }, { id: 2, name: "Acme", weight: 2, monitorList: [{ id: 4 }] }] },
+  beta: { config: { slug: "beta", title: "Beta", domainNameList: ["status.beta.com"] }, groups: [] },
+});
+const NO_WRITE = ["add", "addStatusPage", "deleteStatusPage", "deleteMonitor", "editMonitor"];
+
+ok("validatePlan accepts a domain plan and normalises its hosts", () => {
+  const p = K.validatePlan(domPlan({ add: [" Status.Acme.COM. "], remove: undefined }));
+  assert.deepStrictEqual([p.add, p.remove], [["status.acme.com"], []]);
+  K.validatePlan(domPlan({ add: [], remove: ["status.acme.com"] }));
+});
+ok("validatePlan refuses bad domain plans", () => {
+  const bad = [
+    [domPlan({ slug: "Acme" }), /not a status page slug/], [domPlan({ slug: undefined }), /not a status page slug/],
+    [domPlan({ add: [], remove: [] }), /adds and removes no domain/], [domPlan({ add: "status.acme.com" }), /add is not a list/],
+    [domPlan({ add: ["https://status.acme.com"] }), /not a host name/], [domPlan({ add: ["acme"] }), /not a host name/],
+    [domPlan({ add: ["a b.acme.com"] }), /not a host name/], [domPlan({ add: [7] }), /not a host name/],
+    [domPlan({ add: ["-x.acme.com"] }), /not a host name/], [domPlan({ add: ["x".repeat(64) + ".acme.com"] }), /not a host name/],
+    [domPlan({ add: ["status.acme.com"], remove: ["STATUS.acme.com"] }), /to add and to remove at once: status\.acme\.com/],
+    [domPlan({ password: "" }), /no password/],
+  ];
+  for (const [p, re] of bad) {
+    assert.throws(() => K.validatePlan(p), (e) => re.test(e.message) && !e.message.includes(PW), JSON.stringify(p.add));
+  }
+});
+ok("planDomains keeps order and others, appends once, removes only what is there", () => {
+  assert.deepStrictEqual(K.planDomains(["a.example.com", "B.example.com", "a.example.com"], ["c.example.com", "b.example.com", "c.example.com"], [], {}),
+    { list: ["a.example.com", "B.example.com", "c.example.com"], added: ["c.example.com"], removed: [], absent: [] });
+  assert.deepStrictEqual(K.planDomains(["a.example.com", "b.example.com"], [], ["a.example.com", "z.example.com"], { "z.example.com": "beta" }),
+    { list: ["b.example.com"], added: [], removed: ["a.example.com"], absent: ["z.example.com"] });
+  assert.deepStrictEqual(K.planDomains(undefined, [], ["a.example.com"], {}), { list: [], added: [], removed: [], absent: ["a.example.com"] });
+  assert.throws(() => K.planDomains([], ["status.beta.com"], [], { "status.beta.com": "beta" }), /^Error: status\.beta\.com is on status page beta; nothing changed$/);
+  assert.ok(K.HOST_RE.test("status.acme.com") && !K.HOST_RE.test("acme") && !K.HOST_RE.test("Status.acme.com"));
+  assert.strictEqual(K.normHost(" Status.Acme.com. "), "status.acme.com");
+});
+ok("domain add: saved with the old domain, the same groups, icon and fields; nothing else sent", async () => {
+  const { st, deps } = fakeKuma({ users: { admin: PW }, pages: twoPages() });
+  const r = await K.run(K.validatePlan(domPlan({ add: ["Status.Acme.com"] })), deps);
+  assert.deepStrictEqual(r, { ok: true, page: "/status/acme", domains: ["old.acme.com", "status.acme.com"], added: ["status.acme.com"],
+    removed: [], absent: [], changed: true });
+  assert.strictEqual(st.saved.slug, "acme");
+  assert.deepStrictEqual(st.saved.config.domainNameList, ["old.acme.com", "status.acme.com"]);
+  assert.deepStrictEqual(st.saved.groups, [{ id: 1, name: "Infra", weight: 1, monitorList: [{ id: 9, sendUrl: 1, url: "https://x" }] },
+    { id: 2, name: "Acme", weight: 2, monitorList: [{ id: 4 }] }]);
+  assert.strictEqual(st.saved.img, "/upload/logo.png");
+  assert.strictEqual(st.saved.config.customCSS, "body{}"); assert.strictEqual(st.saved.config.footerText, "hi"); assert.strictEqual(st.saved.config.title, "Acme");
+  assert.deepStrictEqual(st.pages.beta.config.domainNameList, ["status.beta.com"]);
+  assert.ok(!st.events.some((e) => NO_WRITE.includes(e)), st.events.join(","));
+});
+ok("domain add again: unchanged, nothing saved, the groups not even read", async () => {
+  const pages = twoPages(); pages.acme.config.domainNameList = ["old.acme.com", "status.acme.com"];
+  const { st, deps } = fakeKuma({ users: { admin: PW }, pages });
+  const r = await K.run(K.validatePlan(domPlan()), deps);
+  assert.deepStrictEqual(r, { ok: true, page: "/status/acme", domains: ["old.acme.com", "status.acme.com"], added: [], removed: [], absent: [], changed: false });
+  assert.ok(!st.events.includes("saveStatusPage") && !st.events.includes("http GET /api/status-page/acme"), st.events.join(","));
+});
+ok("domain add: a host of another page is refused, nothing saved", async () => {
+  const { st, deps } = fakeKuma({ users: { admin: PW }, pages: twoPages() });
+  await assert.rejects(K.run(K.validatePlan(domPlan({ add: ["status.beta.com"] })), deps), /^Error: status\.beta\.com is on status page beta; nothing changed$/);
+  assert.ok(!st.events.includes("saveStatusPage"));
+  assert.deepStrictEqual(st.pages.beta.config.domainNameList, ["status.beta.com"]);
+});
+ok("domain add: no such page -> run kuma_sync first, never creates one", async () => {
+  const { st, deps } = fakeKuma({ users: { admin: PW }, pages: { beta: twoPages().beta } });
+  await assert.rejects(K.run(K.validatePlan(domPlan()), deps), /no status page acme in Kuma; run kuma_sync for it first \(nothing changed\)/);
+  assert.ok(!st.events.some((e) => NO_WRITE.includes(e) || e === "saveStatusPage"), st.events.join(","));
+});
+ok("domain add: the groups cannot be read -> nothing saved", async () => {
+  const { st, deps } = fakeKuma({ users: { admin: PW }, pages: twoPages(), publicDown: true });
+  await assert.rejects(K.run(K.validatePlan(domPlan()), deps), /could not read the groups of status page acme; nothing saved/);
+  assert.ok(!st.events.includes("saveStatusPage"));
+});
+ok("domain remove: only that host goes, the other domain and the groups stay", async () => {
+  const pages = twoPages(); pages.acme.config.domainNameList = ["old.acme.com", "status.acme.com"];
+  const { st, deps } = fakeKuma({ users: { admin: PW }, pages });
+  const r = await K.run(K.validatePlan(domPlan({ add: [], remove: ["status.acme.com"] })), deps);
+  assert.deepStrictEqual(r, { ok: true, page: "/status/acme", domains: ["old.acme.com"], added: [], removed: ["status.acme.com"], absent: [], changed: true });
+  assert.deepStrictEqual(st.saved.config.domainNameList, ["old.acme.com"]);
+  assert.deepStrictEqual(st.saved.groups.map((g) => g.name), ["Infra", "Acme"]);
+  assert.ok(!st.events.some((e) => NO_WRITE.includes(e)), st.events.join(","));
+});
+ok("domain remove: a host the page does not have (another page's) is left alone", async () => {
+  const { st, deps } = fakeKuma({ users: { admin: PW }, pages: twoPages() });
+  const r = await K.run(K.validatePlan(domPlan({ add: [], remove: ["status.beta.com"] })), deps);
+  assert.deepStrictEqual([r.changed, r.absent, r.domains], [false, ["status.beta.com"], ["old.acme.com"]]);
+  assert.ok(!st.events.includes("saveStatusPage"));
+});
+ok("domain: no status page list after the login -> error, nothing saved", async () => {
+  const { st, deps } = fakeKuma({ users: { admin: PW }, pages: twoPages(), sendPageList: false }); deps.listMs = 200;
+  await assert.rejects(K.run(K.validatePlan(domPlan()), deps), /no status page list within 15 s of the login; nothing changed/);
+  assert.ok(!st.events.includes("saveStatusPage") && !st.events.includes("getStatusPage"));
+});
+ok("domain with 2FA on: a clear error", async () => {
+  const { deps } = fakeKuma({ users: { admin: PW }, tokenRequired: true, pages: twoPages() });
+  await assert.rejects(K.run(K.validatePlan(domPlan()), deps), /2FA is on/);
+});
+
 ok("kuma.js under node -e: a bad plan on stdin is one JSON line and exit 1", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "kuma.js"), "utf8");
   const env = Object.assign({}, process.env); delete env.KUMA_JS_TEST;
   for (const [input, re] of [["not json", /the plan on stdin is not JSON/], [JSON.stringify({ action: "init", user: "admin" }), /no password/],
-    [JSON.stringify({ action: "nope", user: "admin", password: PW }), /unknown action/]]) {
+    [JSON.stringify({ action: "nope", user: "admin", password: PW }), /unknown action/],
+    [JSON.stringify({ action: "domain", user: "admin", password: PW, slug: "acme", add: ["https://x.example.com"] }), /not a host name/]]) {
     const r = spawnSync(process.execPath, ["-e", src], { input, env, encoding: "utf8", timeout: 20000 });
     assert.strictEqual(r.status, 1, r.stderr);
     const lines = r.stdout.trim().split("\n");

@@ -147,12 +147,22 @@ Rules that apply to every item:
   from production but never values, basic auth, one GitHub webhook with a shared secret, teardown
   only on the user's yes. Done when: the harness pushes to `staging`, sees it change, merges, sees
   production change. (Runbook and helpers done; not run on a server yet.)
+- **R22 A status page per client.** The per-project page of R06b on the client's own domain
+  (`status.client.com`, a CNAME to Kuma's domain in the client's zone), with its own certificate:
+  `UPTIME.md` step 9, the `kuma.js` domain action (adds or removes a host on the page's
+  `domainNameList`, refuses a host another page has, never creates or deletes anything),
+  `dns_check`, `kuma_domain_add`, `kuma_domain_remove`, `service_app`, `service_app_urls_set` and
+  `service_restart` in `lib.sh`, a `page <slug>` line in `status.sh`, a `Status page:` line in
+  `PROJECTS.md`. The client's host shows the rest of Kuma too (its login), which step 9 says
+  before the user's yes; this guide never changes the client's DNS. Done when: the harness serves
+  a project's page on a second domain with its own certificate, `status.sh` says so, and
+  `kuma_domain_remove` takes it away again with the page and checks intact.
+  (Code and fake-API tests done; not run on a server yet.)
 
 ## Ideas
 
 - **R21 Preview deployment per pull request**, if Coolify's GitHub App source becomes drivable
   without the UI.
-- **R22 A status page per client**, from the per-project pages and `domainNameList` in R06b, with the client's domain.
 - **R23 Secrets vault on the user's machine** (`age` or `sops`) with a rotation runbook.
 - **R24 Starter variants:** the same plumbing with auth and transactional mail; a cron-and-queue
   worker example as a second app from the same repo.

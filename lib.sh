@@ -686,7 +686,7 @@ kuma_targets() {
 # monitors by URL; never deletes a monitor, a page or a group, so hand-made ones stay. Records the
 # slug in UPTIME_PAGES. Run it again after a new app or domain.
 kuma_sync() {
-  local slug=${1:-} title=${2:-} def svc url c targets mons plan res msg pages
+  local slug=${1:-} title=${2:-} def svc url c targets mons plan res msg pages pair
   if [ -z "$slug" ] || [ -z "$title" ]; then
     def=$(kuma_page_default) || return 1
     [ -n "$slug" ] || slug=${def%%$'\t'*}
@@ -716,6 +716,7 @@ kuma_sync() {
   jq -r --arg u "$url" '"monitors added: \(.added | if length == 0 then "none" else join(", ") end)",
     "monitors kept: \(.kept | if length == 0 then "none" else join(", ") end)",
     "status page: \($u)\(.page) (\(.groups) group\(if .groups == 1 then "" else "s" end))"' <<<"$res" | tr -d '\r'
+  for pair in $(state_get UPTIME_DOMAINS); do [ "${pair%%=*}" = "$slug" ] && echo "also at: https://${pair#*=} (UPTIME.md step 9)"; done
   echo "first checks within a minute; then: kuma_status $slug (UPTIME.md step 5)"
 }
 
@@ -757,6 +758,220 @@ kuma_status() {
     | @tsv end' 2>/dev/null) || { echo "status page $slug at $url: unexpected answer" >&2; return 2; }
   printf '%s\n' "$out"
   ! awk -F'\t' 'NR > 1 && $2 == "down" { f = 1 } END { exit !f }' <<<"$out"
+}
+
+# --- status page on a client's domain (R22, UPTIME.md step 9) ---
+
+# The client's host (status.client.com) is a second domain of the Kuma service: Kuma maps it to
+# one page (domainNameList, kuma.js domain action) and serves that page at / on it; Coolify
+# routes it with its own certificate. Everything else of Kuma (login, dashboard) answers on that
+# host too, exactly as on Kuma's own domain [verify]. The pairs live in UPTIME_DOMAINS as
+# space-separated <slug>=<host>. This guide never touches the client's DNS.
+
+# kuma_valid_host HOST -> prints HOST lower case without a trailing dot when it is a host name
+# (cf_valid_name's rule) and not Kuma's own domain (UPTIME_URL).
+kuma_valid_host() {
+  local h kuma
+  h=$(tr '[:upper:]' '[:lower:]' <<<"${1:-}"); h=${h%.}
+  cf_valid_name "$h" 2>/dev/null || { echo "not a host name: '${1:-}' (the host only, like status.client.com, no https://)" >&2; return 1; }
+  kuma=$(state_get UPTIME_URL | tr '[:upper:]' '[:lower:]' | sed -E 's#^[a-z]+://##; s#/.*$##; s#:[0-9]+$##; s#\.$##')
+  [ "$h" != "$kuma" ] || { echo "$h is Kuma's own domain; a client's status page needs a host of its own (UPTIME.md step 9)" >&2; return 1; }
+  printf '%s\n' "$h"
+}
+
+# dns_check HOST [IPV4] -> one line "HOST A=... AAAA=... CNAME=... (want A=IPV4, no AAAA)" from
+# 1.1.1.1, read-only. A CNAME is followed (dig prints its target and then the addresses), so a
+# CNAME to Kuma's domain passes. Exit 0 when the addresses are exactly IPV4 (default: VPS_IP of
+# the setup state) and there is no AAAA, 1 otherwise, 2 when it cannot check (no dig, bad input).
+dns_check() {
+  local h=${1:-} ip=${2:-} four six a aaaa cname
+  [ -n "$h" ] || { echo "usage: dns_check HOST [IPV4]" >&2; return 2; }
+  cf_valid_name "$h" || return 2
+  command -v dig >/dev/null 2>&1 || { echo "dns_check: dig is not installed (Debian/Ubuntu: dnsutils; macOS: it ships with the system)" >&2; return 2; }
+  [ -n "$ip" ] || ip=$(VPS_STATE=$VPS_SETUP_STATE state_get VPS_IP)
+  [ -n "$ip" ] || { echo "dns_check: no IPV4 given and no VPS_IP in $VPS_SETUP_STATE" >&2; return 2; }
+  four=$(dig +short A "$h" @1.1.1.1 2>/dev/null); six=$(dig +short AAAA "$h" @1.1.1.1 2>/dev/null)
+  a=$(grep -E '^[0-9]+(\.[0-9]+){3}$' <<<"$four" | sort -u | paste -sd ' ' -)
+  aaaa=$(grep ':' <<<"$six" | sort -u | paste -sd ' ' -)
+  cname=$(printf '%s\n%s\n' "$four" "$six" | grep -E '^[A-Za-z0-9_.-]+\.$' | sed 's/\.$//' | awk '!seen[$0]++' | paste -sd ' ' -)
+  echo "$h A=$a AAAA=$aaaa CNAME=$cname (want A=$ip, no AAAA)"
+  [ "$a" = "$ip" ] && [ -z "$aaaa" ]
+}
+
+# fqdn_list FQDN [HOST] -> the comma list FQDN with each entry trimmed and empty ones dropped,
+# in its order; with HOST, without the entries whose host is HOST (scheme, port, path and a
+# trailing dot ignored, case-insensitive).
+fqdn_list() {
+  # shellcheck disable=SC2016 # $f and $h are jq variables
+  jq -rn --arg f "${1:-}" --arg h "${2:-}" '$f | split(",") | map(gsub("^\\s+|\\s+$"; "") | select(. != ""))
+    | map(select(($h == "") or ((ascii_downcase | sub("^[a-z]+://"; "") | split("/")[0] | split(":")[0] | sub("\\.$"; "")) != $h)))
+    | join(",")'
+}
+
+# service_app SERVICE_UUID COMPOSE_SERVICE -> "<application uuid><TAB><fqdn>" of the application
+# COMPOSE_SERVICE of a one-click service (GET /services/{uuid}). Read-only.
+service_app() {
+  local svc=${1:-} n=${2:-} r row
+  [ -n "$svc" ] && [ -n "$n" ] || { echo "usage: service_app SERVICE_UUID COMPOSE_SERVICE" >&2; return 1; }
+  service_valid_uuid "$svc" || return 1
+  r=$(capi GET "/services/$svc") || return 1
+  # shellcheck disable=SC2016 # $n is a jq variable
+  row=$(jq -r --arg n "$n" '[.applications[]? | select(.name == $n)][0] // empty | [(.uuid // ""), (.fqdn // "")] | @tsv' <<<"$r" 2>/dev/null)
+  [ -n "${row%%$'\t'*}" ] || { echo "service $svc has no application $n" >&2; return 1; }
+  service_valid_uuid "${row%%$'\t'*}" || return 1
+  printf '%s\n' "$row"
+}
+
+# service_app_urls_set SERVICE_UUID APP_UUID URLS -> sets the domains of one application of a
+# service to the comma list URLS (PATCH /services/{uuid}/applications/{app_uuid} {url}; Coolify
+# stores it as the fqdn, lower case). The first URL stays the service's main one (Coolify derives
+# SERVICE_URL_* from it). No restart: service_restart makes Traefik route the new list. A domain
+# another resource has is a 409 [verify]; nothing changes then.
+service_app_urls_set() {
+  local svc=${1:-} app=${2:-} urls=${3:-} res code msg
+  [ -n "$svc" ] && [ -n "$app" ] && [ -n "$urls" ] || { echo "usage: service_app_urls_set SERVICE_UUID APP_UUID URLS" >&2; return 1; }
+  service_valid_uuid "$svc" && service_valid_uuid "$app" || return 1
+  if ! res=$(capi PATCH "/services/$svc/applications/$app" "$(jq -nc --arg u "$urls" '{url:$u}')" 2>&1); then
+    code=$(capi_code "$res")
+    msg=$(sed '1s/^HTTP [0-9]* [A-Z]* [^ ]*: //' <<<"$res")
+    case $code in
+      409)
+        msg=$(jq -r '[.conflicts[]? | "\(.domain // "a domain") (\(.resource_name // .resource_uuid // "another resource")\(if .resource_type then ", \(.resource_type)" else "" end))"]
+          | unique | join(", ")' <<<"$msg" 2>/dev/null)
+        echo "already used in Coolify: ${msg:-a domain of $urls}; nothing changed" >&2 ;;
+      422)
+        msg=$(jq -r '[.message // empty] + [(.errors // {}) | to_entries[]
+          | "\(.key): \(.value | if type == "array" then join(" ") else tostring end)"] | join("; ")' <<<"$msg" 2>/dev/null)
+        echo "Coolify refused the domains (HTTP 422): ${msg:-no message}; nothing changed" >&2 ;;
+      *) echo "$res" >&2 ;;
+    esac
+    return 1
+  fi
+  # shellcheck disable=SC2016 # $u is a jq variable
+  echo "domains of $(jq -r '.name // "the application"' <<<"$res" 2>/dev/null): $(fqdn_list "$(jq -r --arg u "$urls" '.fqdn // $u' <<<"$res" 2>/dev/null)" | sed 's/,/, /g')"
+}
+
+# service_restart UUID -> restarts the service (POST /services/{uuid}/restart [verify]): Coolify
+# writes the Traefik labels again from the domains, so a new domain gets its router and
+# certificate. The containers are recreated; their checks pause for about a minute.
+service_restart() {
+  local uuid=${1:-}
+  [ -n "$uuid" ] || { echo "usage: service_restart UUID" >&2; return 1; }
+  service_valid_uuid "$uuid" || return 1
+  capi POST "/services/$uuid/restart" >/dev/null || return 1
+  echo "service $uuid restarting: Traefik picks up its domains; Kuma's checks pause for about a minute"
+}
+
+# kuma_domain_ctx -> "<container> <service uuid>" of the Kuma of UPTIME.md, after the checks both
+# domain helpers share (kuma.env, UPTIME_SERVICE, UPTIME_URL). Internal.
+kuma_domain_ctx() {
+  local svc c
+  kuma_env_check || return 1
+  svc=$(state_get UPTIME_SERVICE)
+  [ -n "$svc" ] && [ -n "$(state_get UPTIME_URL)" ] || { echo "no UPTIME_SERVICE or UPTIME_URL in $VPS_STATE; run kuma_init first (UPTIME.md step 3)" >&2; return 1; }
+  c=$(kuma_container "$svc") || return 1
+  echo "$c ${c#uptime-kuma-}"
+}
+
+# kuma_domain_run CONTAINER SLUG ADD_HOST REMOVE_HOST -> the kuma.js domain plan (one host to add
+# or to remove), its one-line result on stdout; the password goes through jq's environment and
+# the ssh stdin only. Internal.
+kuma_domain_run() {
+  local plan res msg
+  # shellcheck disable=SC2016 # $s, $a and $r are jq variables
+  plan=$(K_USER=$(kuma_cred KUMA_USER) K_PW=$(kuma_cred KUMA_PASSWORD) jq -nc --arg s "$2" --arg a "$3" --arg r "$4" \
+    '{action: "domain", user: env.K_USER, password: env.K_PW, slug: $s, add: [$a | select(. != "")], remove: [$r | select(. != "")]}') || return 1
+  res=$(kuma_run "$1" "$plan") || {
+    plan=
+    msg=$(jq -r '.msg // empty' <<<"$res" 2>/dev/null)
+    [ -n "$res" ] && echo "kuma.js: ${msg:-no message}" >&2
+    return 1
+  }
+  plan=
+  printf '%s\n' "$res"
+}
+
+# kuma_domain_add SLUG HOST -> serves the status page SLUG (one of UPTIME_PAGES) on the client's
+# HOST as well: the DNS gate first (HOST must already point at VPS_IP, else nothing is sent), then
+# Kuma maps HOST to the page (refused when another page has it), then HOST is appended to the
+# Kuma service's domains in Coolify (Kuma's own domain stays first) and the service restarts so
+# Traefik gets a certificate for it. Records <slug>=<host> in UPTIME_DOMAINS. A second run
+# changes nothing and restarts nothing. Never touches DNS.
+kuma_domain_add() {
+  local slug=${1:-} host ctx c suuid ip who rc res row app fqdn doms
+  [ -n "$slug" ] && [ -n "${2:-}" ] || { echo "usage: kuma_domain_add SLUG HOST  (a page of kuma_sync; the client's host, like status.client.com)" >&2; return 1; }
+  kuma_valid_slug "$slug" || return 1
+  host=$(kuma_valid_host "$2") || return 1
+  ctx=$(kuma_domain_ctx) || return 1
+  read -r c suuid <<<"$ctx"
+  case " $(state_get UPTIME_PAGES) " in
+    *" $slug "*) ;;
+    *) echo "status page $slug is not in UPTIME_PAGES; run kuma_sync for it first (UPTIME.md step 5)" >&2; return 1 ;;
+  esac
+  ip=$(VPS_STATE=$VPS_SETUP_STATE state_get VPS_IP)
+  dns_check "$host" "$ip"; rc=$?
+  case $rc in
+    0) ;;
+    1) echo "DNS of $host does not point at this server ($ip) yet; nothing changed (UPTIME.md step 9b, then the gate in 9c)" >&2; return 1 ;;
+    *) echo "could not check the DNS of $host; nothing changed" >&2; return 1 ;;
+  esac
+  who=$(domain_in_use "$host"); rc=$?
+  case $rc in
+    1) ;;
+    0) [ "$who" = "service $(state_get UPTIME_SERVICE) (uptime-kuma)" ] ||
+         { echo "$host is already used by $(paste -sd ',' - <<<"$who" | sed 's/,/, /g') in Coolify; nothing changed" >&2; return 1; } ;;
+    *) echo "could not read Coolify to check $host; nothing changed" >&2; return 1 ;;
+  esac
+  # Kuma first: once Traefik routes the host, / must already be the page, not Kuma's login.
+  res=$(kuma_domain_run "$c" "$slug" "$host" "") || return 1
+  if jq -e '.changed == true' <<<"$res" >/dev/null; then echo "Kuma: $host now serves status page $slug"
+  else echo "Kuma: $host is already on status page $slug"; fi
+  row=$(service_app "$suuid" uptime-kuma) || return 1
+  app=${row%%$'\t'*}; fqdn=${row#*$'\t'}
+  if [ "$(fqdn_list "$fqdn" "$host")" != "$(fqdn_list "$fqdn")" ]; then
+    echo "Coolify: $host is already a domain of the Kuma service; no restart"
+  else
+    doms=$(fqdn_list "$fqdn")
+    service_app_urls_set "$suuid" "$app" "${doms:+$doms,}https://$host" ||
+      { echo "Kuma has $host on the page, Coolify does not route it yet: fix the cause and run kuma_domain_add $slug $host again" >&2; return 1; }
+    service_restart "$suuid" || return 1
+  fi
+  doms=$(state_get UPTIME_DOMAINS)
+  case " $doms " in *" $slug=$host "*) ;; *) state_set UPTIME_DOMAINS "${doms:+$doms }$slug=$host" || return 1 ;; esac
+  echo "recorded $slug=$host in UPTIME_DOMAINS; next: the HTTPS wait on https://$host/api/entry-page (UPTIME.md step 9e)"
+}
+
+# kuma_domain_remove SLUG HOST --yes -> the reverse of kuma_domain_add: HOST off the Kuma service's
+# domains in Coolify (and a restart, so Traefik stops routing it), then off the page in Kuma, and
+# the pair off UPTIME_DOMAINS. The page, its checks and its other domains stay. Without --yes it
+# refuses and sends nothing. Never touches DNS: the client deletes their record.
+kuma_domain_remove() {
+  local slug=${1:-} host ctx c suuid row app fqdn rest res doms pair out=''
+  [ -n "$slug" ] && [ -n "${2:-}" ] || { echo "usage: kuma_domain_remove SLUG HOST --yes" >&2; return 1; }
+  kuma_valid_slug "$slug" || return 1
+  host=$(kuma_valid_host "$2") || return 1
+  if [ "${3:-}" != --yes ]; then
+    echo "kuma_domain_remove: refusing without --yes. This stops https://$host from serving status page $slug. Ask the user, then: kuma_domain_remove $slug $host --yes" >&2
+    return 1
+  fi
+  ctx=$(kuma_domain_ctx) || return 1
+  read -r c suuid <<<"$ctx"
+  row=$(service_app "$suuid" uptime-kuma) || return 1
+  app=${row%%$'\t'*}; fqdn=${row#*$'\t'}
+  rest=$(fqdn_list "$fqdn" "$host")
+  if [ "$rest" = "$(fqdn_list "$fqdn")" ]; then
+    echo "Coolify: $host is not a domain of the Kuma service; no restart"
+  elif [ -z "$rest" ]; then
+    echo "Coolify: $host is the Kuma service's only domain; refusing to leave Kuma without one. Nothing changed." >&2; return 1
+  else
+    service_app_urls_set "$suuid" "$app" "$rest" && service_restart "$suuid" || return 1
+  fi
+  res=$(kuma_domain_run "$c" "$slug" "" "$host") || return 1
+  if jq -e '.changed == true' <<<"$res" >/dev/null; then echo "Kuma: $host no longer serves status page $slug"
+  else echo "Kuma: $host was not on status page $slug"; fi
+  for pair in $(state_get UPTIME_DOMAINS); do [ "$pair" = "$slug=$host" ] || out="${out:+$out }$pair"; done
+  state_set UPTIME_DOMAINS "$out" || return 1
+  echo "the page and its checks stay; the client deletes their DNS record for $host (this guide never deletes DNS records)"
 }
 
 # --- projects and environments (R09; phase 05, PREPARE-APP.md, SERVICES.md) ---
@@ -948,13 +1163,26 @@ projects_inventory() {
 # projects_md [FILE] -> writes PROJECTS.md (default ~/.config/vps-setup/PROJECTS.md, mode 600;
 # "-" prints it): every project with a table per environment, empty projects included, and
 # what runs in no known project. Names, statuses, domains, repos and uuids only, never env
-# values or connection strings. On an API error nothing is written.
+# values or connection strings. A project with a status page of UPTIME.md (its slug, or
+# <slug>-<stage>, in UPTIME_PAGES) gets a "Status page:" line with the client domains of that
+# page (UPTIME_DOMAINS). On an API error nothing is written.
 projects_md() {
-  local f=${1:-$HOME/.config/vps-setup/PROJECTS.md} j md setup
+  local f=${1:-$HOME/.config/vps-setup/PROJECTS.md} j md setup kurl
   j=$(projects_json) || { echo "projects_md: could not read Coolify; ${f} left as it was" >&2; return 1; }
   setup=$(VPS_STATE=$VPS_SETUP_STATE state_get SETUP_DIR)
-  md=$(jq -r --arg day "$(date -u '+%F %H:%M UTC')" --arg setup "${setup:-SETUP_DIR}" '
+  kurl=$(state_get UPTIME_URL)
+  # shellcheck disable=SC2016 # $day, $setup, $url, $pages and $doms are jq variables
+  md=$(jq -r --arg day "$(date -u '+%F %H:%M UTC')" --arg setup "${setup:-SETUP_DIR}" --arg url "$kurl" \
+      --arg pages "$(state_get UPTIME_PAGES)" --arg doms "$(state_get UPTIME_DOMAINS)" '
     def cell: tostring | gsub("[[:cntrl:]]"; " ") | gsub("\\|"; "\\|") | if . == "" then "-" else . end;
+    def slug: ascii_downcase | gsub("[^a-z0-9]+"; "-") | ltrimstr("-") | .[0:63] | rtrimstr("-");
+    ($pages | split(" ") | map(select(. != ""))) as $pl
+    | ($doms | split(" ") | map(select(test("^[a-z0-9-]+=[a-z0-9.-]+$")) | split("="))) as $dl
+    | def statuslines($p): ([$p.name | slug] + [$p.environments[]? | select(.name != "production") | "\($p.name | slug)-\(.name)" | slug])
+        | map(. as $s | select(any($pl[]; . == $s)))
+        | map(. as $s | "Status page: \($url)/status/\($s)"
+              + ([$dl[] | select(.[0] == $s) | ", also https://\(.[1])"] | join("")) + "\n")
+        | if ($url == "" or length == 0) then "" else "\n" + join("") end;
     def table(rs): if (rs | length) == 0 then "Nothing in it yet.\n" else
       "| kind | name | status | domain | repo | uuid |\n| --- | --- | --- | --- | --- | --- |\n"
       + ([rs[] | "| \(.kind | cell) | \(.name | cell) | \(.status | cell) | \(.fqdn | cell) | \(.repo | cell) | `\(.uuid | cell)` |"]
@@ -965,6 +1193,7 @@ projects_md() {
       + "one environment per stage. No passwords or keys are in this file.\n"
       + ([.projects[] | . as $p
           | "\n## \($p.name | cell)\n\nProject uuid `\($p.uuid | cell)`\(if $p.description != "" then "; \($p.description | cell)" else "" end).\n"
+            + statuslines($p)
             + (if ($p.environments | length) == 0 then "\nNo environments.\n"
                else ([$p.environments | sort_by(.name)[] | .name as $e
                       | "\n### \($e | cell)\n\n" + table([$r[] | select(.project_uuid == $p.uuid and .environment == $e)])] | join(""))
@@ -1788,9 +2017,10 @@ dns_set_a() {
 # State keys that belong to one server and its Coolify: on a new server they point at nothing,
 # and verify.sh and phase 05 would skip steps while they are set (ADMIN_REGISTERED, APP_UUID,
 # WEBHOOK, HOOK_ID, HANDOVER_DONE). SERVICE_<NAME>_UUID keys count too, and STAGING_APP_UUID (the
-# staging app is made again with STAGING.md, its database empty), and UPTIME_SERVICE and
-# UPTIME_PAGES (the new Kuma starts empty; UPTIME_URL, the domain, stays). Everything else survives.
-REBUILD_CLEAR="VPS_IP SERVER_NAME ADMIN_REGISTERED COOLIFY_VERSION PROJECT_UUID DB_UUID APP_UUID KEY_UUID HOOK_ID WEBHOOK S3_STORAGE_UUID BACKUP_UUID ALERTS HANDOVER_DONE ROLLBACK_COMMIT LAST_DUMP PG_UPGRADE_OLD PG_UPGRADE_NEW PG_UPGRADE_DUMP COOLIFY_PROJECT_UUID COOLIFY_APP_UUID STAGING_APP_UUID UPTIME_SERVICE UPTIME_PAGES"
+# staging app is made again with STAGING.md, its database empty), and UPTIME_SERVICE,
+# UPTIME_PAGES and UPTIME_DOMAINS (the new Kuma starts empty, and the client domains were in the
+# old Kuma and the old Coolify; UPTIME_URL, the domain, stays). Everything else survives.
+REBUILD_CLEAR="VPS_IP SERVER_NAME ADMIN_REGISTERED COOLIFY_VERSION PROJECT_UUID DB_UUID APP_UUID KEY_UUID HOOK_ID WEBHOOK S3_STORAGE_UUID BACKUP_UUID ALERTS HANDOVER_DONE ROLLBACK_COMMIT LAST_DUMP PG_UPGRADE_OLD PG_UPGRADE_NEW PG_UPGRADE_DUMP COOLIFY_PROJECT_UUID COOLIFY_APP_UUID STAGING_APP_UUID UPTIME_SERVICE UPTIME_PAGES UPTIME_DOMAINS"
 
 rebuild_clears() {
   case " $REBUILD_CLEAR " in *" $1 "*) return 0 ;; esac

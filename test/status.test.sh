@@ -30,6 +30,10 @@ class H(BaseHTTPRequestHandler):
             q = self.path.split("/")[3:]
             k = s.get("kuma", {})
             return pick2(self, (k.get("beats", {}).get(q[1]) if q[0] == "heartbeat" else k.get("pages", {}).get(q[0])))
+        if self.path.startswith("/entry/"):   # Kuma's public /api/entry-page on a client host (R22), no token
+            q = self.path.split("/")
+            v = s.get("kuma", {}).get("entry", {}).get(q[2]) if len(q) == 5 and q[3:] == ["api", "entry-page"] else None
+            return self.send(200, v) if v is not None else self.send(503, {"msg": "no route"})
         if self.path == "/latest":
             return self.send(200, s["latest"]) if s.get("latest") else self.send(503, {})
         if s.get("reject_token") or self.headers.get("Authorization") != "Bearer " + token:
@@ -291,6 +295,24 @@ expect "uptime: unexpected answer" 1 '^WARN +uptime acme +n/a ' "$KUMA"' | .kuma
 printf 'UPTIME_URL=http://127.0.0.1:%s\nUPTIME_PAGES=acme empty\n' "$PORT" > "$HOME/.config/vps-setup/state"
 expect "uptime: a page without monitors" 1 '^WARN +uptime empty +no monitors on the page \(kuma_sync, UPTIME\.md step 5\)$' "$KUMA"' | .kuma.beats.acme.heartbeatList["2"][1].status = 1'
 check "uptime: two pages, a line per page" "$(grep -E '^  status page ' <<<"$out" | paste -sd '|' -)" "  status page acme|  status page empty"
+# a client's domain for a page (R22): /api/entry-page on that host must name the page
+printf 'UPTIME_URL=http://127.0.0.1:%s\nUPTIME_PAGES=acme\nUPTIME_DOMAINS=acme=status.acme.test other=status.other.test\n' "$PORT" > "$HOME/.config/vps-setup/state"
+export STATUS_ENTRY_URL="http://127.0.0.1:$PORT/entry"
+UP="$KUMA"' | .kuma.beats.acme.heartbeatList["2"][1].status = 1'
+expect "page domain: serves the page" 0 '^OK +page acme +https://status\.acme\.test serves it$' "$UP"' | .kuma.entry["status.acme.test"] = {type: "statusPageMatchedDomain", statusPageSlug: "acme"}'
+check "page domain: one line, only for the page's own pairs" "$(grep -c '^[A-Z]* *page ' <<<"$out")" "1"
+check "page domain: after the page's monitor lines" "$(grep -E '^(OK|WARN|FAIL) +(uptime|page) ' <<<"$out" | awk '{print $2}' | paste -sd ' ' -)" "uptime uptime page"
+expect "page domain: Kuma's own entry (the login) on the client host" 1 \
+  "^FAIL +page acme +https://status\\.acme\\.test answers with Kuma's own entry, not the page \\(kuma_domain_add acme status\\.acme\\.test, UPTIME\\.md step 9\\)$" \
+  "$UP"' | .kuma.entry["status.acme.test"] = {type: "entryPage", entryPage: "dashboard"}'
+expect "page domain: another page on the host" 1 '^FAIL +page acme +https://status\.acme\.test serves status page beta, not acme \(UPTIME\.md step 9\)$' \
+  "$UP"' | .kuma.entry["status.acme.test"] = {type: "statusPageMatchedDomain", statusPageSlug: "beta"}'
+expect "page domain: no answer" 1 '^WARN +page acme +n/a \(https://status\.acme\.test does not answer: DNS, certificate or Kuma; UPTIME\.md step 9\)$' "$UP"
+expect "page domain: not JSON" 1 '^WARN +page acme +n/a ' "$UP"' | .kuma.entry["status.acme.test"] = "<html>"'
+expect "page domain: still checked when the page cannot be read" 1 '^OK +page acme +https://status\.acme\.test serves it$' \
+  "$KUMA"' | del(.kuma.pages.acme) | .kuma.entry["status.acme.test"] = {type: "statusPageMatchedDomain", statusPageSlug: "acme"}'
+has "page domain: the page itself still WARN" "$out" '^WARN +uptime acme +n/a '
+unset STATUS_ENTRY_URL
 rm -f "$HOME/.config/vps-setup/state"
 
 # alerts: Coolify notification channels; the seven alert events of NOTIFY_EVENTS must be on

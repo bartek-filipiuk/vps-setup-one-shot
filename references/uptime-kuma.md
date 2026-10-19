@@ -1,4 +1,4 @@
-# Uptime Kuma 2.x: what this guide uses (R06b)
+# Uptime Kuma 2.x: what this guide uses (R06b, R22)
 
 `UPTIME.md`, `kuma.js` and the `kuma_*` helpers in `lib.sh`. Kuma runs as the Coolify one-click
 service `uptime-kuma` (`SERVICES.md`; the template is in `references/coolify-api.md`).
@@ -49,12 +49,12 @@ the monitor. `kuma_init` takes both right after the container runs.
 
 | Event | Answer | Notes |
 |-------|--------|-------|
-| `login({username, password, token}, cb)` | `{ok: true, token}`, `{tokenRequired: true}` with 2FA on, `{ok: false, msg: "authIncorrectCreds"}` | then the server pushes `monitorList` (an object keyed by monitor id), `statusPageList` and `notificationList`; `kuma.js` waits up to 15 s for `monitorList` |
+| `login({username, password, token}, cb)` | `{ok: true, token}`, `{tokenRequired: true}` with 2FA on, `{ok: false, msg: "authIncorrectCreds"}` | then the server pushes `monitorList` (an object keyed by monitor id), `statusPageList` (an object keyed by page id, one `toJSON()` per page with `slug` and `domainNameList`, from `sendStatusPageList`) and `notificationList`; `kuma.js` waits up to 15 s for `monitorList` (sync) or `statusPageList` (domain) |
 | `add(monitor, cb)` | `{ok, msg, monitorID}` | `kuma.js` sends the UI's defaults for an HTTP monitor (`MONITOR_DEFAULTS`: `type: "http"`, `method: "GET"`, `accepted_statuscodes: ["200-299"]`, `maxredirects: 10`, ...) with `interval: 60`, `retryInterval: 30`, `maxretries: 1`, `timeout: 30`; the 2.x-only fields (`conditions`, `kafkaProducer*`, `rabbitmqNodes`) as empty values |
 | `getStatusPage(slug, cb)` | `{ok: true, config}`; `{ok: false, msg}` for an unknown slug | `config` holds `slug, title, description, icon, theme, showTags, domainNameList, customCSS, footerText, showPoweredBy, showCertificateExpiry, autoRefreshInterval` and the analytics fields |
 | `addStatusPage(title, slug, cb)` | `{ok, msg}` | slug `^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$`; `lib.sh` allows lower case only |
 | `saveStatusPage(slug, config, imgDataUrl, publicGroupList, cb)` | `{ok, publicGroupList}` | **every group missing from `publicGroupList` is deleted**, so `kuma.js` reads the groups first and sends all of them back (on a page this run just created there are none, and the public JSON is not read, see the cache below); groups are `[{id?, name, monitorList: [{id, sendUrl?, url?}]}]`, ordered by position. `url` is written to the monitor's custom link on the page, so `kuma.js` sends it back as it got it. `imgDataUrl` is the current icon URL (`config.icon`, else `/icon.svg`), as the UI sends it; `published` is commented out in 2.x, so a page is public |
-| `editMonitor`, `deleteMonitor`, `deleteStatusPage` | | never sent: `kuma.js` adds and merges only |
+| `editMonitor`, `deleteMonitor`, `deleteStatusPage` | | never sent: `kuma.js` adds and merges only (the domain action changes `domainNameList` only) |
 
 `kuma.js` matches a wanted monitor to an existing one by URL (lower case, trailing slash
 ignored), whatever its name or whether it is paused, so a second run adds nothing.
@@ -73,8 +73,46 @@ does not clear it), the heartbeats for 1 minute. So `kuma_status` and `status.sh
 Kuma by up to that, most visibly right after the first `kuma_sync`, and `kuma.js` does not read
 the groups of a page it has just created (they are empty, and the cache may still hold a 404).
 
-A host in `domainNameList` serves its page at `/` (R22 builds on it); this guide uses
-`/status/<slug>` only and keeps the list as it is on every save.
+`kuma_sync` keeps `domainNameList` as it is on every save, so it never drops a client domain;
+only the domain action below changes it.
+
+## A page on its own domain (R22)
+
+`UPTIME.md` step 9, the `kuma.js` domain action, `kuma_domain_add` and `kuma_domain_remove`.
+From the 2.5.6 source; **[verify]** like the rest.
+
+- **Stored by `saveStatusPage`.** After the login check it trims and lowercases the slug, copies
+  the config fields (title, description, icon from `config.logo`, theme, showTags, footerText,
+  customCSS, showPoweredBy, showCertificateExpiry, autoRefreshInterval, the analytics fields,
+  ...), then `statusPage.updateDomainNameList(config.domainNameList)` and
+  `StatusPage.loadDomainMappingList()`, then the groups (every group missing from the list is
+  deleted, see above), then `apicache.clear()`. On any error the answer is `{ok: false, msg}`.
+- **`updateDomainNameList` (`server/model/status_page.js`).** Not an array: `Invalid array`. In a
+  transaction it deletes every domain of the page, then for each entry: not a string is
+  `Invalid domain`, empty after trim is skipped, and **`DELETE FROM status_page_cname WHERE
+  domain = ?`** before the insert. So a domain that sits on another page is moved to this one
+  without a word, nothing is lowercased or checked, and the page keeps only the list it got.
+  Hence `kuma.js`: hosts normalised and checked against `HOST_RE` (lib.sh's `cf_valid_name`
+  rule), every existing domain of the page sent back, and a host that another page has (from
+  `statusPageList`) refused before anything is saved. No page, or no `statusPageList` within
+  15 s: nothing saved. Nothing to change: no save at all (so no group is rewritten).
+- **Reading it.** `getStatusPage(slug)` answers `config: toJSON()`, which has `domainNameList`
+  (from the static `StatusPage.domainMappingList`, `{domain: slug}`, reloaded by
+  `loadDomainMappingList`). The public `/api/status-page/<slug>` (`toPublicJSON`) has no
+  domains.
+- **Serving it.** Not the status page router (slug paths only). `server.js` `GET /`: the hostname
+  is `request.hostname` (no port), or `X-Forwarded-Host` when Kuma's `trustProxy` setting is on;
+  when it is a key of `domainMappingList` (exact, case-sensitive), Kuma renders the page there,
+  else it redirects to the entry page (`/dashboard` by default). `GET /api/entry-page` (public)
+  answers `{type: "statusPageMatchedDomain", statusPageSlug}` for a mapped host, else `{type:
+  "entryPage", entryPage}`; the SPA (`Entry.vue`) asks it on `/`. `status.sh` and `UPTIME.md`
+  step 9e read that answer. Traefik passes the original `Host`, so `trustProxy` is not needed.
+- **Everything else on that host is ordinary Kuma.** Static files, `/upload`,
+  `/api/status-page/*`, `/api/badge/*`, `/api/push/*`, socket.io and the catch-all `index.html`
+  answer on any host: `/dashboard` on the client's host is Kuma's login. There is no setting to
+  fence a domain to its page; a Coolify path rule cannot either (`fqdnLabelsForTraefik` adds
+  `PathPrefix` only for a URL with a path, and the page needs `/`). Written plainly in step 9a.
+- **Cache.** `saveStatusPage` clears `apicache`, so the public JSON is fresh right after a save.
 
 ## What the first run must prove
 
@@ -95,3 +133,19 @@ A host in `domainNameList` serves its page at `/` (R22 builds on it); this guide
    browser.
 9. `npm run reset-password` in the container (`UPTIME.md` step 3) works and how it asks.
 10. The `status.sh` Uptime section gives no false WARN on a clean setup.
+11. `statusPageList` arrives after the login: an object keyed by page id whose entries carry
+    `slug` and `domainNameList`.
+12. `saveStatusPage` with a new `domainNameList` answers `ok`; with Kuma's `trustProxy` off,
+    `https://<client host>/api/entry-page` answers `{"type":"statusPageMatchedDomain",
+    "statusPageSlug":"<slug>"}`, `/` renders the page and `/dashboard` there shows the login
+    (expected, `UPTIME.md` step 9a).
+13. `PATCH /services/{uuid}/applications/{app_uuid} {url: "a,b"}` answers 200, `GET
+    /services/{uuid}` then shows `fqdn` `"a,b"` and `SERVICE_URL_UPTIMEKUMA_3001` is still the
+    first domain; a used host gives the 409 shape of `references/coolify-api.md`.
+14. `POST /services/{uuid}/restart` recreates the container with a router for the second domain
+    and the same container name; the certificate for the client host arrives within about two
+    minutes over a CNAME; how long the checks pause; plain http on the client host redirects to
+    https.
+15. `kuma_domain_remove`: the router is gone after the restart (what the client host answers
+    then), Kuma drops the mapping, the page and its checks stay, and the public JSON is fresh
+    right after the save.

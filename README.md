@@ -121,7 +121,9 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 - `UPTIME.md` sets up Uptime Kuma through `SERVICES.md`, takes over its two first-start pages
   (database type, admin) from the server before the domain answers, with a generated password in
   `~/.config/vps-setup/kuma.env` (mode 600), then adds one HTTP check per app domain and a public
-  status page per project (`kuma_sync`, idempotent, never deletes). Kuma 2.x has no write API,
+  status page per project (`kuma_sync`, idempotent, never deletes), and, per client, that page
+  on the client's own domain with its own certificate (`kuma_domain_add`; the client adds one
+  DNS record). Kuma 2.x has no write API,
   so `kuma.js` runs inside the Kuma container and drives it through socket.io like Kuma's own UI.
   `status.sh` gets an Uptime section read from the page's public JSON. The checks run on the same
   server, so a dead server is not reported by Kuma.
@@ -213,7 +215,11 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   `ssh`, a fake `docker` and a fake Kuma socket only (`test/lib.test.sh`, `test/status.test.sh`,
   `test/kuma.test.js`) and have **not been run on a real server yet**; no Kuma has been set up
   with them. The socket events and HTTP answers come from Uptime Kuma 2.x (2.5.6 source) and are
-  marked `[verify]` in `references/uptime-kuma.md`.
+  marked `[verify]` in `references/uptime-kuma.md`. The same goes for a client's domain on a
+  status page (R22: `UPTIME.md` step 9, `dns_check`, `kuma_domain_add`, `kuma_domain_remove`,
+  `service_app`, `service_app_urls_set`, `service_restart`, the `kuma.js` domain action, the
+  `status.sh` `page` line, also against a fake `dig`): no client domain has been mapped yet; the
+  Coolify calls come from the 4.3.23 source and are marked `[verify]`.
 - Projects and clients (R09: `project_ensure`, `env_ensure`, `project_ctx`,
   `app_domain_default`, `domain_in_use`, `projects_inventory`, `projects_md`, the `status.sh`
   group lines and the changes to phase 05, `PREPARE-APP.md` and `SERVICES.md`) are tested against
