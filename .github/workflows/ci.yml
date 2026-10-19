@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: kuma.js syntax and unit tests (fake Kuma socket and fetch, no server)
+        run: node --version && node --check kuma.js && node test/kuma.test.js
       - name: lib.sh tests (fake Coolify API, no server)
         run: bash test/lib.test.sh
       - name: status.sh tests (fake Coolify API, ssh and openssl stubs, no server)

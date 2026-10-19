@@ -56,9 +56,9 @@ Actions
 
 ## 3. What each line means and the fix
 
-Lines that come from `status.sh` (ssh, disk, updates, version, apps, certificates, backups,
-postgres, alerts) point at the runbooks `status.sh` already uses: `DOCTOR.md`, `UPGRADE.md`,
-`SERVICES.md`, phase 06. The monthly lines:
+Lines that come from `status.sh` (ssh, disk, updates, version, apps, certificates, uptime,
+backups, postgres, alerts) point at the runbooks `status.sh` already uses: `DOCTOR.md`,
+`UPGRADE.md`, `SERVICES.md`, `UPTIME.md`, phase 06. The monthly lines:
 
 ### 3a. Firewall and listening ports
 

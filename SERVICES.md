@@ -8,6 +8,8 @@ every command starts with `. ./lib.sh` and uses the global setup state (the proj
 05, or another client's project the user picks in step 1). Rules from `SETUP.md` apply: API only via `capi`, server commands only via `rssh`, nothing
 destructive without the user's yes, prove every step.
 
+Uptime Kuma with checks for the apps and a status page: `UPTIME.md` (it uses steps 1 to 4 below).
+
 **Not run on a real server yet.** `service_create`, `service_status`, `service_delete` and the
 `status.sh` Services section are tested against a fake Coolify API only (`test/lib.test.sh`,
 `test/status.test.sh`). `GET /services` and `GET /services/{uuid}` were checked on a live
@@ -24,10 +26,10 @@ default the setup's project and `production`), with its data in Docker volumes o
 |------|--------|---------------|---------------------------------------------|
 | Umami (web analytics) | `umami` | its own Postgres inside the service (not the app's database), one volume for it | default account `admin` / `umami`: change the password at once **[verify]** |
 | n8n (automation) | `n8n` | SQLite in a volume | the first visitor creates the owner account **[verify]** |
-| Uptime Kuma (uptime monitor) | `uptime-kuma` | SQLite in a volume | the first visitor creates the admin account |
+| Uptime Kuma (uptime monitor) | `uptime-kuma` | SQLite in a volume | Kuma 2.x asks the database type first, then for the admin: `UPTIME.md` does both from the server before the domain answers, so for Kuma follow `UPTIME.md` |
 | Forgejo (Git hosting) | `forgejo` | its database and repositories in a volume; Git over SSH on host port 22222 | the first visitor finishes the install page and registers the admin **[verify]** |
 
-The first visitor becomes admin for n8n, Uptime Kuma and Forgejo, and Umami's default password
+The first visitor becomes admin for n8n and Forgejo, and Umami's default password
 is public: the address is on the internet from the moment HTTPS works, so the user logs in
 within minutes of step 4, not tomorrow.
 
@@ -139,7 +141,8 @@ its logs in the Coolify UI (project → the service → **Logs**) and see "HTTPS
 `references/troubleshooting.md` for the certificate. Do not delete and recreate it in a loop:
 each attempt counts against Let's Encrypt's limits.
 
-Now the user does the first login from the table, at once. `./status.sh` has a `service <NAME>`
+Now the user does the first login from the table, at once (for Uptime Kuma: `UPTIME.md` step 4,
+after its step 3 took the first-start pages). `./status.sh` has a `service <NAME>`
 line under its project and a `cert <SERVICE_DOMAIN>` line from now on. Regenerate the list of
 projects, so the service is in it:
 

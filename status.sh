@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-screen health check of the server (updates, reboot), Coolify, apps and services (grouped
-# by project and environment), certificates, backups, Postgres major versions and alerts.
+# by project and environment), certificates, uptime checks, backups, Postgres major versions and alerts.
 # Run from anywhere on YOUR machine: ./status.sh
 # Exit code: 0 all OK, 1 something needs attention (WARN or FAIL), 2 server or Coolify API unreachable.
 # Read-only: it never changes anything and never prints tokens or deploy logs.
@@ -246,6 +246,36 @@ else
       line "$mark" "service $name" "$d"
       certs "$fqdn"
     done <<<"$svcs"
+  fi
+
+  # --- Uptime: the Kuma status pages of UPTIME.md (UPTIME_PAGES), from their public JSON, no login ---
+  section "Uptime"
+  pages=$(state_get UPTIME_PAGES)
+  if [ -z "$pages" ]; then
+    line OK "uptime" "none (UPTIME.md)"
+  else
+    npages=$(wc -w <<<"$pages")
+    for slug in $pages; do
+      [ "$npages" -gt 1 ] && subsection "status page $slug"
+      up=$(kuma_status "$slug" 2>/dev/null); urc=$?
+      if [ "$urc" = 2 ] || [ -z "$up" ]; then
+        line WARN "uptime $slug" "n/a (could not read $(state_get UPTIME_URL)/status/$slug)"; continue
+      fi
+      if [ "$(wc -l <<<"$up")" -lt 2 ]; then
+        line WARN "uptime $slug" "no monitors on the page (kuma_sync, UPTIME.md step 5)"; continue
+      fi
+      # Kuma 2.5.6 sends no message in the public heartbeats ("-"); the reason is on the monitor's page in Kuma.
+      while IFS=$'\t' read -r mon ust u24 since _ msg; do
+        why=''; [ "$msg" = - ] || why=": $msg"
+        case $ust in
+          up) line OK "uptime $mon" "up, 24h $u24" ;;
+          down) line FAIL "uptime $mon" "down since $since$why" ;;
+          pending) line WARN "uptime $mon" "pending since $since$why" ;;
+          maintenance) line OK "uptime $mon" "in maintenance, 24h $u24" ;;
+          *) line WARN "uptime $mon" "no check yet" ;;
+        esac
+      done < <(tail -n +2 <<<"$up")
+    done
   fi
 
   # --- Backups ---

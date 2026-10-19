@@ -166,6 +166,7 @@ Then write a summary the user can keep. No secrets in it.
 - App down (site down, deploy failed, 502, certificate error, server unreachable): $(state_get SETUP_DIR)/DOCTOR.md
 - Hand the project or server to someone: $(state_get SETUP_DIR)/HANDOVER.md
 - Self-hosted tools (analytics, automation, uptime): $(state_get SETUP_DIR)/SERVICES.md
+- Uptime checks and status page: $(state_get SETUP_DIR)/UPTIME.md
 - Upgrades (Coolify, Ubuntu, Postgres): $(state_get SETUP_DIR)/UPGRADE.md
 - Logs: Coolify UI -> app -> Logs
 - Health: $(state_get SETUP_DIR)/status.sh (one screen; exit 0 = all OK)

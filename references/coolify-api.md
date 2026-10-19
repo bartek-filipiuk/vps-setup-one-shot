@@ -164,6 +164,15 @@ everything else is from the 4.3.23 source and not yet exercised **[verify]**.
 | `PUT`/`POST /services/{uuid}/storages/{storage_uuid}/backups[/run]` | volume backups of a service | not used yet; `SERVICES.md` step 5 **[verify]** |
 | (none) | scheduled backups of a database inside a service | `/databases/{uuid}/backups` covers standalone databases only; UI only **[verify]** |
 
+Container names of a service: `<compose service>-<service uuid>`, seen on a 4.3.23 server with
+the Umami service, 2026-10-19 (service `iww444o4ow88og8s8cow4kkc` runs as
+`umami-iww444o4ow88og8s8cow4kkc` and `postgresql-iww444o4ow88og8s8cow4kkc`). `kuma_container`
+relies on it for `uptime-kuma-<service uuid>`; no Kuma service has been seen yet **[verify]**.
+The 4.3.23 `uptime-kuma` template (`templates/compose/uptime-kuma.yaml`, source): compose service
+`uptime-kuma`, image `louislam/uptime-kuma:2` (a floating major tag), `SERVICE_URL_UPTIMEKUMA_3001`,
+volume `uptime-kuma-data:/app/data`, healthcheck `extra/healthcheck`, no `UPTIME_KUMA_DB_TYPE`
+**[verify]**. Driving Kuma itself: `references/uptime-kuma.md`.
+
 Staging (R11: `staging_init`, `app_env_keys`, `app_env_set`, `app_create`, `app_basic_auth`,
 `apps_webhook_secret`, `staging_teardown`, `STAGING.md`). The two `GET` shapes were checked
 read-only on a live 4.3.23 on 2026-10-17 (`GET /version` = 4.3.23); everything else is from the
