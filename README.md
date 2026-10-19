@@ -151,7 +151,7 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   `vault_import` brings them back on a new machine, `vault_check` (and the checkup) says when the
   copy is stale, and the rotation part changes each secret in an order that keeps the server
   working. You run the export and the restore in your own terminal: `age` asks for the
-  passphrase there, so the agent never sees it or the plaintext.
+  passphrase there, so the agent never handles the passphrase.
 - With DNS at Cloudflare, phase 01 and `SERVICES.md` create the A records through the
   Cloudflare API (`dns_set_a` in `lib.sh`: DNS only, created or updated, never deleted) from a
   token for that one zone; the `dig` check in phase 04 stays as the proof they resolve.
@@ -175,9 +175,10 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   Coolify with a per-app webhook secret; the API token never leaves your machine.
 - The database is never exposed publicly.
 - The secrets on your machine are files with mode 600, never typed into the chat; the vault
-  (`VAULT.md`) is an `age`-encrypted copy of them for a lost or new laptop and a leaked backup. It
-  does not protect against malware running as you while the files are on the disk; full-disk
-  encryption stays the first line.
+  (`VAULT.md`) is an `age`-encrypted copy of them, to get everything back on a new laptop and to
+  keep a leaked home backup harmless. It does not keep the files on a lost disk secret (that is
+  full-disk encryption's job), and it does not stop malware running as you, or an agent ignoring
+  `AGENTS.md` rule 2, from reading them.
 
 ## Status
 
@@ -273,8 +274,8 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   `[verify]` in `references/coolify-api.md`.
 - `VAULT.md` (R23), `vault_export`, `vault_import` and `vault_check` are tested against a fake
   `age` (`test/lib.test.sh`, `test/checkup.test.sh`) and in a round trip with the real `age`
-  under a pseudo-terminal (`test/vault-roundtrip.sh`, run locally with age 1.2.1; CI installs
-  Ubuntu's `age` for it). No machine has been restored from a vault for real, and **no rotation
+  under a pseudo-terminal (`test/vault-roundtrip.sh`, checked on the author's machine with age
+  1.2.1, CI uses Ubuntu's `age`). No machine has been restored from a vault for real, and **no rotation
   step has been run on a server yet**; the UI paths in it are marked `[verify]`.
 - The Claude Code plugin and the Cursor rule (R19) are checked by `test/packaging.sh` only and
   have **not been installed from the marketplace or run end to end yet**; that Codex and Cursor

@@ -7,15 +7,16 @@ the repo root; every command starts with `. ./lib.sh`. Rules from `SETUP.md` app
 
 **The user runs `vault_export` and `vault_import` in their own terminal, never you.** `age` asks
 for the passphrase on the terminal itself and has no flag or variable for it, so the passphrase
-never goes through the chat, a command line or this repo, and you never see what is in the file.
-Run in your shell, both say `age reads the passphrase from the terminal only` and change nothing.
+never goes through the chat, a command line or this repo, and the passphrase is never yours to
+see. Run in your shell (no terminal), both refuse before `age` starts with `run this in your own
+terminal: age asks for the passphrase there` and change nothing.
 You may run `vault_check` (it reads a list of paths and the file's first two lines, never decrypts).
 
 **Not run on a real server yet.** `vault_export`, `vault_import` and `vault_check` are tested
 against a fake `age` (`test/lib.test.sh`, `test/checkup.test.sh`), and `test/vault-roundtrip.sh`
-runs a round trip with the real `age` under a pseudo-terminal (`script`): run locally with age
-1.2.1; CI installs Ubuntu's `age` for it. No machine has been restored with it for real, and no
-step of the rotation part (step 6) has been run on a server; the UI paths in it are marked
+runs a round trip with the real `age` under a pseudo-terminal (`script`): checked on the
+author's machine with age 1.2.1, CI uses Ubuntu's `age`. No machine has been restored with
+it for real, and no step of the rotation part (step 6) has been run on a server; the UI paths in it are marked
 **[verify]**.
 
 ## 0. What it covers, and what not
@@ -36,16 +37,26 @@ command line:
 Next to them, without secrets: the state, `SERVER.md`, `PROJECTS.md`, `handover/`, the checkup
 log and the `*.before-rebuild-*` copies. The vault holds all of these.
 
-Covered: a lost, stolen or sold laptop; a cloud or Time Machine backup of the home directory
-that leaks (the copy of `~/.config` in it is plaintext; the vault file is not); a new machine
-(the whole setup back from one file and one passphrase); "which copy of the token is the
-current one" after a rotation.
+What it does:
 
-Not covered: malware or anyone working as the user while the files are on the disk (they read
-`~/.config` directly; nothing that runs as the same user can stop that); a compromised server
-(it holds the database passwords and Coolify's own keys); the agent (it never sees the
-plaintext, before or after this file). Full-disk encryption (FileVault, BitLocker, LUKS) stays
-the first line; the vault is the copy off the machine and the way back.
+- A lost, stolen or broken laptop: the vault gets everything back on the next one (step 4).
+  Keeping the files on the lost disk secret is not the vault's job: the plaintext files are
+  still on that disk, and only full-disk encryption (FileVault, BitLocker, LUKS) protects them.
+  Turn it on; the vault does not replace it.
+- A new machine: the whole setup back from one file and one passphrase.
+- A backup of the home directory (cloud sync, Time Machine) that leaks: the copy of `~/.config`
+  in it is plaintext; the vault file in it is not. Only the vault file belongs in places like
+  that.
+- "Which copy of the token is the current one" after a rotation: the newest export.
+
+What it does not do:
+
+- Anything about malware or a person working as the user while the files are on the disk: they
+  read `~/.config` directly, and nothing that runs as the same user can stop that.
+- Anything about what the agent can read. The agent runs as the user, so it could read these
+  files exactly like before; only `AGENTS.md` rule 2 (and the agent following it) keeps it from
+  doing so. The vault adds one thing for the agent: it never handles the passphrase.
+- A compromised server: it holds the database passwords and Coolify's own keys.
 
 The vault is not a password manager and not the server's backups: the databases are in the S3
 bucket (phase 06 step 1), the apps in git. Secrets that live only on the server (database
@@ -104,8 +115,10 @@ When the file is moved off the machine, it says `is not on this machine (fine wh
 What `vault_export` can say:
 
 - `age is not installed`: step 1.
-- `vault_export failed; nothing written. Run it in your own terminal ...`: it was run without a
-  terminal (your shell, a script), or the two passphrases differed (`age` says so above).
+- `run this in your own terminal: age asks for the passphrase there`: it was run without a
+  terminal (your shell, a script); nothing changed.
+- `vault_export failed; nothing written. ...`: `age` stopped, for example the two passphrases
+  differed (`age` says so above).
 - `... exists already; nothing changed`: a second export the same day; it prints a name to use.
 - `vault_paths: ... is outside your home directory`: the vault holds files under `$HOME` only.
 
@@ -142,7 +155,9 @@ The vault file is copied there from where it was kept (step 2). Then, in their o
 `age` asks for the passphrase. It never overwrites: when a file of the vault exists already
 (often `~/.ssh/id_ed25519` from another key), it lists them, changes nothing, and the user moves
 them aside first (`mv FILE FILE.before-import`). It unpacks with directories `700` and files
-`600`, writes the manifest and prints what came back. Then:
+`600`, writes the manifest and prints what came back. The decrypted tar exists only for that
+moment, in a private directory inside `~/.config/vps-setup/` (where the plaintext goes anyway),
+and is removed also when it fails. `wrong passphrase; nothing changed`: try again. Then:
 
 - `SSH_PUBKEY=... is not on this machine`: the home directory is a different path. Run
   `. ./lib.sh; state_set SSH_PUBKEY "$HOME/.ssh/<name>.pub"`.
@@ -203,7 +218,7 @@ step 3's command in their own terminal writes it; that command writes `COOLIFY_U
 `COOLIFY_TOKEN` only, so move the old file aside first and put the server uuid back:
 
 ```
-. ./lib.sh; s=$(coolify_get COOLIFY_SERVER_UUID); cp -p ~/.config/coolify/config ~/.config/coolify/config.before-rotation && echo "server uuid: ${s:-none}"
+. ./lib.sh; s=$(coolify_get COOLIFY_SERVER_UUID); cp -p ~/.config/coolify/config ~/.config/coolify/config.bak-rotation && echo "server uuid: ${s:-none}"
 ```
 
 After phase 04 step 3's command (the user), if a server uuid was printed:
@@ -215,7 +230,8 @@ After phase 04 step 3's command (the user), if a server uuid was printed:
 
 Expect the version and `status exit 0`. Then the user deletes the old token in **Keys &
 Tokens** (the older `vps-setup` entry, by its date) **[verify]**, and you remove the copy:
-`rm ~/.config/coolify/config.before-rotation`. Not run yet.
+`rm ~/.config/coolify/config.bak-rotation` (until then the vault and `vault_check` count it,
+like every `config.bak-*` copy). Not run yet.
 
 ### 6.2 Hetzner API token
 
@@ -340,9 +356,18 @@ user. Not run yet.
 
 ### 6.12 SSH key
 
-`HANDOVER.md` 6.2, with the user as both sides: the new key added, proven from a new connection,
-then the old one removed (the command there refuses unless both are present), and Coolify's
-own key never touched. Then `state_set SSH_PUBKEY "$HOME/.ssh/<new>.pub"` and in Hetzner, for
+`HANDOVER.md` 6.2, with the user as both sides: the new key (`ssh-keygen -t ed25519 -f
+~/.ssh/<new>` in their own terminal) added, then the old one removed (the command there refuses
+unless both are present), and Coolify's own key never touched. `rssh` offers every key the ssh
+agent and `~/.ssh` have, so it proves nothing here. Prove each key on its own instead, the new
+one before the old one goes:
+
+```
+. ./lib.sh; K="$HOME/.ssh/<NEW KEY>"; ssh -o IdentitiesOnly=yes -o BatchMode=yes -i "$K" "root@$(state_get VPS_IP)" true && echo "key works: $K"
+```
+
+After the removal, the same command with `K="$HOME/.ssh/<OLD KEY>"` must fail (`Permission denied`); if
+it still works, the old key is still in `authorized_keys`. Then `state_set SSH_PUBKEY "$HOME/.ssh/<new>.pub"` and in Hetzner, for
 servers made later, `hcloud ssh-key delete vps-setup` and
 `hcloud ssh-key create --name vps-setup --public-key-from-file "$(state_get SSH_PUBKEY)"`.
 Not run yet.

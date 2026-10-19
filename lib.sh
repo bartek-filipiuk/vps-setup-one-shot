@@ -2128,6 +2128,14 @@ vault_age_check() {
   return 1
 }
 
+# vault_tty_check NAME -> 0 when stdin is a terminal, or VAULT_AGE is set (the test seam); else
+# the own-terminal hint, 1. age would fail without a terminal anyway; this says why before it runs.
+vault_tty_check() {
+  [ -t 0 ] || [ -n "${VAULT_AGE:-}" ] && return 0
+  echo "$1: run this in your own terminal: age asks for the passphrase there; nothing changed" >&2
+  return 1
+}
+
 vault_manifest_file() { echo "${VAULT_MANIFEST:-$HOME/.config/vps-setup/vault.manifest}"; }
 
 # vault_stat FILE -> "size mtime" (GNU stat, then BSD stat)
@@ -2152,6 +2160,8 @@ vault_paths() {
   home=$(cd "$HOME" && pwd -P) || return 1
   st="$HOME/.config/vps-setup/state"
   if [ -d "$HOME/.config/vps-setup" ]; then
+    p=$(cd "$HOME" && find .config/vps-setup -type f \( -name "*"$'\n'"*" -o -name '*\\*' \) -print)
+    [ -z "$p" ] || { echo "vault_paths: refusing a file name with a backslash or a newline under $HOME/.config/vps-setup/: $(head -n 1 <<<"$p"); rename it" >&2; return 1; }
     list+=$(cd "$HOME" && find .config/vps-setup -type f ! -name '*.tmp' ! -name '*.age' ! -name vault.manifest -print)$'\n'
   fi
   pub=$( [ -f "$st" ] && grep -m1 '^SSH_PUBKEY=' "$st" | cut -d= -f2-)
@@ -2161,6 +2171,7 @@ vault_paths() {
     case $p in "$HOME"/*) [ -f "$p" ] && [ ! -L "$p" ] && list+="$p"$'\n' ;; esac
   done
   for a in "$@"; do
+    case $a in *$'\n'*|*\\*) echo "vault_paths: refusing a file name with a backslash or a newline: $(head -n 1 <<<"$a")" >&2; return 1 ;; esac
     [ -f "$a" ] && [ ! -L "$a" ] || { echo "vault_paths: $a is not a regular file" >&2; return 1; }
     list+="$a"$'\n'
   done
@@ -2171,6 +2182,7 @@ vault_paths() {
     a="$dir/${p##*/}"
     case $a in "$home"/*) rel=${a#"$home"/} ;; *) echo "vault_paths: $p is outside your home directory ($HOME); the vault holds files under it only" >&2; return 1 ;; esac
     case $rel in -*|*$'\t'*) echo "vault_paths: refusing the file name $rel" >&2; return 1 ;; esac
+    case $rel in *\\*) echo "vault_paths: refusing a file name with a backslash or a newline: $rel" >&2; return 1 ;; esac
     res+="$rel"$'\n'
   done <<<"$list"
   [ -z "$res" ] || printf '%s' "$res" | LC_ALL=C sort -u
@@ -2197,6 +2209,7 @@ vault_manifest_write() {
 # stores or passes the passphrase.
 vault_export() (
   set -o pipefail
+  vault_tty_check vault_export || exit 1
   vault_age_check || exit 1
   out="$HOME/vps-setup-vault-$(date -u +%Y%m%d).age"
   case ${1:-} in *.age) out=$1; shift ;; esac
@@ -2229,16 +2242,30 @@ vault_import() (
   [ -n "$f" ] || { echo "usage: vault_import FILE.age" >&2; exit 1; }
   [ -f "$f" ] || { echo "vault_import: $f does not exist" >&2; exit 1; }
   case $f in /*) ;; *) f="$PWD/$f" ;; esac
+  vault_tty_check vault_import || exit 1
   vault_age_check || exit 1
-  d=$(umask 077 && mktemp -d) || exit 1
-  trap 'rm -rf "$d"' EXIT
+  # The plaintext tar goes next to where the plaintext files will be (not /tmp, often another
+  # disk or shared): a private temp dir in ~/.config/vps-setup/, created 700 when missing and
+  # removed again, with the temp dir, when the import fails.
+  vd="$HOME/.config/vps-setup" madec="" madev="" ok=""
+  [ -d "$HOME/.config" ] || madec=1
+  [ -d "$vd" ] || madev=1
+  ( umask 077; mkdir -p "$vd" ) || exit 1
+  d=$(umask 077 && TMPDIR=$vd mktemp -d) || exit 1
+  trap 'rm -rf "$d"; [ -n "$ok" ] || { [ -z "$madev" ] || rmdir "$vd" 2>/dev/null; [ -z "$madec" ] || rmdir "$HOME/.config" 2>/dev/null; }' EXIT
   echo "age asks for the vault's passphrase, on this terminal."
-  if ! ( umask 077; "${VAULT_AGE:-age}" -d -o "$d/v.tar" "$f" ); then
-    echo "vault_import failed; nothing changed. Run it in your own terminal, not through the agent: age reads the passphrase from the terminal only (VAULT.md step 4)." >&2
+  if ! err=$( umask 077; "${VAULT_AGE:-age}" -d -o "$d/v.tar" "$f" 2>&1 >/dev/null ); then
+    case $err in
+      *"incorrect passphrase"*) echo "vault_import: wrong passphrase; nothing changed" >&2 ;;
+      *"/dev/tty is not available"*|*"not a terminal"*) echo "vault_import: run this in your own terminal: age asks for the passphrase there; nothing changed (VAULT.md step 4)" >&2 ;;
+      *) printf '%s\n' "$(grep -m1 . <<<"$err")" >&2
+         echo "vault_import: age could not open $f; nothing changed (is it the vault file, complete? VAULT.md step 4)" >&2 ;;
+    esac
     exit 1
   fi
   # -P lists the names as stored (tar would strip a leading / or ../ on the way), so they can be refused
   tar -tPf "$d/v.tar" > "$d/list" 2>/dev/null && tar -tvPf "$d/v.tar" > "$d/long" 2>/dev/null || { echo "vault_import: $f holds no readable tar; nothing changed" >&2; exit 1; }
+  [ -s "$d/list" ] || { echo "vault_import: $f holds no files; nothing changed" >&2; exit 1; }
   if grep -qv '^-' "$d/long"; then
     echo "vault_import: $f holds something other than plain files; nothing changed" >&2; exit 1
   fi
@@ -2257,6 +2284,7 @@ vault_import() (
   for p in .config/vps-setup .config/vps-setup/handover .config/coolify .config/hcloud .ssh; do
     [ -d "$HOME/$p" ] && chmod 700 "$HOME/$p"
   done
+  ok=1
   vault_manifest_write import "$f" "$d/list" || echo "could not write $(vault_manifest_file); vault_check will say no vault" >&2
   echo "restored into $HOME ($(wc -l < "$d/list" | tr -d ' ') files, mode 600):"
   sed 's/^/  /' "$d/list"

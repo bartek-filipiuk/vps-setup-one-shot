@@ -1996,6 +1996,8 @@ printf '%s\n' "age \$*" >> "$HOME/argv.log"
 [ "\$1" = --version ] && { echo v1.2.1; exit 0; }
 mode= out= in=
 while [ \$# -gt 0 ]; do case \$1 in -p) mode=enc ;; -d) mode=dec ;; -o) out=\$2; shift ;; *) in=\$1 ;; esac; shift; done
+if [ "\${FAKE_AGE_WRONG:-0}" = 1 ]; then : > "\$out"; echo "age: error: incorrect passphrase" >&2; echo "age: report unexpected or unhelpful errors at https://filippo.io/age/report" >&2; exit 1; fi
+if [ "\${FAKE_AGE_OTHER:-0}" = 1 ]; then echo "age: error: failed to read header: parsing age header: unexpected EOF" >&2; exit 1; fi
 if [ "\${FAKE_AGE_FAIL:-0}" = 1 ]; then : > "\$out"; echo "age: error: could not read passphrase: standard input is not a terminal, and /dev/tty is not available" >&2; exit 1; fi
 case \$mode in
   enc) { printf 'age-encryption.org/v1\n-> scrypt FAKESALT 18\nFAKEBODY\n--- FAKEMAC\n'; cat; } > "\$out" ;;
@@ -2047,6 +2049,20 @@ vrun vault_paths "$REPO/lib.sh"
 check "vault_paths: a file outside the home refused" "$rc:$out" "1:vault_paths: $REPO/lib.sh is outside your home directory ($VH); the vault holds files under it only"
 vrun vault_paths "$VH/nope.env"
 check "vault_paths: a missing extra refused" "$rc:$out" "1:vault_paths: $VH/nope.env is not a regular file"
+printf 'x\n' > "$VH/code/a\\b.env"
+vrun vault_paths "$VH/code/a\\b.env"
+check "vault_paths: an extra with a backslash refused" "$rc:$out" "1:vault_paths: refusing a file name with a backslash or a newline: $VH/code/a\\b.env"
+rm -f "$VH/code/a\\b.env"
+printf 'x\n' > "$VPS/bad"$'\n'"name"
+vrun vault_paths
+check "vault_paths: a file with a newline under vps-setup refused" "$rc:$out" "1:vault_paths: refusing a file name with a backslash or a newline under $VH/.config/vps-setup/: .config/vps-setup/bad; rename it"
+rm -f "$VPS/bad"$'\n'"name"
+printf 'x\n' > "$VPS/back\\slash"
+vrun vault_paths
+check "vault_paths: a file with a backslash under vps-setup refused" "$rc:$out" "1:vault_paths: refusing a file name with a backslash or a newline under $VH/.config/vps-setup/: .config/vps-setup/back\\slash; rename it"
+rm -f "$VPS/back\\slash"
+vrun env -u VAULT_AGE bash -c ". '$REPO/lib.sh'; vault_export" </dev/null
+check "vault_export: no terminal and no VAULT_AGE: refused before age" "$rc:$out" "1:vault_export: run this in your own terminal: age asks for the passphrase there; nothing changed"
 
 V="$VH/vps-setup-vault-$(date -u +%Y%m%d).age"
 FAKE_AGE_FAIL=1 vrun vault_export
@@ -2097,17 +2113,22 @@ vrun vault_check
 check "vault_check: no manifest" "$rc:$out" "1:no vault yet: the user runs vault_export in their own terminal (VAULT.md step 2)"
 mv "$VH/manifest.bak" "$VPS/vault.manifest"
 
-# restore on a "new machine": VH2 is empty
-VHOME=$VH2 vrun vault_import "$VH/keep.age"
+# restore on a "new machine": VH2 is empty. TMPDIR points at VT: nothing may land there, and
+# no plaintext tar or temp dir may stay behind in the new home.
+VT=$(mktemp -d)
+vrun env -u VAULT_AGE bash -c ". '$REPO/lib.sh'; vault_import '$VH/keep.age'" </dev/null
+check "vault_import: no terminal and no VAULT_AGE: refused before age" "$rc:$out" "1:vault_import: run this in your own terminal: age asks for the passphrase there; nothing changed"
+TMPDIR=$VT VHOME=$VH2 vrun vault_import "$VH/keep.age"
 check "vault_import rc" "$rc" "0"
 has "vault_import: the list" "$out" '^restored into .* \(12 files, mode 600\):$'
 rm -rf "$VH/.ssh.moved"; mv "$VH/.ssh" "$VH/.ssh.moved"
 VHOME=$VH3 vrun vault_import "$VH/keep.age"
 has "vault_import: the old ssh path missing is said" "$out" "^SSH_PUBKEY=$VH/\\.ssh/id_ed25519\\.pub is not on this machine \\(another home directory\\?\\): state_set SSH_PUBKEY"
-mv "$VH/.ssh.moved" "$VH/.ssh"; rm -rf "$VH3"; VH3=$(mktemp -d)
+OLD3=$VH3; mv "$VH/.ssh.moved" "$VH/.ssh"; rm -rf "$VH3"; VH3=$(mktemp -d)
 has "vault_import: next" "$out" '^next: \./verify\.sh \(expect ALL DONE\), then \./status\.sh'
-check "vault_import: age got -d, a private temp file and the vault" "$(grep '^age ' "$HOME/argv.log" | tail -n 1 | sed 's#-o [^ ]*/v\.tar#-o TMP/v.tar#')" "age -d -o TMP/v.tar $VH/keep.age"
+check "vault_import: age got -d, a temp file inside the new home's setup dir, and the vault" "$(grep '^age ' "$HOME/argv.log" | tail -n 1 | sed "s#-o $OLD3/\.config/vps-setup/tmp\.[^/ ]*/v\.tar#-o SETUP/tmp.X/v.tar#")" "age -d -o SETUP/tmp.X/v.tar $VH/keep.age"
 check "vault_import: the files back as they were" "$(cd "$VH2" && cmp -s .config/vps-setup/s3.env "$VH/keep-s3" && cmp -s .config/coolify/config "$VH/keep-coolify" && cmp -s .ssh/id_ed25519 "$VH/.ssh/id_ed25519" && cmp -s code/shop/.coolify.env "$VH/code/shop/.coolify.env" && cmp -s .config/vps-setup/kuma.env "$VPS/kuma.env" && echo same)" "same"
+check "vault_import: no temp dir or plaintext tar left, nothing in TMPDIR" "$(find "$VH2" -mindepth 1 \( -name v.tar -o -name 'tmp.*' \) | wc -l):$(find "$VT" -mindepth 1 | wc -l)" "0:0"
 check "vault_import: modes 600 and 700" "$(cd "$VH2" && find .config .ssh code -printf '%m\n' | sort | uniq -c | awk '{print $2 "x" $1}' | paste -sd' ')" "$(cd "$VH2" && printf '600x%s 700x%s' "$(find .config .ssh code -type f | wc -l)" "$(find .config .ssh code -type d | wc -l)")"
 check "vault_import: the ssh dir and the setup dir private" "$(stat -c %a "$VH2/.ssh" "$VH2/.config/vps-setup" | paste -sd' ')" "700 700"
 VHOME=$VH2 vrun vault_check
@@ -2115,8 +2136,22 @@ check "vault_import: wrote the manifest, current" "$rc:${out%%;*}" "0:12 files, 
 VHOME=$VH2 vrun vault_import "$VH/keep.age"
 check "vault_import: refuses over existing files, names them" "$rc:$(sed -n 2,3p <<<"$out")" "1:vault_import: these exist already; nothing changed. Move them aside (mv FILE FILE.before-import), then run vault_import again:
   $VH2/.config/coolify/config"
-FAKE_AGE_FAIL=1 VHOME=$VH3 vrun vault_import "$VH/keep.age"
-check "vault_import: age fails, nothing unpacked" "$rc:$(tail -n 1 <<<"$out"):$(find "$VH3" -mindepth 1 | wc -l)" "1:vault_import failed; nothing changed. Run it in your own terminal, not through the agent: age reads the passphrase from the terminal only (VAULT.md step 4).:0"
+FAKE_AGE_FAIL=1 TMPDIR=$VT VHOME=$VH3 vrun vault_import "$VH/keep.age"
+check "vault_import: age without a terminal, nothing unpacked" "$rc:$(tail -n 1 <<<"$out"):$(find "$VH3" -mindepth 1 | wc -l)" "1:vault_import: run this in your own terminal: age asks for the passphrase there; nothing changed (VAULT.md step 4):0"
+FAKE_AGE_WRONG=1 TMPDIR=$VT VHOME=$VH3 vrun vault_import "$VH/keep.age"
+check "vault_import: wrong passphrase, nothing left in the home or TMPDIR" "$rc:$(tail -n 1 <<<"$out"):$(find "$VH3" -mindepth 1 | wc -l):$(find "$VT" -mindepth 1 | wc -l)" "1:vault_import: wrong passphrase; nothing changed:0:0"
+mkdir -p "$VH3/.config/vps-setup"
+FAKE_AGE_WRONG=1 TMPDIR=$VT VHOME=$VH3 vrun vault_import "$VH/keep.age"
+check "vault_import: wrong passphrase, an existing setup dir kept, no temp dir in it" "$rc:$(find "$VH3" -mindepth 1 | paste -sd' ')" "1:$VH3/.config $VH3/.config/vps-setup"
+rm -rf "$VH3/.config"
+FAKE_AGE_OTHER=1 VHOME=$VH3 vrun vault_import "$VH/keep.age"
+check "vault_import: another age error, said with a hint" "$rc:$(sed 1d <<<"$out")" "1:age: error: failed to read header: parsing age header: unexpected EOF
+vault_import: age could not open $VH/keep.age; nothing changed (is it the vault file, complete? VAULT.md step 4)"
+tar -cf "$VH3/empty.tar" -T /dev/null
+{ printf 'age-encryption.org/v1\n-> scrypt S 18\nB\n--- M\n'; cat "$VH3/empty.tar"; } > "$VH3/empty.age"; rm -f "$VH3/empty.tar"; E=$(mktemp -d)
+VHOME=$E vrun vault_import "$VH3/empty.age"
+check "vault_import: an empty vault refused, no manifest" "$rc:$(tail -n 1 <<<"$out"):$(find "$E" -mindepth 1 | wc -l)" "1:vault_import: $VH3/empty.age holds no files; nothing changed:0"
+rm -rf "$E"
 VHOME=$VH3 vrun vault_import "$VH/nope.age"
 check "vault_import: missing file" "$rc:$out" "1:vault_import: $VH/nope.age does not exist"
 VHOME=$VH3 vrun vault_import
@@ -2134,7 +2169,7 @@ ln -s /etc/passwd "$VH3/lnk"; ( cd "$VH3" && tar -cf t.tar lnk )
 VHOME=$E vrun vault_import "$VH3/link.age"
 check "vault_import: a symlink refused" "$rc:$(tail -n 1 <<<"$out"):$(find "$E" -mindepth 1 | wc -l)" "1:vault_import: $VH3/link.age holds something other than plain files; nothing changed:0"
 check "vault: no secret value in any vault output" "$(grep -cE 's3SeCrEt|wh-SECRET|kPW-SECRET|FAKE-cf-|PRIVATE KEY|3\|abc' "$HOME/outputs.log")" "0"
-rm -rf "$VH" "$VH2" "$VH3" "$E"
+rm -rf "$VH" "$VH2" "$VH3" "$E" "$VT"
 
 # the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
 leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-|v-SECRET-1|ba-SECRET-pass1|wh-sec-0123|kPW-SECRET|3\|abc=def' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
