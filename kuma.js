@@ -8,7 +8,7 @@
 //   {"action":"sync","user":"admin","password":"...","monitors":[{"name":"shop","url":"https://shop.example.com"}],
 //    "page":{"slug":"acme","title":"Acme","description":"Status of Acme"},"group":"Acme"}
 // Output: one JSON line, {"ok":true,...} with exit 0 or {"ok":false,"msg":"..."} with exit 1. The
-// password is never printed. Gives up after 90 seconds.
+// password is never printed. Gives up after 90 seconds plus 20 per monitor to add, at most 300.
 //
 // Never destructive: it never deletes a monitor, a status page or a group. A monitor is matched by
 // its URL (case and a trailing slash ignored), so a renamed one is kept, and a status page keeps
@@ -17,6 +17,9 @@
 
 const BASE = "http://127.0.0.1:3001";
 const HARD_TIMEOUT_MS = 90000;
+
+// hardTimeoutMs(toAdd) -> 90 s plus 20 s per monitor to add (each add waits up to 20 s), at most 300 s.
+function hardTimeoutMs(toAdd) { return Math.min(HARD_TIMEOUT_MS + 20000 * Math.max(0, toAdd | 0), 300000); }
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 // What the Kuma 2.x UI sends for a new HTTP monitor (EditMonitor.vue), with our interval, one
@@ -86,6 +89,8 @@ function mergeGroups(publicGroupList, groupName, ids) {
     const out = { name: g.name, monitorList: (g.monitorList || []).map((m) => {
       const r = { id: m.id };
       if (m.sendUrl !== undefined) r.sendUrl = m.sendUrl;
+      // saveStatusPage writes url to the monitor's custom link: dropping it would reset one set by hand
+      if (m.url !== undefined) r.url = m.url;
       return r;
     }) };
     if (g.id != null) out.id = g.id;
@@ -212,6 +217,7 @@ async function sync(plan, deps) {
       await sleep(50);
     }
     const { add, kept } = planMonitors(monitorList, plan.monitors);
+    if (deps.onAdds) deps.onAdds(add.length);   // main() stretches the hard timeout
     const ids = kept.map((k) => k.id), added = [];
     for (const m of add) {
       const r = await emitAck(s, "add", Object.assign({}, MONITOR_DEFAULTS, { name: m.name, url: m.url }));
@@ -219,19 +225,26 @@ async function sync(plan, deps) {
       ids.push(r.monitorID); added.push(m.name);
     }
     const slug = plan.page.slug;
-    let page = await emitAck(s, "getStatusPage", slug);
+    let page = await emitAck(s, "getStatusPage", slug), created = false;
     if (!page || page.ok !== true) {
       const r = await emitAck(s, "addStatusPage", plan.page.title, slug);
       if (!r || r.ok !== true) throw fail("Kuma refused the status page " + slug + ": " + kumaMsg(r));
       page = await emitAck(s, "getStatusPage", slug);
       if (!page || page.ok !== true) throw fail("the new status page " + slug + " cannot be read: " + kumaMsg(page));
+      created = true;
     }
     // The groups as they are now (public JSON); without them a save would delete groups, so stop.
-    const pub = await http(deps, "GET", "/api/status-page/" + slug).catch(() => ({ json: null }));
-    if (!pub.json || !Array.isArray(pub.json.publicGroupList)) {
-      throw fail("could not read the groups of status page " + slug + "; the page was not saved" + (added.length ? " (monitors added: " + added.join(", ") + ")" : ""));
+    // Kuma caches that JSON for 5 minutes, a 404 too, and addStatusPage does not clear it: a page
+    // made by this run has no groups yet, so it is not read.
+    let current = [];
+    if (!created) {
+      const pub = await http(deps, "GET", "/api/status-page/" + slug).catch(() => ({ json: null }));
+      if (!pub.json || !Array.isArray(pub.json.publicGroupList)) {
+        throw fail("could not read the groups of status page " + slug + "; the page was not saved" + (added.length ? " (monitors added: " + added.join(", ") + ")" : ""));
+      }
+      current = pub.json.publicGroupList;
     }
-    const { groups } = mergeGroups(pub.json.publicGroupList, plan.group, ids);
+    const { groups } = mergeGroups(current, plan.group, ids);
     const config = pageConfig(page.config, plan.page);
     const r = await emitAck(s, "saveStatusPage", slug, config, (page.config && page.config.icon) || "/icon.svg", groups);
     if (!r || r.ok !== true) throw fail("Kuma did not save the status page " + slug + ": " + kumaMsg(r));
@@ -259,10 +272,17 @@ function loadIo() {
 }
 
 async function main() {
-  const timer = setTimeout(() => {
-    process.stdout.write(JSON.stringify({ ok: false, msg: "kuma.js gave up after 90 s" }) + "\n");
-    process.exit(1);
-  }, HARD_TIMEOUT_MS);
+  // The budget counts from the start; arm() again once the monitors to add are known.
+  const start = Date.now();
+  let timer = null;
+  const arm = (ms) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      process.stdout.write(JSON.stringify({ ok: false, msg: "kuma.js gave up after " + Math.round(ms / 1000) + " s" }) + "\n");
+      process.exit(1);
+    }, Math.max(0, start + ms - Date.now()));
+  };
+  arm(hardTimeoutMs(0));
   let plan = null;
   try {
     const chunks = [];
@@ -270,7 +290,7 @@ async function main() {
     try { plan = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch (_) { throw fail("the plan on stdin is not JSON"); }
     validatePlan(plan);
     if (typeof fetch !== "function") throw fail("this Node has no fetch (Node 18 or newer needed)");
-    const res = await run(plan, { io: loadIo(), fetch });
+    const res = await run(plan, { io: loadIo(), fetch, onAdds: (n) => arm(hardTimeoutMs(n)) });
     process.stdout.write(JSON.stringify(res) + "\n");
     clearTimeout(timer);
     process.exit(0);
@@ -283,7 +303,7 @@ async function main() {
 }
 
 if (process.env.KUMA_JS_TEST === "1") {
-  module.exports = { validatePlan, planMonitors, mergeGroups, pageConfig, normUrl, scrub, run, MONITOR_DEFAULTS };
+  module.exports = { hardTimeoutMs, validatePlan, planMonitors, mergeGroups, pageConfig, normUrl, scrub, run, MONITOR_DEFAULTS };
 } else {
   main();
 }

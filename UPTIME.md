@@ -120,9 +120,12 @@ Then read the page, as anyone on the internet can (no login):
   printf '%s\n' "$out" | grep -qE $'\t(pending|none)\t' || break; sleep 10; done; printf '%s\n' "$out"
 ```
 
-Every row should be `up` within two minutes (the first checks are `pending` or `none`).
-Exit 1 means a check is `down`: the `msg` column says why (a 502, a timeout, a certificate
-error); that app goes through `DOCTOR.md`. Exit 2 means the page could not be read: check that
+Every row should be `up` within two minutes (the first checks are `pending` or `none`). Kuma
+caches the public page for up to 5 minutes (the heartbeats for 1), so right after the first
+`kuma_sync` this can lag behind Kuma itself; wait and read again. Exit 1 means a check is
+`down`. The reason (a 502, a timeout, a certificate error) is not on the public page (Kuma sends
+no message there; the `msg` column stays `-`): the user sees it on the monitor's page in Kuma.
+That app goes through `DOCTOR.md`. Exit 2 means the page could not be read: check that
 `https://<KUMA_DOMAIN>/status/<slug>` opens in a browser. Give the user the page's address.
 
 ## 6. Prove it (only with the user's yes, never on a production app without one)
@@ -139,7 +142,7 @@ Not run on a server yet.
   [ "$rc" = 1 ] && break; sleep 10; done; printf '%s\n' "$out"
 ```
 
-   Expect exit 1 and the app's row `down`. The user opens the status page and sees it red.
+   Expect exit 1 and the app's row `down` (the page is cached, so allow a few minutes more). The user opens the status page and sees it red.
 3. The user starts the app again (**Deploy** or **Start**); the same loop with `[ "$rc" = 0 ]`
    shows it `up` again.
 
@@ -147,8 +150,8 @@ Not run on a server yet.
 
 - A new app or a new domain: `. ./lib.sh; kuma_sync` again (with the same `VPS_PROJECT` for a
   client's project). It adds the new checks to the same page.
-- `./status.sh` shows an `uptime <monitor>` line per check: `up`, `down since <time>: <why>`
-  (FAIL), `pending` or `no check yet` (WARN).
+- `./status.sh` shows an `uptime <monitor>` line per check: `up`, `down since <time>` (FAIL),
+  `pending` or `no check yet` (WARN); why it is down is on the monitor's page in Kuma.
 - An app removed: its check stays in Kuma; delete it there by hand (`kuma_sync` never deletes).
 - A check deleted in Kuma comes back with the next `kuma_sync`; one taken off the page comes
   back on it. To stop checking an app without deleting the check, pause it in Kuma: a paused

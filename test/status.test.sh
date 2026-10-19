@@ -271,19 +271,20 @@ run .
 has "all green: no uptime pages" "$out" '^OK +uptime +none \(UPTIME\.md\)$'
 mkdir -p "$HOME/.config/vps-setup"
 printf 'UPTIME_URL=http://127.0.0.1:%s\nUPTIME_PAGES=acme\n' "$PORT" > "$HOME/.config/vps-setup/state"
-KUMA='.kuma = {pages: {acme: {config: {slug: "acme"}, publicGroupList: [{id: 1, name: "Acme", monitorList: [{id: 1, name: "shop"}, {id: 2, name: "starter"}]}]},
+KUMA='.kuma = {pages: {acme: {config: {slug: "acme"}, incidents: [], publicGroupList: [{id: 1, name: "Acme", monitorList: [{id: 1, name: "shop"}, {id: 2, name: "starter"}]}]},
                        empty: {config: {slug: "empty"}, publicGroupList: []}},
-               beats: {acme: {heartbeatList: {"1": [{status: 1, time: "2026-10-19 10:00:00.000", msg: "200 - OK"}],
-                                              "2": [{status: 0, time: "2026-10-19 09:58:00.000", msg: "x"}, {status: 0, time: "2026-10-19 10:00:00.000", msg: "Request failed with status code 502"}]},
+               beats: {acme: {heartbeatList: {"1": [{status: 1, time: "2026-10-19 10:00:00.000", msg: ""}],
+                                              "2": [{status: 0, time: "2026-10-19 09:58:00.000", msg: ""}, {status: 0, time: "2026-10-19 10:00:00.000", msg: ""}]},
                               uptimeList: {"1_24": 0.998, "2_24": 1}},
                        empty: {heartbeatList: {}, uptimeList: {}}}}'
 expect "uptime: all up" 0 '^OK +uptime shop +up, 24h 99\.8%$' "$KUMA"' | .kuma.beats.acme.heartbeatList["2"][1].status = 1'
 has "uptime: all up, second monitor" "$out" '^OK +uptime starter +up, 24h 100%$'
 check "uptime: one page, no page line" "$(grep -c 'status page' <<<"$out")" "0"
-expect "uptime: one down" 1 '^FAIL +uptime starter +down since 2026-10-19 09:58:00\.000: Request failed with status code 502$' "$KUMA"
+expect "uptime: one down" 1 '^FAIL +uptime starter +down since 2026-10-19 09:58:00\.000$' "$KUMA"
 has "uptime: one down, the other still up" "$out" '^OK +uptime shop +up, 24h 99\.8%$'
-expect "uptime: pending" 1 '^WARN +uptime shop +pending since 2026-10-19 10:00:00\.000: 200 - OK$' "$KUMA"' | .kuma.beats.acme.heartbeatList["1"][0].status = 2 | .kuma.beats.acme.heartbeatList["2"][1].status = 1'
+expect "uptime: pending" 1 '^WARN +uptime shop +pending since 2026-10-19 10:00:00\.000$' "$KUMA"' | .kuma.beats.acme.heartbeatList["1"][0].status = 2 | .kuma.beats.acme.heartbeatList["2"][1].status = 1'
 expect "uptime: no check yet" 1 '^WARN +uptime starter +no check yet$' "$KUMA"' | .kuma.beats.acme.heartbeatList |= del(.["2"])'
+expect "uptime: a message, should Kuma send one" 1 '^FAIL +uptime starter +down since 2026-10-19 09:58:00\.000: timeout$' "$KUMA"' | .kuma.beats.acme.heartbeatList["2"][1].msg = "timeout"'
 expect "uptime: maintenance" 0 '^OK +uptime starter +in maintenance, 24h 100%$' "$KUMA"' | .kuma.beats.acme.heartbeatList["2"][1].status = 3'
 expect "uptime: page unreadable" 1 "^WARN +uptime acme +n/a \\(could not read http://127\\.0\\.0\\.1:$PORT/status/acme\\)$" "$KUMA"' | del(.kuma.pages.acme)'
 expect "uptime: unexpected answer" 1 '^WARN +uptime acme +n/a ' "$KUMA"' | .kuma.beats.acme = [1]'

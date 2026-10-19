@@ -3,14 +3,18 @@
 `UPTIME.md`, `kuma.js` and the `kuma_*` helpers in `lib.sh`. Kuma runs as the Coolify one-click
 service `uptime-kuma` (`SERVICES.md`; the template is in `references/coolify-api.md`).
 
-**Status:** written from the Uptime Kuma 2.0 source (server socket handlers, the setup-database
+**Status:** written from Uptime Kuma 2.x (2.5.6 source: server socket handlers, the setup-database
 server, `EditMonitor.vue`, the status page router) and tested against a fake Kuma only
 (`test/kuma.test.js`: a fake socket.io client and a fake fetch; `test/lib.test.sh` and
 `test/status.test.sh`: a fake docker that answers for `kuma.js`, and the public JSON from a fake
 HTTP server). **Not run against a real Kuma yet.** Every line below is **[verify]** until the
 first run on a throwaway server; the list at the end is what that run must prove. The version
 the template pulls (`louislam/uptime-kuma:2`) was 2.5.6 on 2026-10-09; the run records the one
-it got.
+it got. Kuma's master branch (the next major) moves to Better Auth and requires Node >= 24, which
+breaks `kuma.js` (login and setup change); that is why the version is recorded at the first run.
+
+`kuma.js` gives up after 90 seconds plus 20 per monitor it adds (each `add` waits up to 20 s),
+at most 300 seconds.
 
 ## How it is driven
 
@@ -49,7 +53,7 @@ the monitor. `kuma_init` takes both right after the container runs.
 | `add(monitor, cb)` | `{ok, msg, monitorID}` | `kuma.js` sends the UI's defaults for an HTTP monitor (`MONITOR_DEFAULTS`: `type: "http"`, `method: "GET"`, `accepted_statuscodes: ["200-299"]`, `maxredirects: 10`, ...) with `interval: 60`, `retryInterval: 30`, `maxretries: 1`, `timeout: 30`; the 2.x-only fields (`conditions`, `kafkaProducer*`, `rabbitmqNodes`) as empty values |
 | `getStatusPage(slug, cb)` | `{ok: true, config}`; `{ok: false, msg}` for an unknown slug | `config` holds `slug, title, description, icon, theme, showTags, domainNameList, customCSS, footerText, showPoweredBy, showCertificateExpiry, autoRefreshInterval` and the analytics fields |
 | `addStatusPage(title, slug, cb)` | `{ok, msg}` | slug `^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$`; `lib.sh` allows lower case only |
-| `saveStatusPage(slug, config, imgDataUrl, publicGroupList, cb)` | `{ok, publicGroupList}` | **every group missing from `publicGroupList` is deleted**, so `kuma.js` reads the groups first and sends all of them back; groups are `[{id?, name, monitorList: [{id, sendUrl?}]}]`, ordered by position. `imgDataUrl` is the current icon URL (`config.icon`, else `/icon.svg`), as the UI sends it; `published` is commented out in 2.0, so a page is public |
+| `saveStatusPage(slug, config, imgDataUrl, publicGroupList, cb)` | `{ok, publicGroupList}` | **every group missing from `publicGroupList` is deleted**, so `kuma.js` reads the groups first and sends all of them back (on a page this run just created there are none, and the public JSON is not read, see the cache below); groups are `[{id?, name, monitorList: [{id, sendUrl?, url?}]}]`, ordered by position. `url` is written to the monitor's custom link on the page, so `kuma.js` sends it back as it got it. `imgDataUrl` is the current icon URL (`config.icon`, else `/icon.svg`), as the UI sends it; `published` is commented out in 2.x, so a page is public |
 | `editMonitor`, `deleteMonitor`, `deleteStatusPage` | | never sent: `kuma.js` adds and merges only |
 
 `kuma.js` matches a wanted monitor to an existing one by URL (lower case, trailing slash
@@ -60,9 +64,14 @@ ignored), whatever its name or whether it is paused, so a second run adds nothin
 | Call | Answer | Used by |
 |------|--------|---------|
 | `GET /status/<slug>` | the status page (HTML) | the user |
-| `GET /api/status-page/<slug>` | `{config, incident, publicGroupList: [{id, name, weight, monitorList: [{id, name, sendUrl, url?, type}]}], maintenanceList}`; 404 for an unknown slug | `kuma.js` sync (the groups before a save), `kuma_status` |
-| `GET /api/status-page/heartbeat/<slug>` | `{heartbeatList: {"<id>": [{status, time, msg, ping}, ...]}, uptimeList: {"<id>_24": 0.998}}`; `status` 0 down, 1 up, 2 pending, 3 maintenance; `time` like `2026-10-19 10:00:00.000` (UTC) | `kuma_status`, `status.sh` |
+| `GET /api/status-page/<slug>` | `{config, incidents, publicGroupList: [{id, name, weight, monitorList: [{id, name, sendUrl, url?, type}]}], maintenanceList}`; 404 for an unknown slug | `kuma.js` sync (the groups before a save), `kuma_status` |
+| `GET /api/status-page/heartbeat/<slug>` | `{heartbeatList: {"<id>": [{status, time, msg, ping}, ...]}, uptimeList: {"<id>_24": 0.998}}`; `status` 0 down, 1 up, 2 pending, 3 maintenance; `time` like `2026-10-19 10:00:00.000` (UTC); `msg` is always `""` (`Heartbeat.toPublicJSON()` blanks it), so why a monitor is down is only on its page in Kuma | `kuma_status`, `status.sh` |
 | `/api/badge/<id>/...`, `/api/push/<token>` | badges, push monitors | not used |
+
+Both public answers are cached by Kuma: the page JSON for 5 minutes (a 404 too; `addStatusPage`
+does not clear it), the heartbeats for 1 minute. So `kuma_status` and `status.sh` lag behind
+Kuma by up to that, most visibly right after the first `kuma_sync`, and `kuma.js` does not read
+the groups of a page it has just created (they are empty, and the cache may still hold a 404).
 
 A host in `domainNameList` serves its page at `/` (R22 builds on it); this guide uses
 `/status/<slug>` only and keeps the list as it is on every save.

@@ -264,11 +264,13 @@ else
       if [ "$(wc -l <<<"$up")" -lt 2 ]; then
         line WARN "uptime $slug" "no monitors on the page (kuma_sync, UPTIME.md step 5)"; continue
       fi
+      # Kuma 2.5.6 sends no message in the public heartbeats ("-"); the reason is on the monitor's page in Kuma.
       while IFS=$'\t' read -r mon ust u24 since _ msg; do
+        why=''; [ "$msg" = - ] || why=": $msg"
         case $ust in
           up) line OK "uptime $mon" "up, 24h $u24" ;;
-          down) line FAIL "uptime $mon" "down since $since: $msg" ;;
-          pending) line WARN "uptime $mon" "pending since $since: $msg" ;;
+          down) line FAIL "uptime $mon" "down since $since$why" ;;
+          pending) line WARN "uptime $mon" "pending since $since$why" ;;
           maintenance) line OK "uptime $mon" "in maintenance, 24h $u24" ;;
           *) line WARN "uptime $mon" "no check yet" ;;
         esac

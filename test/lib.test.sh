@@ -48,18 +48,18 @@ KUMA_SVCS = {"svc-kuma-up": {"uuid": "svc-kuma-up", "name": "uptime-kuma", "serv
   "svc-umami2": {"uuid": "svc-umami2", "name": "notkuma", "service_type": "umami", "status": "running:healthy", "environment_id": 1,
     "applications": [{"uuid": "sa5", "name": "umami", "fqdn": "https://u.example.com", "status": "running:healthy"}], "databases": []}}
 # Kuma's public status page JSON (R06b), as the 2.x source builds it [verify]: GET /api/status-page/<slug> and
-# /api/status-page/heartbeat/<slug>; status 0 down, 1 up, 2 pending, 3 maintenance. No token.
-KUMA_PAGES = {"acme": {"config": {"slug": "acme", "title": "Acme"}, "incident": None, "maintenanceList": [],
+# /api/status-page/heartbeat/<slug>; status 0 down, 1 up, 2 pending, 3 maintenance; msg is always "" (2.5.6). No token.
+KUMA_PAGES = {"acme": {"config": {"slug": "acme", "title": "Acme"}, "incidents": [], "maintenanceList": [],
     "publicGroupList": [{"id": 1, "name": "Acme", "weight": 1, "monitorList": [
         {"id": 1, "name": "shop", "type": "http"}, {"id": 2, "name": "starter", "type": "http"},
         {"id": 3, "name": "fresh", "type": "http"}, {"id": 4, "name": "slow\tone", "type": "http"}]},
       {"id": 2, "name": "Infra", "weight": 2, "monitorList": [{"id": 1, "name": "shop", "type": "http"}, {"id": 5, "name": "db", "type": "http"}]}]},
-  "empty": {"config": {"slug": "empty"}, "incident": None, "maintenanceList": [], "publicGroupList": []},
+  "empty": {"config": {"slug": "empty"}, "incidents": [], "maintenanceList": [], "publicGroupList": []},
   "odd": {"msg": "not a page"}}
 KUMA_BEATS = {"acme": {"heartbeatList": {
-    "1": [{"status": 1, "time": "2026-10-19 10:00:00.000", "msg": "200 - OK", "ping": 20}, {"status": 1, "time": "2026-10-19 09:59:00.000", "msg": "200 - OK", "ping": 21}],
-    "2": [{"status": 1, "time": "2026-10-19 09:58:00.000", "msg": "200 - OK", "ping": 20}, {"status": 0, "time": "2026-10-19 09:59:00.000", "msg": "connect ECONNREFUSED", "ping": None},
-          {"status": 0, "time": "2026-10-19 10:00:00.000", "msg": "Request failed with status code 502", "ping": None}],
+    "1": [{"status": 1, "time": "2026-10-19 10:00:00.000", "msg": "", "ping": 20}, {"status": 1, "time": "2026-10-19 09:59:00.000", "msg": "", "ping": 21}],
+    "2": [{"status": 1, "time": "2026-10-19 09:58:00.000", "msg": "", "ping": 20}, {"status": 0, "time": "2026-10-19 09:59:00.000", "msg": "", "ping": None},
+          {"status": 0, "time": "2026-10-19 10:00:00.000", "msg": "", "ping": None}],
     "4": [{"status": 2, "time": "2026-10-19 10:00:00.000", "msg": "", "ping": None}],
     "5": [{"status": 3, "time": "2026-10-19 10:00:00.000", "msg": "", "ping": None}]},
     "uptimeList": {"1_24": 0.9984, "2_24": 0.5, "5_24": 1}},
@@ -1692,6 +1692,10 @@ FAKE_NO_CONTAINER=1 s3run kuma_init uptime-kuma
 check "kuma_init: no container" "$rc:$out" "1:kuma.js gave no result: no running container uptime-kuma-svc-kuma-up (is Kuma up? service_status)"
 SSH_STUB_FAIL=1 s3run kuma_init uptime-kuma
 check "kuma_init: server unreachable" "$rc:$out" "1:kuma.js gave no result: ssh: connect to host 203.0.113.9 port 22: Connection refused"
+printf 'const a = 1;\nKUMAJS\n' > "$HOME/bad-kuma.js"; : > "$HOME/seq.log"
+out=$(kuma_js_path() { echo "$HOME/bad-kuma.js"; }; kuma_run uptime-kuma-svc-kuma-up '{}' 2>&1); rc=$?
+check "kuma_run: a KUMAJS line in the script is refused before ssh" "$rc:$out:$(grep -c '^ssh$' "$HOME/seq.log")" "1:$HOME/bad-kuma.js has a line that is exactly KUMAJS, the heredoc delimiter; nothing sent:0"
+check "kuma_run: the server script cleans up on signals too" "$(grep -cxF "d=\$(mktemp -d); trap 'rm -rf \"\$d\"' EXIT; trap 'rm -rf \"\$d\"; exit 1' HUP INT TERM" "$HOME/ssh.stdin")" "1"
 
 # kuma_targets: the https hosts of the project's apps in its environment, Kuma's own host left out
 state_set PROJECT_UUID p-acme; state_set PROJECT_NAME "Acme Corp"
@@ -1760,8 +1764,8 @@ state_set UPTIME_URL "http://127.0.0.1:$PORT"; : > "$HOME/seq.log"
 s3run kuma_status acme
 T=$(printf '\t')
 check "kuma_status: TSV, a monitor in two groups once, exit 1 for a down monitor" "$rc:$out" "1:monitor${T}status${T}uptime_24h${T}since${T}last_check${T}msg
-shop${T}up${T}99.8%${T}2026-10-19 09:59:00.000${T}2026-10-19 10:00:00.000${T}200 - OK
-starter${T}down${T}50%${T}2026-10-19 09:59:00.000${T}2026-10-19 10:00:00.000${T}Request failed with status code 502
+shop${T}up${T}99.8%${T}2026-10-19 09:59:00.000${T}2026-10-19 10:00:00.000${T}-
+starter${T}down${T}50%${T}2026-10-19 09:59:00.000${T}2026-10-19 10:00:00.000${T}-
 fresh${T}none${T}n/a${T}-${T}-${T}-
 slow one${T}pending${T}n/a${T}2026-10-19 10:00:00.000${T}2026-10-19 10:00:00.000${T}-
 db${T}maintenance${T}100%${T}2026-10-19 10:00:00.000${T}2026-10-19 10:00:00.000${T}-"

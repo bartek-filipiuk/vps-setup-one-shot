@@ -212,7 +212,7 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   `kuma.js` and the `status.sh` Uptime section are tested against a fake Coolify API, a stubbed
   `ssh`, a fake `docker` and a fake Kuma socket only (`test/lib.test.sh`, `test/status.test.sh`,
   `test/kuma.test.js`) and have **not been run on a real server yet**; no Kuma has been set up
-  with them. The socket events and HTTP answers come from the Uptime Kuma 2.0 source and are
+  with them. The socket events and HTTP answers come from Uptime Kuma 2.x (2.5.6 source) and are
   marked `[verify]` in `references/uptime-kuma.md`.
 - Projects and clients (R09: `project_ensure`, `env_ensure`, `project_ctx`,
   `app_domain_default`, `domain_in_use`, `projects_inventory`, `projects_md`, the `status.sh`

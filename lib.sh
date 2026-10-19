@@ -577,10 +577,12 @@ kuma_run() {
   local c=${1:-} js out res
   case $c in ''|*[!A-Za-z0-9_.-]*) echo "not a container name: '$c'" >&2; return 1 ;; esac
   js=$(kuma_js_path) || return 1
+  # kuma.js travels in a heredoc that ends at a line KUMAJS: such a line in it would cut it short.
+  ! grep -qx KUMAJS "$js" || { echo "$js has a line that is exactly KUMAJS, the heredoc delimiter; nothing sent" >&2; return 1; }
   out=$({
     cat <<'EOF'
 set -eu; umask 077
-d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT; trap 'rm -rf "$d"; exit 1' HUP INT TERM
 cat > "$d/kuma.js" <<'KUMAJS'
 EOF
     cat "$js"
@@ -720,7 +722,10 @@ kuma_sync() {
 # kuma_status [SLUG] -> the monitors of status page SLUG (default: kuma_page_default) from its
 # public JSON, no login, as TSV: monitor, status (up, down, pending, maintenance, none: no check
 # yet), uptime_24h, since (the first check of the current status), last_check, msg ("-" when
-# empty). Exit 1 when a monitor is down, 2 when the page cannot be read. Read-only.
+# empty, which is always on Kuma 2.5.6: the public heartbeats carry no message; the reason is on
+# the monitor's page in Kuma). Kuma caches the page JSON for 5 minutes and the heartbeats for 1,
+# so this lags behind Kuma by up to that. Exit 1 when a monitor is down, 2 when the page cannot
+# be read. Read-only.
 kuma_status() {
   local slug=${1:-} url def page hb out
   url=$(state_get UPTIME_URL)
@@ -1418,7 +1423,7 @@ s3_mc_prepare() {
 s3_mc_head() {
   cat <<'EOF'
 set -eu; umask 077
-envf=$(mktemp); trap 'rm -f "$envf"' EXIT
+envf=$(mktemp); trap 'rm -f "$envf"' EXIT; trap 'rm -f "$envf"; exit 1' HUP INT TERM
 cat > "$envf" <<'CREDS'
 EOF
   printf 'MC_HOST_s3=%s\nCREDS\n' "$1"
