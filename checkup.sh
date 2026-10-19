@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Monthly checkup (CHECKUP.md): everything status.sh checks, plus what changes slowly: open ports
 # against the cloud firewall, the SSH daemon, Docker exposure, Coolify security advisories, the
-# backup success rate of the last 30 days, disk growth since the last checkup and the monthly
-# cost. Ends with the actions, each with its runbook.
+# backup success rate of the last 30 days, disk growth since the last checkup, the monthly
+# cost and whether the secrets vault on this machine is current. Ends with the actions, each
+# with its runbook.
 # Run from anywhere on YOUR machine: ./checkup.sh
 # Exit code: 0 all OK, 1 something needs attention (WARN or FAIL), 2 server or Coolify API unreachable.
 # Read-only on the server, in Coolify and at Hetzner (hcloud list and describe only). The one
@@ -56,6 +57,7 @@ action_for() {
     docker) echo "CHECKUP.md 3c" ;;
     advisory|advisories) echo "CHECKUP.md 3d" ;;
     cost) echo "CHECKUP.md 3g" ;;
+    vault) echo "VAULT.md step 2" ;;
     *) echo "CHECKUP.md 3" ;;
   esac
 }
@@ -310,6 +312,10 @@ else
 fi
 
 cost_section
+
+# --- Secrets vault on this machine (VAULT.md): the manifest and the file's header, never decrypted ---
+section "Secrets vault"
+if v=$(vault_check 2>&1); then cline OK "vault" "$v"; else cline WARN "vault" "$v"; fi
 
 # --- Actions ---
 section "Actions"

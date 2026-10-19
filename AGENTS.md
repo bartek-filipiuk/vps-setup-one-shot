@@ -26,6 +26,7 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 | Coolify, Ubuntu and Postgres major upgrades | `UPGRADE.md` | `/vps-upgrade` |
 | a new server, databases from the backups | `REBUILD.md` | `/vps-rebuild` |
 | a server or project to someone else, old access removed | `HANDOVER.md` | `/vps-handover` |
+| the setup's secrets in one encrypted file on your machine, back on a new one, a secret rotated | `VAULT.md` | `/vps-vault` |
 
 ## Layout
 
@@ -40,7 +41,9 @@ Kuma from `SERVICES.md`, its first-start pages taken over, a check per app domai
 status page per project, also on the client's domain), `UPGRADE.md`
 (Coolify, Ubuntu and Postgres major versions, each with a backup first and a check after),
 `REBUILD.md` (a new server from nothing through the phases, the databases from the off-site
-backups), `CHECKUP.md` (the monthly checkup: `checkup.sh`, what each line means, the fixes),
+backups), `CHECKUP.md` (the monthly checkup: `checkup.sh`, what each line means, the fixes), `VAULT.md`
+(the setup's secrets in one `age`-encrypted file on the user's machine, the restore on a new
+machine, the rotation of each secret),
 `lib.sh`
 (state file, Coolify API helpers, deploy with dump and rollback point, rollback, restore, app logs,
 S3 storage and off-site backups, Coolify notifications to Discord, team members and stored keys,
@@ -51,11 +54,12 @@ staging state, environment variable names, a second app, basic auth, the shared 
 secret, teardown), Postgres major
 versions, DNS records through the Cloudflare API, the
 rebuild inventory and the backups in the bucket, the read-only checkup helpers: hcloud list and
-describe only, advisories, backup success rate, the checkup log), `kuma.js` (runs inside the Kuma
+describe only, advisories, backup success rate, the checkup log, the secrets vault: `vault_export`,
+`vault_import`, `vault_check`), `kuma.js` (runs inside the Kuma
 container and drives Kuma through socket.io; `lib.sh` sends it there), `verify.sh` (reads the real
 server state and says which phase is next), `status.sh` (one-screen health check, read-only),
 `checkup.sh` (the monthly checkup: `status.sh` plus ports, sshd, Docker, advisories, backup rate,
-disk growth and cost, ending with the actions; read-only),
+disk growth, cost and the secrets vault, ending with the actions; read-only),
 `references/` (Coolify and Cloudflare API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `fixtures/` (the smallest app of each further stack: static,
 FastAPI, Go, compose; the model `PREPARE-APP.md` uses, see `fixtures/README.md`), `test/`
@@ -70,7 +74,10 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
    then the README "Status" section and the landing copy say so honestly.
 2. **Secrets never go through the chat, the repo or a command line the agent types.** The user types
    tokens into their own terminal; files under `~/.config/vps-setup/` are `0600` (`kuma.env`, the
-   Kuma admin password, is generated there by `kuma_env_init` and read only by the user and `lib.sh`). Never commit
+   Kuma admin password, is generated there by `kuma_env_init` and read only by the user and `lib.sh`), and
+   `vault_export` puts an `age`-encrypted copy of them off the machine, made and opened only in the
+   user's own terminal (the passphrase goes to `age` on the terminal; the agent never decrypts it,
+   `vault_check` reads only the manifest and the header). Never commit
    `.coolify.env`, state files or logs with tokens. Run `gitleaks git .` before opening a PR.
 3. **Use Coolify, don't rebuild it.** Backups, notifications, rollback and services go through the
    Coolify API. Pin behaviour to a tested Coolify version and note it in `references/coolify-api.md`.
@@ -94,6 +101,11 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   probes go to 127.0.0.1 only; seams `CHECKUP_SSH`, `CHECKUP_LOG`, `CHECKUP_RECORD`,
   `ADVISORIES_URL`, `CHECKUP_PROBE_TIMEOUT` plus `status.sh`'s). A clean setup must give no `WARN`
   or `FAIL` line.
+- `bash test/vault-roundtrip.sh` must print `ALL PASSED`, or `skip: ...` when `age` or util-linux
+  `script` is missing: `vault_export` and `vault_import` with the real `age`, the passphrase typed
+  into a pseudo-terminal from `script`, from one throwaway home into an empty one. CI installs
+  `age` from Ubuntu's apt for it. `lib.test.sh` and `checkup.test.sh` use a fake `age` and run
+  without it.
 - `bash test/fixtures.sh` must print `ALL FIXTURES OK` (needs Docker with a recent compose v2,
   for `up --wait --wait-timeout`; builds every fixture, checks its health contract, removes what
   it created by name, never prunes).
@@ -102,7 +114,7 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
   every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md`,
-  `PREPARE-APP.md`, `STAGING.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md`, `CHECKUP.md` and `UPTIME.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
+  `PREPARE-APP.md`, `STAGING.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md`, `CHECKUP.md`, `UPTIME.md` and `VAULT.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
   `json`, ...). `bash test/extract-blocks.test.sh` is its self-test and must print `ALL PASSED`.
 - `bash test/packaging.sh` must print `ALL POINTERS OK`: the "Entry points" table, the plugin and
   marketplace manifests, `skills/` and the Cursor rule agree, and the pointers carry no runbook
@@ -110,8 +122,8 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   passes locally (warnings about the missing version are intended, so updates follow commits);
   it is not in CI.
 - `bash test/no-secret-argv.sh` must print `NO SECRETS IN ARGV`: no `jq --arg/--argjson`,
-  `-H/--header`, or (on a `gh`/`curl` line) `-f/-F/-d/--data/-u/-b` in the runbooks or the
-  scripts, continued lines joined, expands a secret-named variable (`S`, `W`, `PW`, `PASS*`,
+  `-H/--header`, or (on a `gh`/`curl` line) `-f/-F/-d/--data/-u/-b` in the runbooks (the
+  `test/extract-blocks.sh` list) or the scripts, continued lines joined, expands a secret-named variable (`S`, `W`, `PW`, `PASS*`,
   `SECRET*`, `TOKEN*`, `KEY`, `URL`, also with a `FOO_` prefix, ...), `$(openssl rand` or a
   credential getter (`cf_cred`, `s3_cred`, `kuma_cred`, `cat`, ...); the value goes on stdin instead (`printf '%s' "$S" | jq -Rs`,
   `gh api --input -`, `curl -K`). It is a name-based grep: a secret under another name is still

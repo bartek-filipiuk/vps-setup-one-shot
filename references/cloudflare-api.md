@@ -32,6 +32,7 @@ curl's config syntax).
 | `GET /zones/{zone}/dns_records?name=<fqdn>&per_page=100` | every record of exactly that name (`name` is an exact match) | docs |
 | `POST /zones/{zone}/dns_records` | body `{type:"A", name, content, ttl:1, proxied:false, comment:"vps-setup"}`; `ttl: 1` means automatic | docs |
 | `PATCH /zones/{zone}/dns_records/{id}` | partial update, body `{content, proxied:false}` | docs |
+| `PUT /user/tokens/{token_id}/value` | rolls a token's value (the dashboard's **Roll**); not used: rotation is the dashboard, `VAULT.md` step 6.3 | [verify] |
 | zone and record ids | 32 lower-case hex characters; `lib.sh` refuses anything else before putting it into a path | [assumed], from the docs' examples |
 | a second identical record | an error (`81057`, "record already exists") | [assumed]; `dns_set_a` never hits it, it reads the name first |
 

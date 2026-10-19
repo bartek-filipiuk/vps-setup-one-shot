@@ -30,6 +30,7 @@ what to clear first and what cannot come back.
 | the git repos on GitHub | Hetzner server backups, when the server was deleted: they belong to the server **[verify]** |
 | the S3 bucket with the database backups (phase 06 step 1) | |
 | the DNS records (they point at the old IP until step 2) | |
+| the vault file (`VAULT.md`), off the user's machine: everything in this column that lives under `~/.config/`, plus the ssh key and the `hcloud` context | |
 
 Without backups in the bucket there is nothing to restore: the apps come back from git with
 empty databases. Say that before anything else if `state_get BACKUPS` does not contain `s3`.
@@ -43,6 +44,12 @@ never saved either, so after a lost server the restored secrets could not be rea
 one way: a fresh Coolify through the phases, and the data from the database backups.
 
 ## 0. Inventory and the user's yes (read only, then the user decides)
+
+On a new machine too (the laptop went with the server, or this is another computer)? First
+`VAULT.md` step 4: the user restores the vault in their own terminal, `./verify.sh` reads the
+state again, then this step. Without a vault the state is gone as well, and this file needs a
+human: phase 00 from the start with the same answers, the bucket and the old database uuid (the
+backups' folder names) read in the Hetzner Console.
 
 The old server is still running (a planned move)? Do this first, on it, while the old state is
 in place: stop each app (`RESTORE.md` step 2 shows how) and run one backup now
@@ -274,7 +281,9 @@ overwrites both; the copies from step 0 keep the old ones), step 4 records `HAND
 
 Expect `ALL DONE` and `status exit 0`. Tell the user: which backup is live in each database (its
 `last_modified`), what was lost (rows after it, service volumes), which secrets are new (deploy
-keys, webhook secrets, generated app secrets, the API token).
+keys, webhook secrets, generated app secrets, the API token). The vault on their machine now
+holds the old token and the old UUIDs: they export it again (`VAULT.md` step 2) and delete the
+older copies.
 
 ## 10. The old server
 

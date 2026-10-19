@@ -29,6 +29,10 @@ jobs:
         run: bash test/packaging.sh
       - name: no secrets on a command line (runbooks and scripts)
         run: bash test/no-secret-argv.sh
+      - name: install age (Ubuntu's package, for the vault round trip)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends age && age --version
+      - name: secrets vault round trip with the real age (throwaway homes, passphrase through script's pseudo-terminal)
+        run: bash test/vault-roundtrip.sh
 
   shellcheck:
     runs-on: ubuntu-latest

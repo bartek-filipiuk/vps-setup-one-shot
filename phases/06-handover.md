@@ -155,6 +155,7 @@ Then write a summary the user can keep. No secrets in it.
 - API config (contains the token, mode 600): ~/.config/coolify/config
 - DNS: $([ "$(state_get DNS_PROVIDER)" = cloudflare ] && echo "Cloudflare zone $(state_get CF_ZONE), A records through the API (token in ~/.config/vps-setup/cloudflare.env, mode 600); list a name: cd $(state_get SETUP_DIR) && . ./lib.sh && dns_list <name>" || echo "A records added by hand at the DNS provider")
 - Setup state: ~/.config/vps-setup/state
+- Secrets vault (an encrypted copy of the files above, off this machine): $(state_get SETUP_DIR)/VAULT.md; is it current: cd $(state_get SETUP_DIR) && . ./lib.sh && vault_check
 
 ## Everyday
 
@@ -194,6 +195,10 @@ Show the user the file.
 ## 4. Close
 
 `. ./lib.sh; state_set HANDOVER_DONE 1`, then `./verify.sh` should print `ALL DONE`.
+
+Last, the user, in their own terminal: `VAULT.md` step 2 (`vault_export`), so the tokens and the
+key of this setup have an encrypted copy off this machine. Optional, but say what it is for: a
+lost laptop or a new one.
 
 Finish with three sentences: what they now have, where the summary is, and the one-liner for
 their next app:

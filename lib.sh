@@ -2110,6 +2110,205 @@ rebuild_inventory() {
   fi
 }
 
+# --- secrets vault on the user's machine (R23, VAULT.md) ---
+
+# One age-encrypted (passphrase) copy of this setup's files on the user's machine: the state
+# and the env files in ~/.config/vps-setup/, ~/.config/coolify/config, the hcloud CLI config and
+# the ssh key pair of SSH_PUBKEY. Made and opened only in the user's own terminal: age reads the
+# passphrase from the terminal itself (/dev/tty) and has no flag or variable for it, so it never
+# goes through this file, a command line or the agent. The agent only reads the manifest (paths,
+# sizes, times; no secrets) and the file's header: vault_check. Everything is relative to $HOME,
+# read at call time. VAULT_AGE is the age binary (tests point it at a fake), HCLOUD_CONFIG the
+# hcloud CLI config (hcloud reads the same variable; default ~/.config/hcloud/cli.toml [verify]).
+
+# vault_age_check -> 0 when age is installed; else how to install it, 1.
+vault_age_check() {
+  command -v "${VAULT_AGE:-age}" >/dev/null 2>&1 && return 0
+  echo "age is not installed (VAULT.md step 1): macOS: brew install age; Debian/Ubuntu and WSL: sudo apt install age; Windows: winget install FiloSottile.age" >&2
+  return 1
+}
+
+vault_manifest_file() { echo "${VAULT_MANIFEST:-$HOME/.config/vps-setup/vault.manifest}"; }
+
+# vault_stat FILE -> "size mtime" (GNU stat, then BSD stat)
+vault_stat() { stat -c '%s %Y' "$1" 2>/dev/null || stat -f '%z %m' "$1"; }
+
+# vault_secret_path REL -> 0 when the file (relative to $HOME) holds a secret: the env files, the
+# Coolify config, the hcloud config, the ssh key. vault_check says "stale" only for these; the
+# state, SERVER.md and PROJECTS.md change on every deploy and hold no secret.
+vault_secret_path() {
+  local h=${HCLOUD_CONFIG:-$HOME/.config/hcloud/cli.toml}
+  case $1 in .config/vps-setup/*.env|.config/coolify/config|.config/coolify/config.*|.ssh/*|"${h#"$HOME"/}") return 0 ;; esac
+  return 1
+}
+
+# vault_paths [EXTRA...] -> what goes into the vault, relative to $HOME, one per line, sorted:
+# every file under ~/.config/vps-setup/ (not the manifest, *.tmp, *.age, sockets),
+# ~/.config/coolify/config and its .before-rebuild-*/.bak-* copies, the hcloud config, the ssh
+# pair of SSH_PUBKEY (the state's path, the private half is it without .pub), and EXTRA files
+# (each app's .coolify.env). Only regular files under $HOME; anything else is refused.
+vault_paths() {
+  local home st pub p a rel dir list="" res=""
+  home=$(cd "$HOME" && pwd -P) || return 1
+  st="$HOME/.config/vps-setup/state"
+  if [ -d "$HOME/.config/vps-setup" ]; then
+    list+=$(cd "$HOME" && find .config/vps-setup -type f ! -name '*.tmp' ! -name '*.age' ! -name vault.manifest -print)$'\n'
+  fi
+  pub=$( [ -f "$st" ] && grep -m1 '^SSH_PUBKEY=' "$st" | cut -d= -f2-)
+  # these only when they exist, are no symlink and lie under $HOME
+  for p in "$HOME"/.config/coolify/config "$HOME"/.config/coolify/config.before-rebuild-* "$HOME"/.config/coolify/config.bak-* \
+           "${HCLOUD_CONFIG:-$HOME/.config/hcloud/cli.toml}" ${pub:+"$pub" "${pub%.pub}"}; do
+    case $p in "$HOME"/*) [ -f "$p" ] && [ ! -L "$p" ] && list+="$p"$'\n' ;; esac
+  done
+  for a in "$@"; do
+    [ -f "$a" ] && [ ! -L "$a" ] || { echo "vault_paths: $a is not a regular file" >&2; return 1; }
+    list+="$a"$'\n'
+  done
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case $p in /*) ;; .config/vps-setup/*) p="$HOME/$p" ;; *) p="$PWD/$p" ;; esac
+    dir=$(cd "$(dirname "$p")" && pwd -P) || return 1
+    a="$dir/${p##*/}"
+    case $a in "$home"/*) rel=${a#"$home"/} ;; *) echo "vault_paths: $p is outside your home directory ($HOME); the vault holds files under it only" >&2; return 1 ;; esac
+    case $rel in -*|*$'\t'*) echo "vault_paths: refusing the file name $rel" >&2; return 1 ;; esac
+    res+="$rel"$'\n'
+  done <<<"$list"
+  [ -z "$res" ] || printf '%s' "$res" | LC_ALL=C sort -u
+}
+
+# vault_manifest_write HOW FILE LIST -> the manifest (mode 600, no secrets): when, which file,
+# then "size<TAB>mtime<TAB>path" per file of LIST (paths relative to $HOME).
+vault_manifest_write() {
+  local m p s; m=$(vault_manifest_file)
+  mkdir -p "$(dirname "$m")" || return 1
+  ( umask 077
+    { echo "how=$1"; echo "at=$(date +%s)"; echo "file=$2"
+      while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        s=$(vault_stat "$HOME/$p") || continue
+        printf '%s\t%s\t%s\n' "${s% *}" "${s#* }" "$p"
+      done < "$3"; } > "$m.tmp" ) && mv "$m.tmp" "$m" && chmod 600 "$m"
+}
+
+# vault_export [OUT.age] [EXTRA...] -> the files of vault_paths in one tar, encrypted by age
+# with a passphrase, written to OUT (default ~/vps-setup-vault-<YYYYMMDD>.age, mode 600), and
+# the manifest. Run by the user in their own terminal: age asks for the passphrase there (empty
+# makes age generate one and print it on the terminal). Refuses when OUT exists. Never prints,
+# stores or passes the passphrase.
+vault_export() (
+  set -o pipefail
+  vault_age_check || exit 1
+  out="$HOME/vps-setup-vault-$(date -u +%Y%m%d).age"
+  case ${1:-} in *.age) out=$1; shift ;; esac
+  case $out in /*) ;; *) out="$PWD/$out" ;; esac
+  [ ! -e "$out" ] || { echo "$out exists already; nothing changed (another name: vault_export ${out%.age}-2.age)" >&2; exit 1; }
+  d=$(umask 077 && mktemp -d) || exit 1
+  trap 'rm -rf "$d"; rm -f "$out.tmp"' EXIT
+  vault_paths "$@" > "$d/list" || exit 1
+  [ -s "$d/list" ] || { echo "nothing to put into the vault: no files under $HOME/.config/vps-setup/ or $HOME/.config/coolify/" >&2; exit 1; }
+  echo "into the vault ($(wc -l < "$d/list" | tr -d ' ') files, relative to $HOME):"
+  sed 's/^/  /' "$d/list"
+  echo "age asks for a new passphrase twice, on this terminal (empty: age makes one and prints it)."
+  if ! ( umask 077; tar -C "$HOME" -cf - -T "$d/list" | "${VAULT_AGE:-age}" -p -o "$out.tmp" ); then
+    echo "vault_export failed; nothing written. Run it in your own terminal, not through the agent: age reads the passphrase from the terminal only (VAULT.md step 2)." >&2
+    exit 1
+  fi
+  mv "$out.tmp" "$out" && chmod 600 "$out" || exit 1
+  vault_manifest_write export "$out" "$d/list" || { echo "wrote $out, but not the manifest $(vault_manifest_file)" >&2; exit 1; }
+  echo "wrote $out (mode 600, $(vault_stat "$out" | cut -d' ' -f1) bytes) and $(vault_manifest_file) (no secrets)."
+  echo "Now: 1. the passphrase into your password manager; 2. a copy of the file off this machine (a password manager attachment, another computer, a USB stick). A copy on this disk alone protects nothing."
+)
+
+# vault_import FILE -> decrypts FILE (age asks for the passphrase on the terminal: the user's
+# own terminal), refuses when any file in it already exists under $HOME (it never overwrites;
+# move them aside first), then unpacks it into $HOME with directories 700 and files 600, and
+# writes the manifest. Paths in the vault must be relative, without "..", regular files only.
+vault_import() (
+  set -o pipefail
+  f=${1:-}
+  [ -n "$f" ] || { echo "usage: vault_import FILE.age" >&2; exit 1; }
+  [ -f "$f" ] || { echo "vault_import: $f does not exist" >&2; exit 1; }
+  case $f in /*) ;; *) f="$PWD/$f" ;; esac
+  vault_age_check || exit 1
+  d=$(umask 077 && mktemp -d) || exit 1
+  trap 'rm -rf "$d"' EXIT
+  echo "age asks for the vault's passphrase, on this terminal."
+  if ! ( umask 077; "${VAULT_AGE:-age}" -d -o "$d/v.tar" "$f" ); then
+    echo "vault_import failed; nothing changed. Run it in your own terminal, not through the agent: age reads the passphrase from the terminal only (VAULT.md step 4)." >&2
+    exit 1
+  fi
+  # -P lists the names as stored (tar would strip a leading / or ../ on the way), so they can be refused
+  tar -tPf "$d/v.tar" > "$d/list" 2>/dev/null && tar -tvPf "$d/v.tar" > "$d/long" 2>/dev/null || { echo "vault_import: $f holds no readable tar; nothing changed" >&2; exit 1; }
+  if grep -qv '^-' "$d/long"; then
+    echo "vault_import: $f holds something other than plain files; nothing changed" >&2; exit 1
+  fi
+  bad="" there=""
+  while IFS= read -r p; do
+    case $p in ''|/*|-*|..|../*|*/..|*/../*) bad+="  $p"$'\n'; continue ;; esac
+    [ -e "$HOME/$p" ] || [ -L "$HOME/$p" ] && there+="  $HOME/$p"$'\n'
+  done < "$d/list"
+  [ -z "$bad" ] || { printf 'vault_import: unsafe paths in %s; nothing changed:\n%s' "$f" "$bad" >&2; exit 1; }
+  if [ -n "$there" ]; then
+    printf 'vault_import: these exist already; nothing changed. Move them aside (mv FILE FILE.before-import), then run vault_import again:\n%s' "$there" >&2
+    exit 1
+  fi
+  ( umask 077; tar -C "$HOME" -xf "$d/v.tar" ) || { echo "vault_import: unpacking into $HOME failed; check what is there now (the list above)" >&2; exit 1; }
+  while IFS= read -r p; do chmod 600 "$HOME/$p"; done < "$d/list"
+  for p in .config/vps-setup .config/vps-setup/handover .config/coolify .config/hcloud .ssh; do
+    [ -d "$HOME/$p" ] && chmod 700 "$HOME/$p"
+  done
+  vault_manifest_write import "$f" "$d/list" || echo "could not write $(vault_manifest_file); vault_check will say no vault" >&2
+  echo "restored into $HOME ($(wc -l < "$d/list" | tr -d ' ') files, mode 600):"
+  sed 's/^/  /' "$d/list"
+  st="$HOME/.config/vps-setup/state"
+  pub=$( [ -f "$st" ] && grep -m1 '^SSH_PUBKEY=' "$st" | cut -d= -f2-)
+  [ -z "$pub" ] || [ -f "$pub" ] || echo "SSH_PUBKEY=$pub is not on this machine (another home directory?): state_set SSH_PUBKEY \"\$HOME/.ssh/<name>.pub\""
+  sd=$( [ -f "$st" ] && grep -m1 '^SETUP_DIR=' "$st" | cut -d= -f2-)
+  [ -z "$sd" ] || [ -d "$sd" ] || echo "SETUP_DIR=$sd is not on this machine: in the repo, state_set SETUP_DIR \"\$PWD\""
+  echo "next: ./verify.sh (expect ALL DONE), then ./status.sh; gh auth login is not in the vault (VAULT.md step 4)"
+)
+
+# vault_check -> one line about the vault, read only, never decrypts: when it was made, how many
+# files, whether the file is still on this machine (then: mode 600 and an age passphrase header),
+# and which files with a secret changed since or are not in it. 0 when it is current, 1 when
+# there is no vault yet or it is stale.
+vault_check() {
+  local m how at file days p s s1 s2 now cur changed="" missing="" rc=0 where n h1 h2 mode
+  m=$(vault_manifest_file)
+  [ -f "$m" ] || { echo "no vault yet: the user runs vault_export in their own terminal (VAULT.md step 2)"; return 1; }
+  how=$(grep -m1 '^how=' "$m" | cut -d= -f2-); at=$(grep -m1 '^at=' "$m" | cut -d= -f2-); file=$(grep -m1 '^file=' "$m" | cut -d= -f2-)
+  case $at in ''|*[!0-9]*) echo "cannot read $m; run vault_export again (VAULT.md step 2)"; return 1 ;; esac
+  now=$(date +%s); days=$(( (now - at) / 86400 ))
+  n=$(grep -c $'\t' "$m")
+  if [ -f "$file" ]; then
+    mode=$(stat -c %a "$file" 2>/dev/null || stat -f %Lp "$file")
+    h1=$(head -n 1 "$file" 2>/dev/null); h2=$(sed -n 2p "$file" 2>/dev/null | cut -c1-10)
+    if [ "$h1" != "age-encryption.org/v1" ]; then where="; $file is NOT an age file"; rc=1
+    elif [ "$h2" != "-> scrypt " ]; then where="; $file is not passphrase-protected (age with a key, not a passphrase)"; rc=1
+    else where="; $file here, age with a passphrase"; fi
+    case $mode in 600|400) ;; *) where="$where, mode $mode (chmod 600 $file)"; rc=1 ;; esac
+  else
+    where="; $file is not on this machine (fine when it is off it)"
+  fi
+  while IFS=$'\t' read -r s1 s2 p; do
+    [ -n "$p" ] || continue
+    vault_secret_path "$p" || continue
+    s=$(vault_stat "$HOME/$p" 2>/dev/null) || continue
+    [ "$s" = "$s1 $s2" ] || changed+="${changed:+, }$p"
+  done < <(grep $'\t' "$m")
+  while IFS= read -r p; do
+    vault_secret_path "$p" || continue
+    cut -s -f3 "$m" | grep -qxF -- "$p" || missing+="${missing:+, }$p"
+  done < <(vault_paths 2>/dev/null)
+  [ -z "$changed$missing" ] || rc=1
+  cur="$n files, ${how:-export}ed $(date -u -d "@$at" +%F 2>/dev/null || date -u -r "$at" +%F) ($days days ago)$where"
+  [ -z "$changed" ] || cur="$cur; stale, changed since: $changed"
+  [ -z "$missing" ] || cur="$cur; stale, not in it: $missing"
+  [ "$rc" = 0 ] || [ -z "$changed$missing" ] || cur="$cur (run vault_export again, VAULT.md step 2)"
+  echo "$cur"
+  return "$rc"
+}
+
 # --- monthly checkup (R16, CHECKUP.md), read-only ---
 
 # Coolify's own containers that mount the Docker socket on 4.3.23 (docker-compose.prod.yml and

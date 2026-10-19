@@ -20,7 +20,9 @@ Install what is missing with the user's package manager (ask before installing):
 | dig | `brew install bind` | `sudo apt install dnsutils` |
 | hcloud | `brew install hcloud` | `brew install hcloud` if Homebrew is installed, otherwise the `hcloud-linux-amd64.tar.gz` (or `arm64`) binary from github.com/hetznercloud/cli/releases into `~/.local/bin` |
 
-`hcloud` is only needed on the Hetzner path. Windows users: run everything inside WSL2 (Ubuntu).
+`hcloud` is only needed on the Hetzner path. `age` is optional, for `VAULT.md` (the encrypted
+copy of this setup's secrets; `brew install age`, `sudo apt install age`); `verify.sh` does not
+check it. Windows users: run everything inside WSL2 (Ubuntu).
 
 ## 2. GitHub CLI login
 

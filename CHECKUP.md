@@ -8,7 +8,7 @@ every step.
 
 **Not run on a real server yet.** `checkup.sh` and its helpers in `lib.sh` (`checkup_server_facts`,
 `firewall_rules`, `firewall_applied`, `hcloud_json`, `coolify_advisories`,
-`backup_success_rate`, `server_cost`, the checkup log) are tested against a fake Coolify API, a
+`backup_success_rate`, `server_cost`, the checkup log, `vault_check`) are tested against a fake Coolify API, a
 fake GitHub advisories answer, a fake `hcloud` and fake server tools only (`test/lib.test.sh`,
 `test/checkup.test.sh`). Which containers of a clean Coolify mount the Docker socket, the
 `hcloud` JSON fields, the shape of the advisories answer and how long Coolify keeps backup runs
@@ -158,6 +158,15 @@ and volumes there are. Their price, Object Storage and traffic are not in `hclou
 reads them in the Hetzner Console → **Usage**. More than one server is `WARN`: often the old
 one after a rebuild (`REBUILD.md` step 10), still billed; only the user deletes it. Another
 provider: `n/a`, the invoice is the source.
+
+### 3h. Secrets vault
+
+`vault_check` (`VAULT.md`): when the encrypted copy of this setup's secrets was made and whether
+a file with a secret (the env files, the Coolify config, the hcloud config, the ssh key)
+changed after it or is not in it. It reads the manifest and the file's first two lines only,
+never decrypts. `no vault yet` or `stale` is `WARN`: the user runs `vault_export` in their own
+terminal (`VAULT.md` step 2), then puts the new file off the machine. Changes to the state,
+`SERVER.md` and `PROJECTS.md` (every deploy) hold no secret and do not count.
 
 ## 4. Report to the user
 

@@ -1986,6 +1986,156 @@ else
 fi
 VPS_STATE=$VPS_SETUP_STATE
 
+# secrets vault (R23, VAULT.md): a fake age (no passphrase: the real one reads it from the
+# terminal), its argv in argv.log; every case runs in a second, throwaway home VH (VHOME).
+VH=$(mktemp -d) VH2=$(mktemp -d) VH3=$(mktemp -d)
+VAGE="$HOME/vaultbin/age"; mkdir -p "$HOME/vaultbin"
+cat > "$VAGE" <<STUB
+#!/bin/sh
+printf '%s\n' "age \$*" >> "$HOME/argv.log"
+[ "\$1" = --version ] && { echo v1.2.1; exit 0; }
+mode= out= in=
+while [ \$# -gt 0 ]; do case \$1 in -p) mode=enc ;; -d) mode=dec ;; -o) out=\$2; shift ;; *) in=\$1 ;; esac; shift; done
+if [ "\${FAKE_AGE_FAIL:-0}" = 1 ]; then : > "\$out"; echo "age: error: could not read passphrase: standard input is not a terminal, and /dev/tty is not available" >&2; exit 1; fi
+case \$mode in
+  enc) { printf 'age-encryption.org/v1\n-> scrypt FAKESALT 18\nFAKEBODY\n--- FAKEMAC\n'; cat; } > "\$out" ;;
+  dec) [ "\$(head -n 1 "\$in")" = age-encryption.org/v1 ] || { echo "age: error: incorrect passphrase" >&2; exit 1; }
+       tail -n +5 "\$in" > "\$out" ;;
+  *) exit 2 ;;
+esac
+STUB
+chmod +x "$VAGE"
+# vrun CMD...: CMD with HOME=$VHOME (default VH) and the fake age; $out, $rc, output kept for the leak check
+vrun() { out=$(HOME=${VHOME:-$VH} VAULT_AGE=$VAGE HCLOUD_CONFIG=${VHOME:-$VH}/.config/hcloud/cli.toml "$@" 2>&1); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"; }
+VPS="$VH/.config/vps-setup"
+mkdir -p "$VPS/handover" "$VH/.config/coolify" "$VH/.config/hcloud" "$VH/.ssh" "$VH/code/shop"
+( umask 077; cd "$VH" || exit 1
+  printf 'SSH_PUBKEY=%s\nSETUP_DIR=%s\nDOMAIN=example.com\n' "$VH/.ssh/id_ed25519.pub" "$REPO" > "$VPS/state"
+  printf 'S3_KEY=AKFAKEKEY123\nS3_SECRET=s3SeCrEt/x+y=z|w\n' > "$VPS/s3.env"
+  printf 'DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/1/wh-SECRET-abc\n' > "$VPS/notify.env"
+  printf 'KUMA_USER=admin\nKUMA_PASSWORD=kPW-SECRET+/xyz=1|2\n' > "$VPS/kuma.env"
+  printf '# My deploy server\n' > "$VPS/SERVER.md"; printf 'DOMAIN=example.com\n' > "$VPS/handover/state"
+  printf 'x\n' > "$VPS/state.tmp"; printf 'x\n' > "$VPS/old.age"
+  printf 'COOLIFY_URL=https://c.example.com\nCOOLIFY_TOKEN=3|abc=def\n' > "$VH/.config/coolify/config"
+  printf 'COOLIFY_TOKEN=old\n' > "$VH/.config/coolify/config.before-rebuild-20261001"
+  printf 'other tool\n' > "$VH/.config/coolify/other.json"
+  printf '[[contexts]]\nname = "vps-setup"\ntoken = "FAKE-cf-hcloud"\n' > "$VH/.config/hcloud/cli.toml"
+  printf 'PRIVATE KEY\n' > "$VH/.ssh/id_ed25519"; printf 'ssh-ed25519 AAAA u@x\n' > "$VH/.ssh/id_ed25519.pub"
+  printf 'unrelated\n' > "$VH/.ssh/id_rsa"
+  printf 'APP_UUID=a-shop\n' > "$VH/code/shop/.coolify.env" )
+python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$VPS/tunnel.sock"
+ln -s "$VH/.ssh/id_rsa" "$VPS/link.env"
+
+vrun env VAULT_AGE=/nonexistent/age bash -c ". '$REPO/lib.sh'; vault_age_check"
+check "vault_age_check: no age, how to install" "$rc:$out" "1:age is not installed (VAULT.md step 1): macOS: brew install age; Debian/Ubuntu and WSL: sudo apt install age; Windows: winget install FiloSottile.age"
+vrun vault_age_check
+check "vault_age_check: age there" "$rc:$out" "0:"
+vrun vault_paths "$VH/code/shop/.coolify.env"
+check "vault_paths: the setup's files, the Coolify configs, hcloud, the ssh pair, the extra; no socket, symlink, tmp, age or other files" "$rc:$out" "0:.config/coolify/config
+.config/coolify/config.before-rebuild-20261001
+.config/hcloud/cli.toml
+.config/vps-setup/SERVER.md
+.config/vps-setup/handover/state
+.config/vps-setup/kuma.env
+.config/vps-setup/notify.env
+.config/vps-setup/s3.env
+.config/vps-setup/state
+.ssh/id_ed25519
+.ssh/id_ed25519.pub
+code/shop/.coolify.env"
+vrun vault_paths "$REPO/lib.sh"
+check "vault_paths: a file outside the home refused" "$rc:$out" "1:vault_paths: $REPO/lib.sh is outside your home directory ($VH); the vault holds files under it only"
+vrun vault_paths "$VH/nope.env"
+check "vault_paths: a missing extra refused" "$rc:$out" "1:vault_paths: $VH/nope.env is not a regular file"
+
+V="$VH/vps-setup-vault-$(date -u +%Y%m%d).age"
+FAKE_AGE_FAIL=1 vrun vault_export
+check "vault_export: age without a terminal fails, nothing written" "$rc:$(tail -n 2 <<<"$out"):$(find "$VH" -maxdepth 1 -name '*.age*' | wc -l):$([ -e "$VPS/vault.manifest" ] && echo manifest || echo none)" \
+  "1:age: error: could not read passphrase: standard input is not a terminal, and /dev/tty is not available
+vault_export failed; nothing written. Run it in your own terminal, not through the agent: age reads the passphrase from the terminal only (VAULT.md step 2).:0:none"
+vrun vault_export "$VH/code/shop/.coolify.env"
+check "vault_export rc" "$rc" "0"
+has "vault_export: the list first" "$out" '^into the vault \(12 files, relative to '
+has "vault_export: the list" "$out" '^  \.ssh/id_ed25519$'
+has "vault_export: where and how big" "$out" "^wrote $V \\(mode 600, [0-9]+ bytes\\) and $VPS/vault\\.manifest \\(no secrets\\)\\.$"
+has "vault_export: the two things to do" "$out" '^Now: 1\. the passphrase into your password manager; 2\. a copy of the file off this machine'
+check "vault_export: age got -p and the output only" "$(grep '^age ' "$HOME/argv.log" | tail -n 1)" "age -p -o $V.tmp"
+check "vault_export: file mode 600, manifest mode 600" "$(stat -c %a "$V"):$(stat -c %a "$VPS/vault.manifest")" "600:600"
+check "vault_export: manifest head" "$(head -n 3 "$VPS/vault.manifest" | sed 's/^at=[0-9]*$/at=N/')" "how=export
+at=N
+file=$V"
+check "vault_export: manifest lines are size, mtime, path" "$(grep -c $'^[0-9]*\t[0-9]*\t' "$VPS/vault.manifest")" "12"
+check "vault_export: the tar holds exactly vault_paths" "$(tail -n +5 "$V" | tar -tf - | LC_ALL=C sort)" "$(HOME=$VH HCLOUD_CONFIG=$VH/.config/hcloud/cli.toml vault_paths "$VH/code/shop/.coolify.env")"
+vrun vault_export
+check "vault_export: an existing file refused" "$rc:$out" "1:$V exists already; nothing changed (another name: vault_export ${V%.age}-2.age)"
+
+vrun vault_check
+check "vault_check: current" "$rc:$out" "0:12 files, exported $(date -u +%F) (0 days ago); $V here, age with a passphrase"
+printf 'more\n' >> "$VPS/state"; touch -d '+1 hour' "$VPS/SERVER.md"
+vrun vault_check
+check "vault_check: the state and SERVER.md changed: no secret, still current" "$rc" "0"
+cp -p "$VPS/s3.env" "$VH/keep-s3"; cp -p "$VH/.config/coolify/config" "$VH/keep-coolify"
+printf 'S3_SECRET=new\n' >> "$VPS/s3.env"; touch -d '+1 hour' "$VH/.config/coolify/config"
+( umask 077; printf 'CF_API_TOKEN=FAKE-cf-token1\n' > "$VPS/cloudflare.env" )
+vrun vault_check
+check "vault_check: a secret changed, one new" "$rc:$out" "1:12 files, exported $(date -u +%F) (0 days ago); $V here, age with a passphrase; stale, changed since: .config/coolify/config, .config/vps-setup/s3.env; stale, not in it: .config/vps-setup/cloudflare.env (run vault_export again, VAULT.md step 2)"
+chmod 644 "$V"
+vrun vault_check
+has "vault_check: mode 644 said" "$out" "; $V here, age with a passphrase, mode 644 \\(chmod 600 $V\\);"
+chmod 600 "$V"; cp -p "$V" "$VH/keep.age"
+printf 'not age\n' > "$V"
+vrun vault_check
+has "vault_check: not an age file" "$out" "; $V is NOT an age file;"
+printf 'age-encryption.org/v1\n-> X25519 abc\n' > "$V"
+vrun vault_check
+has "vault_check: age with a key, not a passphrase" "$out" "; $V is not passphrase-protected"
+rm -f "$V"
+vrun vault_check
+has "vault_check: the file off this machine is fine" "$out" "^12 files, exported .*; $V is not on this machine \\(fine when it is off it\\); stale"
+mv "$VPS/vault.manifest" "$VH/manifest.bak"
+vrun vault_check
+check "vault_check: no manifest" "$rc:$out" "1:no vault yet: the user runs vault_export in their own terminal (VAULT.md step 2)"
+mv "$VH/manifest.bak" "$VPS/vault.manifest"
+
+# restore on a "new machine": VH2 is empty
+VHOME=$VH2 vrun vault_import "$VH/keep.age"
+check "vault_import rc" "$rc" "0"
+has "vault_import: the list" "$out" '^restored into .* \(12 files, mode 600\):$'
+rm -rf "$VH/.ssh.moved"; mv "$VH/.ssh" "$VH/.ssh.moved"
+VHOME=$VH3 vrun vault_import "$VH/keep.age"
+has "vault_import: the old ssh path missing is said" "$out" "^SSH_PUBKEY=$VH/\\.ssh/id_ed25519\\.pub is not on this machine \\(another home directory\\?\\): state_set SSH_PUBKEY"
+mv "$VH/.ssh.moved" "$VH/.ssh"; rm -rf "$VH3"; VH3=$(mktemp -d)
+has "vault_import: next" "$out" '^next: \./verify\.sh \(expect ALL DONE\), then \./status\.sh'
+check "vault_import: age got -d, a private temp file and the vault" "$(grep '^age ' "$HOME/argv.log" | tail -n 1 | sed 's#-o [^ ]*/v\.tar#-o TMP/v.tar#')" "age -d -o TMP/v.tar $VH/keep.age"
+check "vault_import: the files back as they were" "$(cd "$VH2" && cmp -s .config/vps-setup/s3.env "$VH/keep-s3" && cmp -s .config/coolify/config "$VH/keep-coolify" && cmp -s .ssh/id_ed25519 "$VH/.ssh/id_ed25519" && cmp -s code/shop/.coolify.env "$VH/code/shop/.coolify.env" && cmp -s .config/vps-setup/kuma.env "$VPS/kuma.env" && echo same)" "same"
+check "vault_import: modes 600 and 700" "$(cd "$VH2" && find .config .ssh code -printf '%m\n' | sort | uniq -c | awk '{print $2 "x" $1}' | paste -sd' ')" "$(cd "$VH2" && printf '600x%s 700x%s' "$(find .config .ssh code -type f | wc -l)" "$(find .config .ssh code -type d | wc -l)")"
+check "vault_import: the ssh dir and the setup dir private" "$(stat -c %a "$VH2/.ssh" "$VH2/.config/vps-setup" | paste -sd' ')" "700 700"
+VHOME=$VH2 vrun vault_check
+check "vault_import: wrote the manifest, current" "$rc:${out%%;*}" "0:12 files, imported $(date -u +%F) (0 days ago)"
+VHOME=$VH2 vrun vault_import "$VH/keep.age"
+check "vault_import: refuses over existing files, names them" "$rc:$(sed -n 2,3p <<<"$out")" "1:vault_import: these exist already; nothing changed. Move them aside (mv FILE FILE.before-import), then run vault_import again:
+  $VH2/.config/coolify/config"
+FAKE_AGE_FAIL=1 VHOME=$VH3 vrun vault_import "$VH/keep.age"
+check "vault_import: age fails, nothing unpacked" "$rc:$(tail -n 1 <<<"$out"):$(find "$VH3" -mindepth 1 | wc -l)" "1:vault_import failed; nothing changed. Run it in your own terminal, not through the agent: age reads the passphrase from the terminal only (VAULT.md step 4).:0"
+VHOME=$VH3 vrun vault_import "$VH/nope.age"
+check "vault_import: missing file" "$rc:$out" "1:vault_import: $VH/nope.age does not exist"
+VHOME=$VH3 vrun vault_import
+check "vault_import: usage" "$rc:$out" "1:usage: vault_import FILE.age"
+# a vault someone else made: a path out of the home, a symlink
+mkdir -p "$VH3/x/y"; printf 'evil\n' > "$VH3/x/evil"
+( cd "$VH3/x/y" && tar -P -cf "$VH3/t.tar" ../evil ) 2>/dev/null
+{ printf 'age-encryption.org/v1\n-> scrypt S 18\nB\n--- M\n'; cat "$VH3/t.tar"; } > "$VH3/evil.age"
+rm -rf "$VH3/x" "$VH3/t.tar"; E=$(mktemp -d)
+VHOME=$E vrun vault_import "$VH3/evil.age"
+check "vault_import: a path with .. refused, nothing unpacked" "$rc:$(head -n 2 <<<"$out" | tail -n 1):$(find "$E" -mindepth 1 | wc -l)" "1:vault_import: unsafe paths in $VH3/evil.age; nothing changed::0"
+check "vault_import: and nothing above the home" "$([ -e "${E%/*}/evil" ] && echo written || echo none)" "none"
+ln -s /etc/passwd "$VH3/lnk"; ( cd "$VH3" && tar -cf t.tar lnk )
+{ printf 'age-encryption.org/v1\n-> scrypt S 18\nB\n--- M\n'; cat "$VH3/t.tar"; } > "$VH3/link.age"
+VHOME=$E vrun vault_import "$VH3/link.age"
+check "vault_import: a symlink refused" "$rc:$(tail -n 1 <<<"$out"):$(find "$E" -mindepth 1 | wc -l)" "1:vault_import: $VH3/link.age holds something other than plain files; nothing changed:0"
+check "vault: no secret value in any vault output" "$(grep -cE 's3SeCrEt|wh-SECRET|kPW-SECRET|FAKE-cf-|PRIVATE KEY|3\|abc' "$HOME/outputs.log")" "0"
+rm -rf "$VH" "$VH2" "$VH3" "$E"
+
 # the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
 leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-|v-SECRET-1|ba-SECRET-pass1|wh-sec-0123|kPW-SECRET|3\|abc=def' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
 check "s3 creds, webhook URL, Coolify and Cloudflare tokens, staging secrets and the Kuma password in no argv and no output" "${leaks:-none}" "none"

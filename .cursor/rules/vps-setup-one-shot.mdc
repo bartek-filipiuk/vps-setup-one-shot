@@ -1,5 +1,5 @@
 ---
-description: Which vps-setup-one-shot runbook to read when the user wants to set up, check, fix, upgrade, rebuild, stage or hand over their Coolify server or an app on it.
+description: Which vps-setup-one-shot runbook to read when the user wants to set up, check, fix, upgrade, rebuild, stage or hand over their Coolify server or an app on it, or back up and rotate its secrets.
 alwaysApply: false
 ---
 The markdown is the source; nothing here repeats it. Work from the repo root, read the file, follow it exactly, in the user's language.
@@ -17,3 +17,4 @@ The markdown is the source; nothing here repeats it. Work from the repo root, re
 - Coolify, Ubuntu or Postgres major upgrades: `UPGRADE.md`
 - A new server from nothing with the databases from the backups: `REBUILD.md`
 - A server or project to a client, a colleague joining, old access removed: `HANDOVER.md`
+- The secrets of this setup into one encrypted file, back on a new machine, or one secret rotated: `VAULT.md`

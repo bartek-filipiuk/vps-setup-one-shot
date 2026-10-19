@@ -111,7 +111,7 @@ verified live on 4.3.23 on 2026-10-14/15; everything about roles, invites and to
 | `GET /team`, `GET /teams`, `GET /teams/{id}` | the token's team, every team of the user | ability `read` |
 | `GET /team/members`, `GET /teams/{id}/members` | who is in the team (`team_members`) | array of users: `id`, `name`, `email`, `email_verified_at`, `two_factor_confirmed_at`, dates; **no role** (live GET). The role is only in the UI: **Team** → **Members** |
 | `GET /security/keys` | private keys Coolify holds (server key, deploy keys) (`ssh_keys_list`) | array of `{uuid, name, fingerprint, public_key, is_git_related, team_id, ...}` (live GET); a token with `root` or `read:sensitive` also gets `private_key` **[verify]**, so print only chosen fields. `POST`, `PATCH`, `DELETE /security/keys[/{uuid}]` exist |
-| (none) | invites, roles, API tokens | no API in 4.3.23: there is no `/tokens` and no invite or role call. UI only, see below |
+| (none) | invites, roles, API tokens | no API in 4.3.23: there is no `/tokens` and no invite or role call. UI only, see below; rotating the token is `VAULT.md` step 6.1 |
 
 From the 4.3.23 source **[verify]**:
 
