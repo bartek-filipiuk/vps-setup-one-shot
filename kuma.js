@@ -7,12 +7,18 @@
 //   {"action":"init","user":"admin","password":"..."}
 //   {"action":"sync","user":"admin","password":"...","monitors":[{"name":"shop","url":"https://shop.example.com"}],
 //    "page":{"slug":"acme","title":"Acme","description":"Status of Acme"},"group":"Acme"}
+//   {"action":"domain","user":"admin","password":"...","slug":"acme","add":["status.acme.com"],"remove":[]}
 // Output: one JSON line, {"ok":true,...} with exit 0 or {"ok":false,"msg":"..."} with exit 1. The
 // password is never printed. Gives up after 90 seconds plus 20 per monitor to add, at most 300.
 //
+// The domain action answers {"ok":true,"page":"/status/acme","domains":[...],"added":[...],
+// "removed":[...],"absent":[...],"changed":true|false} (UPTIME.md step 9).
+//
 // Never destructive: it never deletes a monitor, a status page or a group. A monitor is matched by
 // its URL (case and a trailing slash ignored), so a renamed one is kept, and a status page keeps
-// every group and monitor added by hand; ours are added to the group named in the plan.
+// every group and monitor added by hand; ours are added to the group named in the plan. The
+// domain action never creates a page, keeps every other domain of the page, and refuses a host
+// that another page has (Kuma would move it to this page without a word).
 "use strict";
 
 const BASE = "http://127.0.0.1:3001";
@@ -21,6 +27,8 @@ const HARD_TIMEOUT_MS = 90000;
 // hardTimeoutMs(toAdd) -> 90 s plus 20 s per monitor to add (each add waits up to 20 s), at most 300 s.
 function hardTimeoutMs(toAdd) { return Math.min(HARD_TIMEOUT_MS + 20000 * Math.max(0, toAdd | 0), 300000); }
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// A host name as lib.sh's cf_valid_name takes it: lower case, at least two labels, at most 253 characters.
+const HOST_RE = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
 // What the Kuma 2.x UI sends for a new HTTP monitor (EditMonitor.vue), with our interval, one
 // retry after 30 s and a 30 s timeout [verify].
@@ -39,10 +47,14 @@ function normUrl(u) { return String(u || "").trim().toLowerCase().replace(/\/+$/
 
 function nonEmpty(v) { return typeof v === "string" && v.length > 0; }
 
+// normHost(h) -> h trimmed, lower case, without a trailing dot. Kuma matches the host exactly and
+// stores what it gets, so every host is normalised here.
+function normHost(h) { return String(h == null ? "" : h).trim().toLowerCase().replace(/\.$/, ""); }
+
 // validatePlan(plan) -> the plan, or throws with what is wrong (never echoing the password).
 function validatePlan(p) {
   if (!p || typeof p !== "object" || Array.isArray(p)) throw fail("the plan is not a JSON object");
-  if (p.action !== "init" && p.action !== "sync") throw fail("unknown action: " + JSON.stringify(p.action));
+  if (p.action !== "init" && p.action !== "sync" && p.action !== "domain") throw fail("unknown action: " + JSON.stringify(p.action));
   if (!nonEmpty(p.user)) throw fail("the plan has no user");
   if (!nonEmpty(p.password)) throw fail("the plan has no password");
   if (p.action === "sync") {
@@ -57,7 +69,50 @@ function validatePlan(p) {
       }
     }
   }
+  if (p.action === "domain") {
+    if (!nonEmpty(p.slug) || !SLUG_RE.test(p.slug)) throw fail("not a status page slug: " + JSON.stringify(p.slug));
+    for (const k of ["add", "remove"]) {
+      if (p[k] === undefined) p[k] = [];
+      if (!Array.isArray(p[k])) throw fail("the plan's " + k + " is not a list");
+      p[k] = p[k].map((h) => {
+        const n = typeof h === "string" ? normHost(h) : "";
+        if (!HOST_RE.test(n)) {
+          throw fail("not a host name: " + JSON.stringify(h) + " (the host only, like status.acme.com)" +
+            (/[^\x00-\x7f]/.test(String(h)) ? " (an IDN as punycode, xn--...)" : ""));
+        }
+        return n;
+      });
+    }
+    if (p.add.length + p.remove.length === 0) throw fail("the plan adds and removes no domain");
+    const both = p.add.filter((h) => p.remove.includes(h));
+    if (both.length) throw fail("a host to add and to remove at once: " + both.join(", "));
+  }
   return p;
+}
+
+// planDomains(existing, add, remove, others) -> {list, added, removed, absent}: the page's domains
+// (existing) in their order, the hosts of add appended once, the hosts of remove dropped when the
+// page has them (absent: the ones it does not have). others maps every host of another page to
+// its slug: a host to add that is there throws, because Kuma would take it from that page.
+function planDomains(existing, add, remove, others) {
+  const taken = Object.keys(others || {}).filter((h) => (add || []).includes(h));
+  if (taken.length) {
+    throw fail(taken.map((h) => h + " is on status page " + others[h]).join("; ") + "; nothing changed");
+  }
+  const list = [], seen = new Set();
+  for (const d of existing || []) {
+    const n = normHost(d);
+    if (n === "" || seen.has(n)) continue;
+    seen.add(n); list.push(d);
+  }
+  const added = [], removed = [], absent = [];
+  for (const h of add || []) {
+    if (!seen.has(h)) { seen.add(h); list.push(h); added.push(h); }
+  }
+  for (const h of remove || []) {
+    if (seen.has(h)) { seen.delete(h); removed.push(h); } else absent.push(h);
+  }
+  return { list: list.filter((d) => !removed.includes(normHost(d))), added, removed, absent };
 }
 
 // planMonitors(monitorList, wanted) -> {add: [{name, url}], kept: [{name, url, id}]}. monitorList
@@ -204,6 +259,22 @@ async function init(plan, deps) {
   } finally { s.close(); }
 }
 
+// publicGroups(deps, slug) -> the groups of the page from its public JSON, or null when they
+// cannot be read. saveStatusPage deletes every group it does not get, so a save needs them all.
+async function publicGroups(deps, slug) {
+  const pub = await http(deps, "GET", "/api/status-page/" + slug).catch(() => ({ json: null }));
+  return pub.json && Array.isArray(pub.json.publicGroupList) ? pub.json.publicGroupList : null;
+}
+
+// waitFor(get, ms, what) -> resolves once get() is not null, throws after ms.
+async function waitFor(get, ms, what) {
+  const end = Date.now() + ms;
+  while (get() === null) {
+    if (Date.now() >= end) throw fail(what);
+    await sleep(50);
+  }
+}
+
 // sync: one monitor per wanted URL, the status page, our monitors on it. Idempotent.
 async function sync(plan, deps) {
   const s = await connect(deps, 20000);
@@ -211,11 +282,7 @@ async function sync(plan, deps) {
   s.on("monitorList", (l) => { monitorList = l; });   // pushed by Kuma right after the login
   try {
     await login(s, plan, false);
-    const listEnd = Date.now() + (deps.listMs == null ? 15000 : deps.listMs);
-    while (monitorList === null) {
-      if (Date.now() >= listEnd) throw fail("Kuma sent no monitor list within 15 s of the login");
-      await sleep(50);
-    }
+    await waitFor(() => monitorList, deps.listMs == null ? 15000 : deps.listMs, "Kuma sent no monitor list within 15 s of the login");
     const { add, kept } = planMonitors(monitorList, plan.monitors);
     if (deps.onAdds) deps.onAdds(add.length);   // main() stretches the hard timeout
     const ids = kept.map((k) => k.id), added = [];
@@ -238,11 +305,10 @@ async function sync(plan, deps) {
     // made by this run has no groups yet, so it is not read.
     let current = [];
     if (!created) {
-      const pub = await http(deps, "GET", "/api/status-page/" + slug).catch(() => ({ json: null }));
-      if (!pub.json || !Array.isArray(pub.json.publicGroupList)) {
+      current = await publicGroups(deps, slug);
+      if (current === null) {
         throw fail("could not read the groups of status page " + slug + "; the page was not saved" + (added.length ? " (monitors added: " + added.join(", ") + ")" : ""));
       }
-      current = pub.json.publicGroupList;
     }
     const { groups } = mergeGroups(current, plan.group, ids);
     const config = pageConfig(page.config, plan.page);
@@ -252,7 +318,46 @@ async function sync(plan, deps) {
   } finally { s.close(); }
 }
 
-function run(plan, deps) { return plan.action === "init" ? init(plan, deps) : sync(plan, deps); }
+// domain: the hosts of plan.add onto the page's domainNameList, the hosts of plan.remove off it
+// (UPTIME.md step 9). Kuma serves the page at / on each of them. Never creates a page, keeps the
+// page's other domains, groups, icon and settings, and refuses a host another page has (Kuma's
+// save would move it silently). Nothing to change: nothing is saved.
+async function domain(plan, deps) {
+  const s = await connect(deps, 20000);
+  let pageList = null;
+  s.on("statusPageList", (l) => { pageList = l; });   // pushed by Kuma right after the login [verify]
+  try {
+    await login(s, plan, false);
+    await waitFor(() => pageList, deps.listMs == null ? 15000 : deps.listMs, "Kuma sent no status page list within 15 s of the login; nothing changed");
+    const slug = plan.slug;
+    const page = await emitAck(s, "getStatusPage", slug);
+    if (!page || page.ok !== true || !page.config) {
+      throw fail("Kuma did not give status page " + slug + " (" + kumaMsg(page) + "); if it does not exist, run kuma_sync for it first (nothing changed)");
+    }
+    const others = {};
+    for (const p of (Array.isArray(pageList) ? pageList : Object.values(pageList || {}))) {
+      if (!p || String(p.slug || "").toLowerCase() === slug) continue;
+      for (const d of p.domainNameList || []) others[normHost(d)] = String(p.slug || p.id);
+    }
+    const existing = Array.isArray(page.config.domainNameList) ? page.config.domainNameList : [];
+    const d = planDomains(existing, plan.add, plan.remove, others);
+    const res = { ok: true, page: "/status/" + slug, domains: d.list.map(normHost), added: d.added, removed: d.removed, absent: d.absent,
+      changed: d.added.length + d.removed.length > 0 };
+    if (!res.changed) return res;
+    const current = await publicGroups(deps, slug);
+    if (current === null) throw fail("could not read the groups of status page " + slug + "; nothing saved (Kuma caches a missing page for 5 minutes: run it again later)");
+    const { groups } = mergeGroups(current, "", []);
+    const config = Object.assign({}, page.config, { domainNameList: d.list });
+    const r = await emitAck(s, "saveStatusPage", slug, config, page.config.icon || "/icon.svg", groups);
+    if (!r || r.ok !== true) throw fail("Kuma did not save the status page " + slug + ": " + kumaMsg(r));
+    return res;
+  } finally { s.close(); }
+}
+
+function run(plan, deps) {
+  if (plan.action === "init") return init(plan, deps);
+  return plan.action === "domain" ? domain(plan, deps) : sync(plan, deps);
+}
 
 // scrub(msg, password) -> msg without the password and control characters, short.
 function scrub(msg, password) {
@@ -303,7 +408,8 @@ async function main() {
 }
 
 if (process.env.KUMA_JS_TEST === "1") {
-  module.exports = { hardTimeoutMs, validatePlan, planMonitors, mergeGroups, pageConfig, normUrl, scrub, run, MONITOR_DEFAULTS };
+  module.exports = { hardTimeoutMs, validatePlan, planMonitors, mergeGroups, pageConfig, planDomains, normHost, normUrl, scrub, run,
+    MONITOR_DEFAULTS, HOST_RE };
 } else {
   main();
 }

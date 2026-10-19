@@ -259,7 +259,9 @@ copy give the names, the old `PROJECTS.md` copy the project each was in, for `VP
 its files in the bucket too, but restoring into a service's database is not covered
 (`SERVICES.md` step 5); that needs a human. Uptime Kuma goes through `UPTIME.md` from step 2:
 `kuma.env` survived and opens the new Kuma, `kuma_sync` brings the checks and the status pages
-back (the history is gone; `UPTIME_SERVICE` and `UPTIME_PAGES` are among the cleared keys).
+back (the history is gone; `UPTIME_SERVICE`, `UPTIME_PAGES` and `UPTIME_DOMAINS` are among the
+cleared keys). A page on a client's domain needs `UPTIME.md` step 9 again; a client record that
+is a CNAME to Kuma's domain already points at the new server, an A record the client changes.
 
 ## 9. Check and the new SERVER.md
 

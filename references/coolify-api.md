@@ -149,20 +149,29 @@ shapes were checked read-only on a live 4.3.23 on 2026-10-16; the writes other t
 | `PATCH /applications/{uuid} {domains}` on a domain another resource uses | | may be accepted without a conflict **[verify]**; `domain_in_use` is checked before (PREPARE-APP step 2 and 5, SERVICES step 1) |
 
 Services (R10: `service_create`, `service_status`, `service_delete`, the `status.sh` Services
-section, `SERVICES.md`). The two `GET` calls were verified live on 4.3.23 on 2026-10-15;
+section, `SERVICES.md`; R22: `service_app`, `service_app_urls_set`, `service_restart`,
+`UPTIME.md` step 9). The two `GET` calls were verified live on 4.3.23 on 2026-10-15;
 everything else is from the 4.3.23 source and not yet exercised **[verify]**.
 
 | Call | Use | Notes |
 |------|-----|-------|
 | `GET /services` | every service (`service_status`, `status.sh`) | array of `{uuid, name, description, service_type, status, server_status, applications:[...], databases:[...], environment_id, server_id, ...}` (live GET). `applications[]`: `uuid, name, human_name, fqdn, url, image, status, exposes, ports, is_force_https_enabled, restart_count, restart_limit_reached, last_online_at`; `databases[]`: `uuid, name, image, status, is_public, public_port` |
-| `GET /services/{uuid}` | one service | the same object plus `environment` (live GET) |
+| `GET /services/{uuid}` | one service (`service_status`, `service_app`, `kuma_init`) | the same object plus `environment` (live GET). Seen on a 4.3.23 server (Umami service), 2026-10-19: each `applications[]` entry carries `name` (the compose service name, `umami`), `uuid` (24 characters), `fqdn` (a string, one URL there, no comma) and `is_force_https_enabled: true` (the template's default for it). `service_app` picks the entry by `name` |
 | `POST /services {type, name, project_uuid, server_uuid, environment_name, instant_deploy, urls}` | create a one-click service with its domain (`service_create`) | `urls: [{name: <compose service name>, url: "https://domain"}]` sets that application's `fqdn`; returns `{uuid, domains:[...]}`; `instant_deploy:true` starts it. A domain in use is a 409 `{message, conflicts:[...]}` unless `force_domain_override:true` (never sent); validation errors are a 422 `{message, errors}`; on either error Coolify deletes the new service again **[verify]** |
 | `PATCH /services/{uuid}` | `name, description, instant_deploy, docker_compose_raw, urls, force_domain_override` | not used yet **[verify]** |
-| `PATCH /services/{uuid}/applications/{app_uuid} {url}` | change the domain of one application of a service | not used yet **[verify]** |
+| `PATCH /services/{uuid}/applications/{app_uuid} {url}` | the domains of one application of a service (`service_app_urls_set`, R22: a client's host on the Kuma service) | from the 4.3.23 source (`ServiceApplicationsController::update`, `UpdateServiceApplicationFromApi`): `url` is a comma-separated list of URLs, stored as the `fqdn`; each entry trimmed and lower-cased; `checkIfDomainIsAlreadyUsedViaAPI` skips the application itself, so its current domains are no conflict; a host another application or service application has is a 409 `{message, conflicts: [{domain, resource_name, resource_uuid, resource_type, message}], warning}` unless `force_domain_override` (never sent); a bad body is a 422 `{message, errors}`. Then `updateCompose` rewrites the `SERVICE_FQDN_*`/`SERVICE_URL_*` values from the **first** domain only, so the service's own domain stays first. No restart, no redeploy. Answers 200 with the application. A comma list after the PATCH not yet seen on a server **[verify]** |
 | `DELETE /services/{uuid}?delete_volumes=true` | remove a service (`service_delete`, only with `--yes`) | `delete_volumes` defaults to true: the data goes with it **[verify]** |
-| `POST /services/{uuid}/start`, `/stop`, `/restart` | lifecycle | not used yet **[verify]** |
+| `POST /services/{uuid}/restart` | after a domain change (`service_restart`, R22) | `StartService` (the same action as start, with a stop first): `Service::parse()` writes the Traefik labels from the current domains, then `docker compose up -d --force-recreate`; the container keeps its name **[verify]**. Without it a new domain has no router **[verify]**. Needs a token with the `deploy` ability, while the domain PATCH needs `write` (route middlewares in the v4.3.23 source) **[verify]** |
+| `POST /services/{uuid}/start`, `/stop` | lifecycle | not used yet **[verify]** |
 | `PUT`/`POST /services/{uuid}/storages/{storage_uuid}/backups[/run]` | volume backups of a service | not used yet; `SERVICES.md` step 5 **[verify]** |
 | (none) | scheduled backups of a database inside a service | `/databases/{uuid}/backups` covers standalone databases only; UI only **[verify]** |
+
+Traefik labels of a service application (`fqdnLabelsForTraefik`, 4.3.23 source): one router
+pair per domain, `traefik.http.routers.https-<i>-<uuid>.rule=Host(...)` with `tls=true` and
+`tls.certresolver=letsencrypt` (one certificate per host, HTTP-01, so the host must resolve to
+the server before the restart), plus the `redirect-to-https` middleware on the http router when
+`is_force_https_enabled`. A URL with a path adds `&& PathPrefix(...)`; a path cannot fence a
+host to one page, because the page needs `/` **[verify]**.
 
 Container names of a service: `<compose service>-<service uuid>`, seen on a 4.3.23 server with
 the Umami service, 2026-10-19 (service `iww444o4ow88og8s8cow4kkc` runs as

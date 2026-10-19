@@ -1,6 +1,6 @@
 ---
 name: vps-uptime
-description: Follow UPTIME.md to set up Uptime Kuma with a check per app domain and a public status page per project, and to read it. User-invoked only.
+description: Follow UPTIME.md to set up Uptime Kuma with a check per app domain and a public status page per project, also on a client's domain, and to read it. User-invoked only.
 argument-hint: "[project name, optional]"
 disable-model-invocation: true
 ---

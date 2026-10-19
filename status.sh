@@ -11,6 +11,11 @@ cd "$(dirname "$0")" && . ./lib.sh
 STATUS_SSH=${STATUS_SSH:-rssh}
 STATUS_OPENSSL=${STATUS_OPENSSL:-openssl}
 STATUS_LATEST_URL=${STATUS_LATEST_URL:-https://api.github.com/repos/coollabsio/coolify/releases/latest}
+# Tests only: a base URL the client host of a status page is appended to (<base>/<host>/api/entry-page);
+# empty is https://<host>/api/entry-page. Honoured only with a fake ssh as well (STATUS_SSH not
+# rssh), so a stray variable in a real shell cannot point the page check somewhere else.
+STATUS_ENTRY_URL=${STATUS_ENTRY_URL:-}
+[ "$STATUS_SSH" != rssh ] || STATUS_ENTRY_URL=
 # `timeout` (Linux) or `gtimeout` (macOS with coreutils); "none" skips certificate checks.
 STATUS_TIMEOUT=${STATUS_TIMEOUT:-$(command -v timeout || command -v gtimeout || echo none)}
 export CAPI_MAX_TIME=15   # per Coolify API call, read by capi in lib.sh
@@ -87,6 +92,27 @@ certs() {
     elif [ "$days" -lt "$CERT_WARN" ]; then line WARN "cert $host" "expires in $days days"
     else line OK "cert $host" "$days days left"; fi
   done < <(jq -rn --arg f "$1" '$f | split(",") | .[] | gsub("^\\s+|\\s+$"; "") | select(. != "")')
+}
+
+# entry_lines SLUG -> a "page SLUG" line per client domain of the status page (UPTIME_DOMAINS,
+# UPTIME.md step 9): Kuma's public /api/entry-page on that host must name the page. Its
+# certificate is a "cert" line of the Kuma service already (the host is in the service's fqdn).
+entry_lines() {
+  local pair host base e t
+  for pair in $(state_get UPTIME_DOMAINS); do
+    [ "${pair%%=*}" = "$1" ] || continue
+    host=${pair#*=}
+    cf_valid_name "$host" 2>/dev/null || { line WARN "page $1" "n/a (UPTIME_DOMAINS has '$host', not a host name)"; continue; }
+    base=https://$host; [ -z "$STATUS_ENTRY_URL" ] || base=$STATUS_ENTRY_URL/$host
+    e=$(curl -fsS --max-time 10 "$base/api/entry-page" 2>/dev/null)
+    t=$(jq -r 'if type == "object" and (.type | type) == "string" then "\(.type) \(.statusPageSlug // "")" else empty end' <<<"$e" 2>/dev/null)
+    case $t in
+      '') line WARN "page $1" "n/a (https://$host does not answer: DNS, certificate or Kuma; UPTIME.md step 9)" ;;
+      "statusPageMatchedDomain $1") line OK "page $1" "https://$host serves it" ;;
+      "statusPageMatchedDomain "?*) line FAIL "page $1" "https://$host serves status page $(tr -cd 'a-z0-9-' <<<"${t#* }"), not $1 (UPTIME.md step 9)" ;;
+      *) line FAIL "page $1" "https://$host answers with Kuma's own entry, not the page (kuma_domain_add $1 $host, UPTIME.md step 9)" ;;
+    esac
+  done
 }
 
 # --- Server: one ssh round-trip ---
@@ -259,10 +285,10 @@ else
       [ "$npages" -gt 1 ] && subsection "status page $slug"
       up=$(kuma_status "$slug" 2>/dev/null); urc=$?
       if [ "$urc" = 2 ] || [ -z "$up" ]; then
-        line WARN "uptime $slug" "n/a (could not read $(state_get UPTIME_URL)/status/$slug)"; continue
+        line WARN "uptime $slug" "n/a (could not read $(state_get UPTIME_URL)/status/$slug)"; entry_lines "$slug"; continue
       fi
       if [ "$(wc -l <<<"$up")" -lt 2 ]; then
-        line WARN "uptime $slug" "no monitors on the page (kuma_sync, UPTIME.md step 5)"; continue
+        line WARN "uptime $slug" "no monitors on the page (kuma_sync, UPTIME.md step 5)"; entry_lines "$slug"; continue
       fi
       # Kuma 2.5.6 sends no message in the public heartbeats ("-"); the reason is on the monitor's page in Kuma.
       while IFS=$'\t' read -r mon ust u24 since _ msg; do
@@ -275,6 +301,7 @@ else
           *) line WARN "uptime $mon" "no check yet" ;;
         esac
       done < <(tail -n +2 <<<"$up")
+      entry_lines "$slug"
     done
   fi
 

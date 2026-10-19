@@ -13,7 +13,7 @@ The markdown is the source; nothing here repeats it. Work from the repo root, re
 - Back to the previous version after a bad deploy: `ROLLBACK.md`
 - A database back from an off-site backup: `RESTORE.md`
 - A self-hosted tool on its own domain (Umami, n8n, Uptime Kuma, Forgejo): `SERVICES.md`
-- Uptime checks for the apps and a public status page (Uptime Kuma): `UPTIME.md`
+- Uptime checks for the apps and a public status page (Uptime Kuma), also on a client's domain: `UPTIME.md`
 - Coolify, Ubuntu or Postgres major upgrades: `UPGRADE.md`
 - A new server from nothing with the databases from the backups: `REBUILD.md`
 - A server or project to a client, a colleague joining, old access removed: `HANDOVER.md`

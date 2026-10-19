@@ -22,7 +22,7 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 | back to the previous version after a bad deploy | `ROLLBACK.md` | `/vps-rollback` |
 | a database back from an off-site backup | `RESTORE.md` | `/vps-restore` |
 | a self-hosted tool on its own domain | `SERVICES.md` | `/vps-services` |
-| uptime checks and a public status page for your apps | `UPTIME.md` | `/vps-uptime` |
+| uptime checks and a public status page for your apps, also on a client's domain | `UPTIME.md` | `/vps-uptime` |
 | Coolify, Ubuntu and Postgres major upgrades | `UPGRADE.md` | `/vps-upgrade` |
 | a new server, databases from the backups | `REBUILD.md` | `/vps-rebuild` |
 | a server or project to someone else, old access removed | `HANDOVER.md` | `/vps-handover` |
@@ -37,7 +37,7 @@ version after a bad deploy), `RESTORE.md` (a database back from an off-site S3 b
 project to a client, or a colleague joining, and removing the old access), `SERVICES.md`
 (self-hosted tools as Coolify one-click services, each on its own domain), `UPTIME.md` (Uptime
 Kuma from `SERVICES.md`, its first-start pages taken over, a check per app domain and a public
-status page per project), `UPGRADE.md`
+status page per project, also on the client's domain), `UPGRADE.md`
 (Coolify, Ubuntu and Postgres major versions, each with a backup first and a check after),
 `REBUILD.md` (a new server from nothing through the phases, the databases from the off-site
 backups), `CHECKUP.md` (the monthly checkup: `checkup.sh`, what each line means, the fixes),
@@ -45,7 +45,8 @@ backups), `CHECKUP.md` (the monthly checkup: `checkup.sh`, what each line means,
 (state file, Coolify API helpers, deploy with dump and rollback point, rollback, restore, app logs,
 S3 storage and off-site backups, Coolify notifications to Discord, team members and stored keys,
 one-click services, uptime checks (the Kuma login in `kuma.env`, `kuma_init`, `kuma_sync`,
-`kuma_status`), projects and environments and the generated PROJECTS.md, staging (the
+`kuma_status`), status page domains (`dns_check`, `kuma_domain_add`, `kuma_domain_remove`),
+projects and environments and the generated PROJECTS.md, staging (the
 staging state, environment variable names, a second app, basic auth, the shared webhook
 secret, teardown), Postgres major
 versions, DNS records through the Cloudflare API, the
@@ -87,7 +88,7 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   a fake Kuma socket and fetch, prints `ALL PASSED`).
 - `bash test/status.test.sh` must print `ALL PASSED` (`status.sh` against a fake Coolify API with
   ssh and openssl stubs; seams `STATUS_SSH`, `STATUS_OPENSSL`, `STATUS_LATEST_URL`,
-  `STATUS_TIMEOUT`). The test needs GNU `date` (Linux, CI); `status.sh` itself also runs on macOS.
+  `STATUS_TIMEOUT`, `STATUS_ENTRY_URL`). The test needs GNU `date` (Linux, CI); `status.sh` itself also runs on macOS.
 - `bash test/checkup.test.sh` must print `ALL PASSED` (`checkup.sh` against the same kind of fake
   Coolify API, also serving the GitHub advisories, with ssh, openssl and `hcloud` stubs; port
   probes go to 127.0.0.1 only; seams `CHECKUP_SSH`, `CHECKUP_LOG`, `CHECKUP_RECORD`,
