@@ -2065,10 +2065,23 @@ vrun env -u VAULT_AGE bash -c ". '$REPO/lib.sh'; vault_export" </dev/null
 check "vault_export: no terminal and no VAULT_AGE: refused before age" "$rc:$out" "1:vault_export: run this in your own terminal: age asks for the passphrase there; nothing changed"
 
 V="$VH/vps-setup-vault-$(date -u +%Y%m%d).age"
-FAKE_AGE_FAIL=1 vrun vault_export
-check "vault_export: age without a terminal fails, nothing written" "$rc:$(tail -n 2 <<<"$out"):$(find "$VH" -maxdepth 1 -name '*.age*' | wc -l):$([ -e "$VPS/vault.manifest" ] && echo manifest || echo none)" \
-  "1:age: error: could not read passphrase: standard input is not a terminal, and /dev/tty is not available
-vault_export failed; nothing written. Run it in your own terminal, not through the agent: age reads the passphrase from the terminal only (VAULT.md step 2).:0:none"
+# 300 KB is more than a pipe holds, and SIGPIPE ignored (as on the CI runner): tar hits the
+# closed pipe once age has stopped and says "Error is not recoverable"; that must not show.
+head -c 300000 /dev/zero > "$VPS/big.bin"
+FAKE_AGE_FAIL=1 vrun bash -c "trap '' PIPE; . '$REPO/lib.sh'; vault_export"
+rm -f "$VPS/big.bin"
+check "vault_export: age without a terminal fails, nothing written" "$rc:$(find "$VH" -maxdepth 1 -name '*.age*' | wc -l):$([ -e "$VPS/vault.manifest" ] && echo manifest || echo none)" "1:0:none"
+has "vault_export: age's line" "$out" '^age: error: could not read passphrase: standard input is not a terminal'
+has "vault_export: our hint" "$out" '^vault_export failed; nothing written\. Run it in your own terminal, not through the agent'
+check "vault_export: tar's broken pipe not shown" "$(grep -c '^tar:' <<<"$out")" "0"
+chmod 000 "$VPS/SERVER.md"
+vrun vault_export
+if [ -r "$VPS/SERVER.md" ]; then echo "skip vault_export tar failure: root reads mode 000 files"; else
+  check "vault_export: tar fails, age fine: nothing written" "$rc:$(find "$VH" -maxdepth 1 -name '*.age*' | wc -l):$([ -e "$VPS/vault.manifest" ] && echo manifest || echo none)" "1:0:none"
+  has "vault_export: tar's own error shown" "$out" '^tar: .*SERVER\.md'
+  has "vault_export: tar failure said" "$out" '^vault_export: tar could not read the files above; nothing written$'
+fi
+chmod 600 "$VPS/SERVER.md"
 vrun vault_export "$VH/code/shop/.coolify.env"
 check "vault_export rc" "$rc" "0"
 has "vault_export: the list first" "$out" '^into the vault \(12 files, relative to '

@@ -2222,8 +2222,18 @@ vault_export() (
   echo "into the vault ($(wc -l < "$d/list" | tr -d ' ') files, relative to $HOME):"
   sed 's/^/  /' "$d/list"
   echo "age asks for a new passphrase twice, on this terminal (empty: age makes one and prints it)."
-  if ! ( umask 077; tar -C "$HOME" -cf - -T "$d/list" | "${VAULT_AGE:-age}" -p -o "$out.tmp" ); then
+  # tar's stderr goes to a file in the private temp dir: when age stops early, tar only says it
+  # lost its pipe, which is noise; it is shown when tar itself failed and age did not.
+  ( umask 077; tar -C "$HOME" -cf - -T "$d/list" 2>"$d/tar.err" | "${VAULT_AGE:-age}" -p -o "$out.tmp"
+    echo "${PIPESTATUS[0]} ${PIPESTATUS[1]}" > "$d/rc" )
+  read -r trc arc < "$d/rc" 2>/dev/null || { trc=1 arc=1; }
+  if [ "${arc:-1}" != 0 ]; then
     echo "vault_export failed; nothing written. Run it in your own terminal, not through the agent: age reads the passphrase from the terminal only (VAULT.md step 2)." >&2
+    exit 1
+  fi
+  if [ "${trc:-1}" != 0 ]; then
+    cat "$d/tar.err" >&2
+    echo "vault_export: tar could not read the files above; nothing written" >&2
     exit 1
   fi
   mv "$out.tmp" "$out" && chmod 600 "$out" || exit 1
