@@ -25,10 +25,19 @@ plan from step 2.**
 
 ## 1. Scope check
 
-Supported in this version: **Node.js apps (Next.js or a plain Node server) with a `package.json`.**
-Anything else (Python, PHP, Go, Ruby, a static site without Node, a Docker Compose stack): tell
-the user it is not supported yet and stop. Do not guess a Dockerfile for an unknown stack.
-Monorepos (workspaces, Turborepo): warn that it needs care, and continue only if the user wants to.
+Supported stacks, from the fixtures in `$SETUP_DIR/fixtures/` (`fixtures/README.md`):
+
+| Stack | Evidence | What to do |
+| --- | --- | --- |
+| Node.js (Next.js or a plain Node server) with a `package.json` | deployed on a server (phase 05, the starter) | continue |
+| Static site, Python with FastAPI, Go | a fixture in `fixtures/static`, `fixtures/python-fastapi`, `fixtures/go`, built and health-checked in CI; **not deployed on a server by this guide yet** | continue, with the fixture as the Dockerfile model |
+| Docker Compose stack | a fixture in `fixtures/compose`, built and health-checked in CI; the Coolify compose path is not written yet | tell the user it is not supported yet and stop |
+| Django, PHP, Ruby, anything else | no fixture | tell the user it is not supported yet and stop |
+
+For a fixture-backed stack that is not Node.js, write in `DEPLOY.md` that this stack has not been
+deployed through this guide before, so the first deploy is the proof. Do not guess a Dockerfile
+for a stack without a fixture. Monorepos (workspaces, Turborepo): warn that it needs care, and
+continue only if the user wants to.
 
 ## 2. Inventory (read only), then a plan the user approves
 
@@ -104,6 +113,24 @@ Use `$SETUP_DIR/starter/Dockerfile` as the model. Lessons already paid for:
   `package.json`, copy `prisma/`, and start with `prisma migrate deploy && node server.js`.
 - `.env.example` listing every variable (names and comments, no real values).
 
+Other fixture-backed stacks follow the same rules with their fixture as the model:
+
+- Static site: `fixtures/static` (nginx as a non-root user on 8080, `listen 8080` and
+  `listen [::]:8080`, the built site copied into the image). A site with a build step (Vite,
+  Astro, Hugo) adds a build stage before it and copies only the output.
+- Python with FastAPI: `fixtures/python-fastapi` (`python:3.12-slim`, a system user, a fully
+  pinned `requirements.txt` from `pip-compile`). `uvicorn --host ::` listens on IPv6 only, so the
+  proxy's IPv4 connection is refused: start through one socket with `IPV6_V6ONLY` off, as
+  `app.py` does in `dual_stack_socket`. Schema setup at start with retry-then-exit, like
+  `migrate_or_exit`; with Alembic, `alembic upgrade head` before the server starts.
+- Go: `fixtures/go` (a static binary in `distroless/static-debian12:nonroot`; `":"+PORT` listens
+  on IPv4 and IPv6). Distroless has no shell, so the `HEALTHCHECK` runs the binary itself
+  (`-healthcheck`), in exec form.
+
+Health contract for every stack: `GET /api/health` answers `200` `{"status":"ok","db":"ok"}`
+(`"db":"none"` for an app without a database) or `503` `{"status":"error","db":"error"}`, no
+error details. The `"db":"ok"` checks in `verify.sh` and phase 05 are for the starter only.
+
 ### Migrations: expand, then contract
 
 A deploy can be rolled back to the previous image in a minute (`ROLLBACK.md`); a migration
@@ -134,6 +161,10 @@ values, and check the health route returns 200. Then exercise one real flow (sig
 something). Clean up **only what you created, by name**: the two containers, the network, the
 test image, and the Postgres container's anonymous volume (`docker rm -v`). Never run
 `docker system prune`, `docker volume prune` or similar on the user's machine.
+
+`$SETUP_DIR/test/fixtures.sh` is the reference for this proof (the health answer on
+`127.0.0.1` and on `[::1]` inside the container, the image's `HEALTHCHECK`, a non-root user,
+`503` with the database stopped); read it for the commands, it runs only the fixtures.
 
 Show the user the build result and the health response. Ask before committing; commit on the
 current branch only with their go-ahead, then push to GitHub with their go-ahead.
@@ -167,6 +198,9 @@ Follow `$SETUP_DIR/phases/05-starter.md` steps 2 to 6 with these differences:
 - Naming: in `.coolify.env`, `COOLIFY_DOMAIN` means this app's URL (the classic format other
   tools read). The Coolify panel URL is `COOLIFY_URL` in `~/.config/coolify/config`.
 - Postgres only if the plan says so. Port: whatever the app listens on.
+- The build pack stays `dockerfile` for every supported stack (the application body of phase 05
+  step 4, like `app_create` in `lib.sh`). A Docker Compose stack is not supported here yet
+  (step 1).
 - Monorepo or app in a subfolder: add `base_directory:"/<folder>"` to the application body (the
   Dockerfile is then read from that folder). The landing of this very guide is deployed that way
   from `/starter`.

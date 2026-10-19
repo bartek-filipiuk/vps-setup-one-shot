@@ -39,7 +39,8 @@ Run each step, write down what it says, then go to the symptom in step 2.
 
 2. The app from outside, once with and once without the certificate check (this splits a TLS
    problem from an app problem). `/api/health` is the starter's route; an app from PREPARE-APP
-   has its own (PREPARE-APP step 3).
+   has its own (PREPARE-APP step 3). In the body, `"db":"none"` is a healthy answer for an app
+   without a database (like `fixtures/static`), not a fault.
 
    ```
    . ./lib.sh; H="https://$(state_get APP_DOMAIN)/api/health"

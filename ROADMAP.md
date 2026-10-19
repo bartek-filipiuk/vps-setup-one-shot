@@ -127,6 +127,8 @@ Rules that apply to every item:
 - **R08 More stacks, by fixture.** Each supported stack gets a sample app in `fixtures/` that the
   harness deploys: static site, Docker Compose stack, Python (FastAPI, Django), Go. A stack without
   a green fixture stays "not supported yet". Done when: three stacks beyond Node are green.
+  (Fixtures for static, FastAPI, Go and compose built and health-checked in CI; none deployed on
+  a server yet. Django waits for the first three to go green.)
 - **R09 Projects and clients.** One Coolify project per client or product, one environment per
   stage, names and domains derived from the project name, `PROJECTS.md` listing what runs where,
   `status.sh` grouped by project. `project_ensure`, `env_ensure`, `project_ctx` (an old setup
