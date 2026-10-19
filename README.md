@@ -118,6 +118,13 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   own domain: Umami, n8n, Uptime Kuma or Forgejo, with a DNS gate, the HTTPS wait, the first
   login, what is and is not backed up, and removal only on your yes. `status.sh` shows a line
   per service.
+- `UPTIME.md` sets up Uptime Kuma through `SERVICES.md`, takes over its two first-start pages
+  (database type, admin) from the server before the domain answers, with a generated password in
+  `~/.config/vps-setup/kuma.env` (mode 600), then adds one HTTP check per app domain and a public
+  status page per project (`kuma_sync`, idempotent, never deletes). Kuma 2.x has no write API,
+  so `kuma.js` runs inside the Kuma container and drives it through socket.io like Kuma's own UI.
+  `status.sh` gets an Uptime section read from the page's public JSON. The checks run on the same
+  server, so a dead server is not reported by Kuma.
 - `UPGRADE.md` keeps the server current: Coolify (backups first, the release notes checked
   against the API calls this guide uses, then Coolify's own upgrade script), Ubuntu updates and
   the reboot window, and a Postgres major version moved into a new database with the old one
@@ -201,6 +208,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   created with them. `GET /services` was checked on a live Coolify 4.3.23; creating a service
   with its domain, delete and the backups of a service come from the 4.3.23 source and are
   marked `[verify]`.
+- `UPTIME.md` (R06b), `kuma_env_init`, `kuma_init`, `kuma_targets`, `kuma_sync`, `kuma_status`,
+  `kuma.js` and the `status.sh` Uptime section are tested against a fake Coolify API, a stubbed
+  `ssh`, a fake `docker` and a fake Kuma socket only (`test/lib.test.sh`, `test/status.test.sh`,
+  `test/kuma.test.js`) and have **not been run on a real server yet**; no Kuma has been set up
+  with them. The socket events and HTTP answers come from the Uptime Kuma 2.0 source and are
+  marked `[verify]` in `references/uptime-kuma.md`.
 - Projects and clients (R09: `project_ensure`, `env_ensure`, `project_ctx`,
   `app_domain_default`, `domain_in_use`, `projects_inventory`, `projects_md`, the `status.sh`
   group lines and the changes to phase 05, `PREPARE-APP.md` and `SERVICES.md`) are tested against
@@ -258,6 +271,6 @@ Tested with: Coolify 4.3.23, Ubuntu 24.04, Next.js 16.3, Postgres 17.
 
 ## Not included yet
 
-Preview environments per pull request (R21), uptime checks from outside with a status page (R06b), deploying apps
+Preview environments per pull request (R21), uptime checks from outside the server, deploying apps
 that are not Node.js (fixtures exist, see Status), Git hosts other than GitHub, DNS through the API for providers other than Cloudflare. What comes next, in which order
 and how we will know it is done: [ROADMAP.md](ROADMAP.md).

@@ -45,6 +45,7 @@ action_for() {
     projects) echo "PREPARE-APP.md step 5" ;;
     cert) echo "DOCTOR.md D" ;;
     service|services) echo "SERVICES.md" ;;
+    uptime) echo "UPTIME.md" ;;
     backup) [ "$w2" = rate ] && echo "CHECKUP.md 3e" || echo "phases/06-handover.md step 1" ;;
     off-site) case $1 in *"not reported"*) echo "RESTORE.md step 3" ;; *) echo "phases/06-handover.md step 1" ;; esac ;;
     databases) echo "phases/06-handover.md step 1" ;;

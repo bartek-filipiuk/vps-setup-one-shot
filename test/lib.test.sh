@@ -39,6 +39,31 @@ SERVICES = {"svc-umami": {"uuid": "svc-umami", "name": "umami", "service_type": 
   "svc-kuma": {"uuid": "svc-kuma", "name": "uptime-kuma", "service_type": "uptime-kuma", "status": "exited", "environment_id": 3,
     "applications": [{"uuid": "sa2", "name": "uptime-kuma", "fqdn": "https://up.example.com", "status": "exited", "restart_limit_reached": True}],
     "databases": []}}
+# Kuma services for UPTIME.md (R06b): only GET /services/{uuid} serves them, so the lists above stay as they are
+KUMA_SVCS = {"svc-kuma-up": {"uuid": "svc-kuma-up", "name": "uptime-kuma", "service_type": "uptime-kuma", "status": "running:healthy",
+    "environment_id": 1, "applications": [{"uuid": "sa3", "name": "uptime-kuma", "fqdn": "https://Status.Example.com:443/",
+    "status": "running:healthy", "restart_limit_reached": False}], "databases": []},
+  "svc-kuma-nodom": {"uuid": "svc-kuma-nodom", "name": "kuma2", "service_type": "uptime-kuma", "status": "running:healthy",
+    "environment_id": 1, "applications": [{"uuid": "sa4", "name": "uptime-kuma", "fqdn": None, "status": "running:unknown"}], "databases": []},
+  "svc-umami2": {"uuid": "svc-umami2", "name": "notkuma", "service_type": "umami", "status": "running:healthy", "environment_id": 1,
+    "applications": [{"uuid": "sa5", "name": "umami", "fqdn": "https://u.example.com", "status": "running:healthy"}], "databases": []}}
+# Kuma's public status page JSON (R06b), as the 2.x source builds it [verify]: GET /api/status-page/<slug> and
+# /api/status-page/heartbeat/<slug>; status 0 down, 1 up, 2 pending, 3 maintenance. No token.
+KUMA_PAGES = {"acme": {"config": {"slug": "acme", "title": "Acme"}, "incident": None, "maintenanceList": [],
+    "publicGroupList": [{"id": 1, "name": "Acme", "weight": 1, "monitorList": [
+        {"id": 1, "name": "shop", "type": "http"}, {"id": 2, "name": "starter", "type": "http"},
+        {"id": 3, "name": "fresh", "type": "http"}, {"id": 4, "name": "slow\tone", "type": "http"}]},
+      {"id": 2, "name": "Infra", "weight": 2, "monitorList": [{"id": 1, "name": "shop", "type": "http"}, {"id": 5, "name": "db", "type": "http"}]}]},
+  "empty": {"config": {"slug": "empty"}, "incident": None, "maintenanceList": [], "publicGroupList": []},
+  "odd": {"msg": "not a page"}}
+KUMA_BEATS = {"acme": {"heartbeatList": {
+    "1": [{"status": 1, "time": "2026-10-19 10:00:00.000", "msg": "200 - OK", "ping": 20}, {"status": 1, "time": "2026-10-19 09:59:00.000", "msg": "200 - OK", "ping": 21}],
+    "2": [{"status": 1, "time": "2026-10-19 09:58:00.000", "msg": "200 - OK", "ping": 20}, {"status": 0, "time": "2026-10-19 09:59:00.000", "msg": "connect ECONNREFUSED", "ping": None},
+          {"status": 0, "time": "2026-10-19 10:00:00.000", "msg": "Request failed with status code 502", "ping": None}],
+    "4": [{"status": 2, "time": "2026-10-19 10:00:00.000", "msg": "", "ping": None}],
+    "5": [{"status": 3, "time": "2026-10-19 10:00:00.000", "msg": "", "ping": None}]},
+    "uptimeList": {"1_24": 0.9984, "2_24": 0.5, "5_24": 1}},
+  "empty": {"heartbeatList": {}, "uptimeList": {}}, "odd": {"heartbeatList": {}, "uptimeList": {}}}
 # projects (R09) as the live 4.3.23 GET /projects/{uuid} answers (fields trimmed); environments by numeric id.
 # "twins" twice: Coolify does not keep project names unique [verify].
 PROJECTS = {
@@ -163,6 +188,11 @@ class H(BaseHTTPRequestHandler):
             if self.path.startswith("/gh/limit"): return self.send(403, {"message": "API rate limit exceeded"})
             if self.path.startswith("/gh/odd"): return self.send(200, {"message": "not a list"})
             return self.send(200, ADVISORIES)
+        m = re.match(r"^/api/status-page/(heartbeat/)?([a-z0-9-]+)$", self.path)
+        if m:   # Kuma's public status page JSON (R06b), no token
+            seq("kuma GET " + self.path)
+            d = (KUMA_BEATS if m.group(1) else KUMA_PAGES).get(m.group(2))
+            return self.send(200, d) if d is not None else self.send(404, {"msg": "Not Found"})
         if self.headers.get("Authorization") != "Bearer 3|abc=def":
             return self.send(401, {"message": "Unauthenticated."})
         p = self.path.removeprefix("/api/v1")
@@ -239,6 +269,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/services": return self.send(200, list(SERVICES.values()))
         if p.startswith("/services/"):
             u = p.split("/")[2]
+            if u in KUMA_SVCS: return self.send(200, KUMA_SVCS[u])
             return self.send(200, SERVICES[u]) if u in SERVICES else self.send(404, {"message": "Service not found."})
         if p.startswith("/s3-storages/"): return self.send(200, storages[p.split("/")[2]])
         if p.startswith("/databases/") and p.endswith("/backups"):
@@ -442,6 +473,18 @@ case "$*" in
     printf 'PGDMP fake object %s\n' "${12}" > "${6%:/out}/${13#/out/}" ;;
   "images "*) [ "${FAKE_NO_HELPER:-0}" = 1 ] || printf '%s\n' ghcr.io/coollabsio/coolify-helper:1.0.9 ghcr.io/coollabsio/coolify-helper:1.0.17 ;;
   "ps -q -f name="*) [ "${FAKE_NO_CONTAINER:-0}" = 1 ] || echo cid ;;
+  "exec -i cid node -e "*)
+    # kuma.js in the Kuma container (R06b): the plan on stdin, the script as node's -e argument
+    printf '%s\n' "$*" > "$HOME/kuma.argv"; cat > "$HOME/kuma.stdin"
+    case ${FAKE_KUMA:-sync_ok} in
+      init_ok) echo '{"ok":true,"db_setup":true,"admin_created":true}' ;;
+      init_again) echo '{"ok":true,"db_setup":false,"admin_created":false}' ;;
+      init_exists) echo '{"ok":false,"msg":"admin exists and kuma.env does not open it (authIncorrectCreds)"}'; exit 1 ;;
+      sync_ok) echo '(node:1) a warning on stderr' >&2; echo '{"ok":true,"added":["shop (shop.acme.example.com)"],"kept":["shop (www.shop.example.com)"],"page":"/status/acme-corp","groups":2}' ;;
+      sync_again) echo '{"ok":true,"added":[],"kept":["shop (shop.acme.example.com)","shop (www.shop.example.com)"],"page":"/status/acme-corp","groups":1}' ;;
+      tfa) echo '{"ok":false,"msg":"2FA is on for the Kuma admin; this script cannot log in with it."}'; exit 1 ;;
+      garbage) echo "node:internal/modules/cjs/loader: Cannot find module" >&2; exit 1 ;;
+    esac ;;
   *pg_database_size*) echo "${FAKE_DB_SIZE:-4096}" ;;
   *" pg_dump "*) [ "${FAKE_PG_DUMP_FAIL:-0}" = 1 ] && exit 1; [ "${FAKE_PG_DUMP_EMPTY:-0}" = 1 ] && exit 0; printf 'PGDMP fake dump: %s\n' "$*" ;;
   *pg_restore*) cat >/dev/null; [ "${FAKE_PG_RESTORE_FAIL:-0}" = 1 ] && { echo "pg_restore: error: fake" >&2; exit 1; }; echo "pg_restore done" ;;
@@ -1062,7 +1105,7 @@ check "s3 list from an app's state: storage uuid from the setup state" "$rc:$(se
 
 # rebuild_inventory: read only; survivors, the old server's keys, the commands
 RS="$HOME/rebuild.state"
-printf 'PROVIDER=hetzner\nDOMAIN=example.com\nVPS_IP=203.0.113.9\nADMIN_REGISTERED=1\nDB_UUID=oldpg1\nAPP_UUID=app1\nHOOK_ID=42\nWEBHOOK=github\nS3_BUCKET=my-backups\nS3_STORAGE_UUID=s3-1\nSERVICE_UMAMI_UUID=svc1\nKEY_UUID=\nHANDOVER_DONE=1\nAPP_DIR=/home/u/my-landing\n' > "$RS"
+printf 'PROVIDER=hetzner\nDOMAIN=example.com\nVPS_IP=203.0.113.9\nADMIN_REGISTERED=1\nDB_UUID=oldpg1\nAPP_UUID=app1\nHOOK_ID=42\nWEBHOOK=github\nS3_BUCKET=my-backups\nS3_STORAGE_UUID=s3-1\nSERVICE_UMAMI_UUID=svc1\nKEY_UUID=\nHANDOVER_DONE=1\nAPP_DIR=/home/u/my-landing\nUPTIME_SERVICE=uptime-kuma\nUPTIME_URL=https://status.example.com\nUPTIME_PAGES=acme\n' > "$RS"
 before=$(cksum < "$RS"); cfg_before=$(cksum < "$COOLIFY_CONFIG"); ls_before=$(ls -A "$(dirname "$COOLIFY_CONFIG")" "$HOME")
 out=$(VPS_SETUP_STATE=$RS VPS_STATE=$RS rebuild_inventory 2>&1); rc=$?
 d=$(date -u +%Y%m%d)
@@ -1072,6 +1115,7 @@ survives (kept as is):
   DOMAIN=example.com
   S3_BUCKET=my-backups
   APP_DIR=/home/u/my-landing
+  UPTIME_URL=https://status.example.com
 belongs to the old server (cleared before phase 01):
   VPS_IP=203.0.113.9
   ADMIN_REGISTERED=1
@@ -1082,6 +1126,8 @@ belongs to the old server (cleared before phase 01):
   S3_STORAGE_UUID=s3-1
   SERVICE_UMAMI_UUID=svc1
   HANDOVER_DONE=1
+  UPTIME_SERVICE=uptime-kuma
+  UPTIME_PAGES=acme
 old database: oldpg1; its backups: s3_backup_list oldpg1 (the copy below keeps the uuid)
 commands, after the user's yes (rebuild_inventory changed nothing):
   cp -p $RS $RS.before-rebuild-$d
@@ -1094,6 +1140,8 @@ commands, after the user's yes (rebuild_inventory changed nothing):
   state_set S3_STORAGE_UUID ''
   state_set SERVICE_UMAMI_UUID ''
   state_set HANDOVER_DONE ''
+  state_set UPTIME_SERVICE ''
+  state_set UPTIME_PAGES ''
   mv $COOLIFY_CONFIG $COOLIFY_CONFIG.before-rebuild-$d"
 check "rebuild inventory writes nothing" "$(cksum < "$RS"):$(cksum < "$COOLIFY_CONFIG"):$(ls -A "$(dirname "$COOLIFY_CONFIG")" "$HOME")" "$before:$cfg_before:$ls_before"
 printf '# old server\n' > "$HOME/SERVER.md"; printf '# Projects\n' > "$HOME/PROJECTS.md"
@@ -1580,9 +1628,170 @@ check "staging_teardown 404: states cleared" "$(VPS_STATE=$SS state_get APP_UUID
 check "rebuild clears STAGING_APP_UUID" "$(rebuild_clears STAGING_APP_UUID && echo yes)" "yes"
 check "staging: argv log has the env POSTs" "$(grep -c '^curl .*/applications/a-new/envs' "$HOME/argv.log" | awk '{print ($1 > 0) ? "yes" : "no"}')" "yes"
 
+# uptime checks (R06b): kuma.env, kuma_init, kuma_targets, kuma_sync, kuma_status; kuma.js runs in the
+# fake docker (its plan on the ssh stdin and its own stdin, never on a command line). Own state file.
+VPS_STATE=$HOME/kuma.state
+KE="$HOME/.config/vps-setup/kuma.env"; : > "$HOME/seq.log"
+s3run kuma_env_init
+check "kuma_env_init rc" "$rc" "0"
+check "kuma_env_init output: the path, no password" "$out" "wrote $KE (mode 600): the Kuma admin login. Read it in your own terminal when you log in: cat $KE"
+check "kuma_env_init: mode 600, admin, a 32-character password" \
+  "$(stat -c %a "$KE"):$(kuma_cred KUMA_USER):$(kuma_cred KUMA_PASSWORD | wc -c)" "600:admin:33"
+case "$out" in *"$(kuma_cred KUMA_PASSWORD)"*) check "kuma_env_init: password not printed" printed hidden ;; *) check "kuma_env_init: password not printed" ok ok ;; esac
+before=$(cksum < "$KE"); s3run kuma_env_init
+check "kuma_env_init twice: refused, file unchanged" "$rc:$out:$(cksum < "$KE")" "1:$KE exists already; nothing changed (Kuma keeps the password in it):$before"
+( umask 077; printf 'KUMA_USER=admin\nKUMA_PASSWORD=kPW-SECRET+/xyz=1|2\n' > "$KE" )
+check "kuma_env_check ok" "$(kuma_env_check 2>&1; echo $?)" "0"
+chmod 644 "$KE"; s3run kuma_env_check
+check "kuma_env_check: mode 644 refused" "$rc:$out" "1:refusing $KE: mode 644, must be 600 (chmod 600 $KE)"
+chmod 600 "$KE"; cp -p "$KE" "$KE.good"
+( umask 077; printf 'KUMA_USER=admin\n' > "$KE" ); s3run kuma_env_check
+check "kuma_env_check: missing password" "$rc:$out" "1:$KE needs a KUMA_USER= and a KUMA_PASSWORD= line"
+( umask 077; printf 'KUMA_USER=admin\nKUMA_PASSWORD=a"b\n' > "$KE" ); s3run kuma_env_check
+check "kuma_env_check: quote in the password" "$rc:$out" "1:KUMA_PASSWORD in $KE contains a quote, a backslash or a control character; generate a new file with kuma_env_init"
+rm -f "$KE"; s3run kuma_init uptime-kuma
+check "kuma_init without kuma.env" "$rc:$out" "1:no Kuma login: $KE is missing; the user runs kuma_env_init in their own terminal (UPTIME.md step 3)"
+mv "$KE.good" "$KE"
+
+: > "$HOME/seq.log"
+s3run kuma_init uptime-kuma
+check "kuma_init without the service key" "$rc:$out" "1:no SERVICE_UPTIME_KUMA_UUID in $HOME/kuma.state; create Kuma first (UPTIME.md step 2)"
+s3run kuma_init 'Up Kuma'
+check "kuma_init bad name" "$rc:$out" "1:not a service name: 'Up Kuma'"
+state_set SERVICE_UPTIME_KUMA_UUID svc-kuma
+s3run kuma_init uptime-kuma
+check "kuma_init: Kuma exited" "$rc:$out" "1:Kuma is not running yet (exited); wait a minute and run this again (UPTIME.md step 3)"
+state_set SERVICE_NOTKUMA_UUID svc-umami2; s3run kuma_init notkuma
+check "kuma_init: not a Kuma service" "$rc:$out" "1:service notkuma has no uptime-kuma application; is it an uptime-kuma service?"
+state_set SERVICE_KUMA2_UUID svc-kuma-nodom; s3run kuma_init kuma2
+check "kuma_init: no https domain" "$rc:$out" "1:service kuma2 has no https domain; SERVICES.md step 3 sets it"
+check "kuma_init refusals: no ssh" "$(grep -c '^ssh$' "$HOME/seq.log")" "0"
+state_set SERVICE_UPTIME_KUMA_UUID svc-kuma-up; : > "$HOME/docker.log"; rm -f "$HOME/kuma.stdin" "$HOME/kuma.argv"
+FAKE_KUMA=init_ok s3run kuma_init uptime-kuma
+check "kuma_init rc:output" "$rc:$out" "0:Kuma database set up (SQLite)
+admin admin created; the password is in $KE
+recorded UPTIME_SERVICE=uptime-kuma, UPTIME_URL=https://status.example.com; next: the HTTPS wait (UPTIME.md step 4)"
+check "kuma_init: state" "$(state_get UPTIME_SERVICE) $(state_get UPTIME_URL)" "uptime-kuma https://status.example.com"
+check "kuma_init: ssh command" "$(cat "$HOME/ssh.args")" "-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new root@203.0.113.9 sh -s -- uptime-kuma-svc-kuma-up"
+has "kuma_init: exact container match" "$(cat "$HOME/docker.log")" '^docker ps -q -f name=\^/\?uptime-kuma-svc-kuma-up\$$'
+check "kuma_init: the plan on kuma.js's stdin" "$(cat "$HOME/kuma.stdin")" '{"action":"init","user":"admin","password":"kPW-SECRET+/xyz=1|2"}'
+check "kuma_init: kuma.js is node's -e script" "$(head -n 2 "$HOME/kuma.argv")" "exec -i cid node -e // kuma.js: drives Uptime Kuma 2.x from inside its own container (UPTIME.md; lib.sh kuma_run).
+// Kuma 2.x has no REST API for writes: the web UI talks socket.io, and so does this script,"
+check "kuma_init: the password only inside the PLAN heredoc of the ssh stdin" \
+  "$(grep -c 'kPW-SECRET' "$HOME/ssh.stdin"):$(sed -n "/<<'PLAN'\$/,/^PLAN\$/p" "$HOME/ssh.stdin" | grep -c 'kPW-SECRET')" "1:1"
+check "kuma_init: password in no argv (ssh, docker, kuma.js)" "$(grep -c 'kPW-SECRET' "$HOME/ssh.args" "$HOME/kuma.argv" "$HOME/docker.log" | grep -vc ':0$')" "0"
+check "kuma_init: server temp dir deleted" "$(ls -A "$HOME/srvtmp")" ""
+FAKE_KUMA=init_again s3run kuma_init uptime-kuma
+check "kuma_init again" "$rc:$(head -n 1 <<<"$out")" "0:already initialised: the admin in $KE logs in"
+FAKE_KUMA=init_exists s3run kuma_init uptime-kuma
+check "kuma_init: admin made by someone else" "$rc:$out" "1:kuma_init: admin exists and kuma.env does not open it (authIncorrectCreds)
+Someone created the Kuma admin before kuma_init did. If it was not the user, reset it (UPTIME.md step 3, human step)."
+FAKE_KUMA=garbage s3run kuma_init uptime-kuma
+check "kuma_init: no JSON from kuma.js" "$rc:$out" "1:kuma.js gave no result: node:internal/modules/cjs/loader: Cannot find module"
+FAKE_NO_CONTAINER=1 s3run kuma_init uptime-kuma
+check "kuma_init: no container" "$rc:$out" "1:kuma.js gave no result: no running container uptime-kuma-svc-kuma-up (is Kuma up? service_status)"
+SSH_STUB_FAIL=1 s3run kuma_init uptime-kuma
+check "kuma_init: server unreachable" "$rc:$out" "1:kuma.js gave no result: ssh: connect to host 203.0.113.9 port 22: Connection refused"
+
+# kuma_targets: the https hosts of the project's apps in its environment, Kuma's own host left out
+state_set PROJECT_UUID p-acme; state_set PROJECT_NAME "Acme Corp"
+s3run kuma_targets
+check "kuma_targets: Acme production, two hosts, lower case, port and path dropped" "$rc:$out" "0:$(printf 'shop (shop.acme.example.com)\thttps://shop.acme.example.com')
+$(printf 'shop (www.shop.example.com)\thttps://www.shop.example.com')"
+VPS_ENV=staging s3run kuma_targets
+check "kuma_targets: VPS_ENV=staging" "$rc:$out" "0:$(printf 'shop\thttps://staging.shop.acme.example.com')"
+VPS_PROJECT=starter s3run kuma_targets
+check "kuma_targets: VPS_PROJECT=starter" "$rc:$out" "0:$(printf 'starter\thttps://starter.example.com')"
+state_set UPTIME_URL https://WWW.shop.example.com; s3run kuma_targets
+check "kuma_targets: Kuma's own host left out" "$rc:$out" "0:$(printf 'shop\thttps://shop.acme.example.com')"
+state_set UPTIME_URL https://status.example.com
+printf '%s' '{"projects":[],"resources":[{"kind":"app","name":"web","project_uuid":"p1","environment":"production","fqdn":"http://plain.example.com, https://Web.Example.com., https://[2001:db8::1]:443"},
+  {"kind":"app","name":"nodomain","project_uuid":"p1","environment":"production","fqdn":""},
+  {"kind":"service","name":"kuma","project_uuid":"p1","environment":"production","fqdn":"https://kuma.example.com"},
+  {"kind":"app","name":"other","project_uuid":"p2","environment":"production","fqdn":"https://other.example.com"}]}' > "$HOME/pj.json"
+out=$(projects_json() { cat "$HOME/pj.json"; }; project_ctx() { echo "p1 production"; }; kuma_targets 2>&1); rc=$?
+check "kuma_targets: http, no domain, services and other projects skipped" "$rc:$out" "0:$(printf 'web ([2001:db8::1])\thttps://[2001:db8::1]')
+$(printf 'web (web.example.com)\thttps://web.example.com')"
+out=$(projects_json() { return 1; }; kuma_targets 2>&1); rc=$?
+check "kuma_targets: Coolify unreadable" "$rc" "1"
+
+# kuma_page_default and kuma_sync
+check "kuma_page_default" "$(kuma_page_default)" "$(printf 'acme-corp\tAcme Corp')"
+check "kuma_page_default: VPS_PROJECT and a stage" "$(VPS_PROJECT=Shop VPS_ENV=staging kuma_page_default)" "$(printf 'shop-staging\tShop (staging)')"
+: > "$HOME/seq.log"
+for sl in Acme 'a b' -acme acme- 'a--b' 'a/../b' "$(printf 'x%.0s' $(seq 1 64))"; do
+  s3run kuma_sync "$sl" Acme
+  case $out in "not a status page slug: '$sl'"*|"status page slug longer than 63 characters: '$sl'") check "kuma_sync: slug '${sl:0:12}' refused" ok ok ;;
+    *) check "kuma_sync: slug '${sl:0:12}' refused" "$rc:$out" "1:not a status page slug ..." ;; esac
+done
+s3run kuma_sync acme "$(printf 'a\tb')"
+check "kuma_sync: control character in the title" "$rc:$out" "1:not a usable page title: '$(printf 'a\tb')' (at most 100 characters, no control characters)"
+check "kuma_sync: refused input sent nothing" "$(cat "$HOME/seq.log")" ""
+state_set UPTIME_SERVICE ''; s3run kuma_sync
+check "kuma_sync before kuma_init" "$rc:$out" "1:no UPTIME_SERVICE or UPTIME_URL in $HOME/kuma.state; run kuma_init first (UPTIME.md step 3)"
+state_set UPTIME_SERVICE uptime-kuma; rm -f "$HOME/kuma.stdin"
+VPS_ENV=nostage s3run kuma_sync
+check "kuma_sync: nothing to monitor" "$rc:$out" "1:no application with an https domain in this project and environment; nothing to monitor"
+check "kuma_sync: nothing to monitor, no ssh" "$(test -e "$HOME/kuma.stdin" && echo ran || echo none)" "none"
+: > "$HOME/docker.log"
+FAKE_KUMA=sync_ok s3run kuma_sync
+check "kuma_sync rc:output" "$rc:$out" "0:monitors added: shop (shop.acme.example.com)
+monitors kept: shop (www.shop.example.com)
+status page: https://status.example.com/status/acme-corp (2 groups)
+first checks within a minute; then: kuma_status acme-corp (UPTIME.md step 5)"
+check "kuma_sync: exact plan" "$(cat "$HOME/kuma.stdin")" '{"action":"sync","user":"admin","password":"kPW-SECRET+/xyz=1|2","monitors":[{"name":"shop (shop.acme.example.com)","url":"https://shop.acme.example.com"},{"name":"shop (www.shop.example.com)","url":"https://www.shop.example.com"}],"page":{"slug":"acme-corp","title":"Acme Corp","description":"Status of Acme Corp"},"group":"Acme Corp"}'
+check "kuma_sync: page recorded" "$(state_get UPTIME_PAGES)" "acme-corp"
+check "kuma_sync: password in no argv" "$(grep -c 'kPW-SECRET' "$HOME/ssh.args" "$HOME/kuma.argv" "$HOME/docker.log" | grep -vc ':0$')" "0"
+FAKE_KUMA=sync_again s3run kuma_sync
+check "kuma_sync again" "$rc:$(sed -n 1,3p <<<"$out")" "0:monitors added: none
+monitors kept: shop (shop.acme.example.com), shop (www.shop.example.com)
+status page: https://status.example.com/status/acme-corp (1 group)"
+FAKE_KUMA=sync_ok s3run kuma_sync shop-status "Shop"
+has "kuma_sync with a slug and title" "$(cat "$HOME/kuma.stdin")" '"page":\{"slug":"shop-status","title":"Shop","description":"Status of Shop"\},"group":"Shop"\}$'
+check "kuma_sync: second page recorded once" "$(kuma_sync shop-status Shop >/dev/null 2>&1; state_get UPTIME_PAGES)" "acme-corp shop-status"
+FAKE_KUMA=tfa s3run kuma_sync
+check "kuma_sync: 2FA" "$rc:$out" "1:kuma_sync: 2FA is on for the Kuma admin; this script cannot log in with it."
+FAKE_KUMA=init_exists s3run kuma_sync
+check "kuma_sync: wrong password" "$rc:$out" "1:kuma_sync: admin exists and kuma.env does not open it (authIncorrectCreds)"
+check "kuma_sync: server temp dir deleted" "$(ls -A "$HOME/srvtmp")" ""
+
+# kuma_status: the public JSON of a page, no login, no Kuma password
+state_set UPTIME_URL "http://127.0.0.1:$PORT"; : > "$HOME/seq.log"
+s3run kuma_status acme
+T=$(printf '\t')
+check "kuma_status: TSV, a monitor in two groups once, exit 1 for a down monitor" "$rc:$out" "1:monitor${T}status${T}uptime_24h${T}since${T}last_check${T}msg
+shop${T}up${T}99.8%${T}2026-10-19 09:59:00.000${T}2026-10-19 10:00:00.000${T}200 - OK
+starter${T}down${T}50%${T}2026-10-19 09:59:00.000${T}2026-10-19 10:00:00.000${T}Request failed with status code 502
+fresh${T}none${T}n/a${T}-${T}-${T}-
+slow one${T}pending${T}n/a${T}2026-10-19 10:00:00.000${T}2026-10-19 10:00:00.000${T}-
+db${T}maintenance${T}100%${T}2026-10-19 10:00:00.000${T}2026-10-19 10:00:00.000${T}-"
+check "kuma_status: the two public calls only" "$(cat "$HOME/seq.log")" "kuma GET /api/status-page/acme
+kuma GET /api/status-page/heartbeat/acme"
+s3run kuma_status empty
+check "kuma_status: empty page" "$rc:$out" "0:monitor${T}status${T}uptime_24h${T}since${T}last_check${T}msg"
+s3run kuma_status odd
+check "kuma_status: not a page" "$rc:$out" "2:status page odd at http://127.0.0.1:$PORT: unexpected answer"
+s3run kuma_status nope
+check "kuma_status: no such page" "$rc:${out%%:*}" "2:could not read status page nope at http"
+s3run kuma_status 'a b'
+check "kuma_status: bad slug" "$rc:$out" "2:not a status page slug: 'a b' (lower-case letters, digits and single dashes, like acme)"
+state_set UPTIME_URL ''; s3run kuma_status acme
+check "kuma_status without UPTIME_URL" "$rc:$out" "2:no UPTIME_URL in $HOME/kuma.state; UPTIME.md step 3"
+check "rebuild clears UPTIME_SERVICE and UPTIME_PAGES, keeps UPTIME_URL" \
+  "$(rebuild_clears UPTIME_SERVICE && echo y)$(rebuild_clears UPTIME_PAGES && echo y)$(rebuild_clears UPTIME_URL || echo n)" "yyn"
+if command -v node >/dev/null 2>&1; then
+  check "node --check kuma.js" "$(node --check "$REPO/kuma.js" 2>&1; echo $?)" "0"
+  out=$(node "$REPO/test/kuma.test.js" 2>&1); rc=$?
+  check "kuma.js unit tests (test/kuma.test.js)" "$rc:$(tail -n 1 <<<"$out")" "0:ALL PASSED"
+  [ "$rc" = 0 ] || printf '%s\n' "$out" | grep -v '^ok '
+else
+  echo "skip kuma.js checks: node not found"
+fi
+VPS_STATE=$VPS_SETUP_STATE
+
 # the credentials never appear on a command line (jq, curl, ssh, docker) or in any output
-leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-|v-SECRET-1|ba-SECRET-pass1|wh-sec-0123|3\|abc=def' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
-check "s3 creds, webhook URL, Coolify and Cloudflare tokens and staging secrets in no argv and no output" "${leaks:-none}" "none"
+leaks=$(grep -lE 's3SeCrEt|AKFAKEKEY|wh-SECRET|api/webhooks|FAKE-cf-|v-SECRET-1|ba-SECRET-pass1|wh-sec-0123|kPW-SECRET|3\|abc=def' "$HOME/argv.log" "$HOME/ssh.args" "$HOME/docker.log" "$HOME/outputs.log" 2>/dev/null)
+check "s3 creds, webhook URL, Coolify and Cloudflare tokens, staging secrets and the Kuma password in no argv and no output" "${leaks:-none}" "none"
 has "capi: Coolify token handed to curl as a config on a pipe" "$(cat "$HOME/argv.log")" '^curl .*/api/v1/.* -K /dev/fd/[0-9]+ '
 check "argv log was written" "$(grep -c '^jq ' "$HOME/argv.log" | awk '{print ($1 > 10) ? "yes" : "no"}')" "yes"
 PATH=${PATH#"$HOME/argvbin:"}; unset TMPDIR BACKUP_POLL_SECONDS

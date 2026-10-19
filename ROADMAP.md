@@ -72,6 +72,9 @@ Rules that apply to every item:
   its own domain (on Coolify 4.3.23 the API sets it, read in the source, not yet seen on a
   server). Done when: the harness stops the starter app, Kuma marks it down, and the status page
   on its own domain shows it.
+  `UPTIME.md`, `kuma.js` (runs inside the Kuma container through Kuma's own socket.io-client),
+  `kuma_init`, `kuma_sync`, `kuma_status` in `lib.sh`, the `status.sh` Uptime section.
+  (Runbook, script and fake-API tests done; not run on a server yet.)
 - **R12 Handover pack.** `HANDOVER.md` produces what a client or colleague needs to take over a
   project or a server: a Coolify team invite with the right role, a scoped token where Coolify
   supports it, `SERVER.md` for that project, DNS and repo ownership steps, and the checklist that
@@ -149,7 +152,7 @@ Rules that apply to every item:
 
 - **R21 Preview deployment per pull request**, if Coolify's GitHub App source becomes drivable
   without the UI.
-- **R22 A status page per client**, from the Uptime Kuma pages in R06b, with the client's domain.
+- **R22 A status page per client**, from the per-project pages and `domainNameList` in R06b, with the client's domain.
 - **R23 Secrets vault on the user's machine** (`age` or `sops`) with a rotation runbook.
 - **R24 Starter variants:** the same plumbing with auth and transactional mail; a cron-and-queue
   worker example as a second app from the same repo.

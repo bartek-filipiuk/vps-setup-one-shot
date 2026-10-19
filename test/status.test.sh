@@ -18,6 +18,7 @@ python3 - "$PORT" "$HOME/scenario.json" "$TOKEN" <<'EOF' &
 import json, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 port, path, token = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+def pick2(h, v): return h.send(200, v) if v is not None else h.send(404, {"msg": "Not Found"})
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body):
@@ -25,6 +26,10 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(body).encode())
     def do_GET(self):
         s = json.load(open(path))
+        if self.path.startswith("/api/status-page/"):   # Kuma's public status page JSON (R06b), no token
+            q = self.path.split("/")[3:]
+            k = s.get("kuma", {})
+            return pick2(self, (k.get("beats", {}).get(q[1]) if q[0] == "heartbeat" else k.get("pages", {}).get(q[0])))
         if self.path == "/latest":
             return self.send(200, s["latest"]) if s.get("latest") else self.send(503, {})
         if s.get("reject_token") or self.headers.get("Authorization") != "Bearer " + token:
@@ -190,9 +195,9 @@ expect "services unreadable" 1 '^WARN +services +n/a \(could not read services\)
 FAKE_CERT_DAYS=10 expect "service cert 10d" 1 '^WARN +cert stats\.example\.test +expires in (9|10) days'
 
 # projects (R09): apps and services grouped under "project <name> / <environment>" lines; the
-# WARN and FAIL lines, labels and exit codes stay as they were
+# WARN and FAIL lines, labels and exit codes stay as they were (15 with the uptime line of R06b)
 run .
-check "projects: mark lines on a clean run unchanged" "$(grep -cE '^(OK|WARN|FAIL) ' <<<"$out")" "14"
+check "projects: mark lines on a clean run unchanged" "$(grep -cE '^(OK|WARN|FAIL) ' <<<"$out")" "15"
 check "projects: group line before the app and before the service" \
   "$(grep -E '^  project |^OK +(app|service) ' <<<"$out" | sed 's/  */ /g; s/, last deploy: .*//' | paste -sd '|' -)" \
   " project starter / production|OK app starter running:healthy| project starter / production|OK service umami running:healthy, https://stats.example.test"
@@ -260,6 +265,32 @@ expect "local only" 1 '^WARN +off-site starter-db +local only \(no backup schedu
 has "local only: local backup line unchanged" "$out" '^OK +backup starter-db +last success 5h ago$'
 run '.backups.d1 = []'
 check "no schedule: no off-site line on top of the FAIL" "$(grep -c 'off-site' <<<"$out")" "0"
+
+# uptime (R06b): the Kuma status pages in UPTIME_PAGES, read from their public JSON
+run .
+has "all green: no uptime pages" "$out" '^OK +uptime +none \(UPTIME\.md\)$'
+mkdir -p "$HOME/.config/vps-setup"
+printf 'UPTIME_URL=http://127.0.0.1:%s\nUPTIME_PAGES=acme\n' "$PORT" > "$HOME/.config/vps-setup/state"
+KUMA='.kuma = {pages: {acme: {config: {slug: "acme"}, publicGroupList: [{id: 1, name: "Acme", monitorList: [{id: 1, name: "shop"}, {id: 2, name: "starter"}]}]},
+                       empty: {config: {slug: "empty"}, publicGroupList: []}},
+               beats: {acme: {heartbeatList: {"1": [{status: 1, time: "2026-10-19 10:00:00.000", msg: "200 - OK"}],
+                                              "2": [{status: 0, time: "2026-10-19 09:58:00.000", msg: "x"}, {status: 0, time: "2026-10-19 10:00:00.000", msg: "Request failed with status code 502"}]},
+                              uptimeList: {"1_24": 0.998, "2_24": 1}},
+                       empty: {heartbeatList: {}, uptimeList: {}}}}'
+expect "uptime: all up" 0 '^OK +uptime shop +up, 24h 99\.8%$' "$KUMA"' | .kuma.beats.acme.heartbeatList["2"][1].status = 1'
+has "uptime: all up, second monitor" "$out" '^OK +uptime starter +up, 24h 100%$'
+check "uptime: one page, no page line" "$(grep -c 'status page' <<<"$out")" "0"
+expect "uptime: one down" 1 '^FAIL +uptime starter +down since 2026-10-19 09:58:00\.000: Request failed with status code 502$' "$KUMA"
+has "uptime: one down, the other still up" "$out" '^OK +uptime shop +up, 24h 99\.8%$'
+expect "uptime: pending" 1 '^WARN +uptime shop +pending since 2026-10-19 10:00:00\.000: 200 - OK$' "$KUMA"' | .kuma.beats.acme.heartbeatList["1"][0].status = 2 | .kuma.beats.acme.heartbeatList["2"][1].status = 1'
+expect "uptime: no check yet" 1 '^WARN +uptime starter +no check yet$' "$KUMA"' | .kuma.beats.acme.heartbeatList |= del(.["2"])'
+expect "uptime: maintenance" 0 '^OK +uptime starter +in maintenance, 24h 100%$' "$KUMA"' | .kuma.beats.acme.heartbeatList["2"][1].status = 3'
+expect "uptime: page unreadable" 1 "^WARN +uptime acme +n/a \\(could not read http://127\\.0\\.0\\.1:$PORT/status/acme\\)$" "$KUMA"' | del(.kuma.pages.acme)'
+expect "uptime: unexpected answer" 1 '^WARN +uptime acme +n/a ' "$KUMA"' | .kuma.beats.acme = [1]'
+printf 'UPTIME_URL=http://127.0.0.1:%s\nUPTIME_PAGES=acme empty\n' "$PORT" > "$HOME/.config/vps-setup/state"
+expect "uptime: a page without monitors" 1 '^WARN +uptime empty +no monitors on the page \(kuma_sync, UPTIME\.md step 5\)$' "$KUMA"' | .kuma.beats.acme.heartbeatList["2"][1].status = 1'
+check "uptime: two pages, a line per page" "$(grep -E '^  status page ' <<<"$out" | paste -sd '|' -)" "  status page acme|  status page empty"
+rm -f "$HOME/.config/vps-setup/state"
 
 # alerts: Coolify notification channels; the seven alert events of NOTIFY_EVENTS must be on
 run .

@@ -257,7 +257,9 @@ Services: `SERVICES.md` for each one the user had (the `SERVICE_<NAME>_UUID` key
 copy give the names, the old `PROJECTS.md` copy the project each was in, for `VPS_PROJECT`). Their volumes are gone: n8n, Uptime Kuma and Forgejo start empty, because
 `lib.sh` drives no volume backups. A database inside a service (Umami) backed up from the UI has
 its files in the bucket too, but restoring into a service's database is not covered
-(`SERVICES.md` step 5); that needs a human.
+(`SERVICES.md` step 5); that needs a human. Uptime Kuma goes through `UPTIME.md` from step 2:
+`kuma.env` survived and opens the new Kuma, `kuma_sync` brings the checks and the status pages
+back (the history is gone; `UPTIME_SERVICE` and `UPTIME_PAGES` are among the cleared keys).
 
 ## 9. Check and the new SERVER.md
 

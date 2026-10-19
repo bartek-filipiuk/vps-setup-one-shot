@@ -22,6 +22,7 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 | back to the previous version after a bad deploy | `ROLLBACK.md` | `/vps-rollback` |
 | a database back from an off-site backup | `RESTORE.md` | `/vps-restore` |
 | a self-hosted tool on its own domain | `SERVICES.md` | `/vps-services` |
+| uptime checks and a public status page for your apps | `UPTIME.md` | `/vps-uptime` |
 | Coolify, Ubuntu and Postgres major upgrades | `UPGRADE.md` | `/vps-upgrade` |
 | a new server, databases from the backups | `REBUILD.md` | `/vps-rebuild` |
 | a server or project to someone else, old access removed | `HANDOVER.md` | `/vps-handover` |
@@ -34,19 +35,23 @@ database from the `staging` branch on the same server, promotion by merge, teard
 version after a bad deploy), `RESTORE.md` (a database back from an off-site S3 backup), `DOCTOR.md`
 (from "my app is down" to a fix or to "this needs a human"), `HANDOVER.md` (a server or a
 project to a client, or a colleague joining, and removing the old access), `SERVICES.md`
-(self-hosted tools as Coolify one-click services, each on its own domain), `UPGRADE.md`
+(self-hosted tools as Coolify one-click services, each on its own domain), `UPTIME.md` (Uptime
+Kuma from `SERVICES.md`, its first-start pages taken over, a check per app domain and a public
+status page per project), `UPGRADE.md`
 (Coolify, Ubuntu and Postgres major versions, each with a backup first and a check after),
 `REBUILD.md` (a new server from nothing through the phases, the databases from the off-site
 backups), `CHECKUP.md` (the monthly checkup: `checkup.sh`, what each line means, the fixes),
 `lib.sh`
 (state file, Coolify API helpers, deploy with dump and rollback point, rollback, restore, app logs,
 S3 storage and off-site backups, Coolify notifications to Discord, team members and stored keys,
-one-click services, projects and environments and the generated PROJECTS.md, staging (the
+one-click services, uptime checks (the Kuma login in `kuma.env`, `kuma_init`, `kuma_sync`,
+`kuma_status`), projects and environments and the generated PROJECTS.md, staging (the
 staging state, environment variable names, a second app, basic auth, the shared webhook
 secret, teardown), Postgres major
 versions, DNS records through the Cloudflare API, the
 rebuild inventory and the backups in the bucket, the read-only checkup helpers: hcloud list and
-describe only, advisories, backup success rate, the checkup log), `verify.sh` (reads the real
+describe only, advisories, backup success rate, the checkup log), `kuma.js` (runs inside the Kuma
+container and drives Kuma through socket.io; `lib.sh` sends it there), `verify.sh` (reads the real
 server state and says which phase is next), `status.sh` (one-screen health check, read-only),
 `checkup.sh` (the monthly checkup: `status.sh` plus ports, sshd, Docker, advisories, backup rate,
 disk growth and cost, ending with the actions; read-only),
@@ -63,7 +68,8 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
    fresh, throwaway server, with the output in the pull request. "Should work" is not a result. Until
    then the README "Status" section and the landing copy say so honestly.
 2. **Secrets never go through the chat, the repo or a command line the agent types.** The user types
-   tokens into their own terminal; files under `~/.config/vps-setup/` are `0600`. Never commit
+   tokens into their own terminal; files under `~/.config/vps-setup/` are `0600` (`kuma.env`, the
+   Kuma admin password, is generated there by `kuma_env_init` and read only by the user and `lib.sh`). Never commit
    `.coolify.env`, state files or logs with tokens. Run `gitleaks git .` before opening a PR.
 3. **Use Coolify, don't rebuild it.** Backups, notifications, rollback and services go through the
    Coolify API. Pin behaviour to a tested Coolify version and note it in `references/coolify-api.md`.
@@ -76,7 +82,9 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
 
 ## Checks
 
-- `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network).
+- `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network). With
+  `node` on the PATH it also runs `node --check kuma.js` and `test/kuma.test.js` (`kuma.js` against
+  a fake Kuma socket and fetch, prints `ALL PASSED`).
 - `bash test/status.test.sh` must print `ALL PASSED` (`status.sh` against a fake Coolify API with
   ssh and openssl stubs; seams `STATUS_SSH`, `STATUS_OPENSSL`, `STATUS_LATEST_URL`,
   `STATUS_TIMEOUT`). The test needs GNU `date` (Linux, CI); `status.sh` itself also runs on macOS.
@@ -93,7 +101,7 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
   every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md`,
-  `PREPARE-APP.md`, `STAGING.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md` and `CHECKUP.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
+  `PREPARE-APP.md`, `STAGING.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md`, `CHECKUP.md` and `UPTIME.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
   `json`, ...). `bash test/extract-blocks.test.sh` is its self-test and must print `ALL PASSED`.
 - `bash test/packaging.sh` must print `ALL POINTERS OK`: the "Entry points" table, the plugin and
   marketplace manifests, `skills/` and the Cursor rule agree, and the pointers carry no runbook
@@ -104,7 +112,7 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   `-H/--header`, or (on a `gh`/`curl` line) `-f/-F/-d/--data/-u/-b` in the runbooks or the
   scripts, continued lines joined, expands a secret-named variable (`S`, `W`, `PW`, `PASS*`,
   `SECRET*`, `TOKEN*`, `KEY`, `URL`, also with a `FOO_` prefix, ...), `$(openssl rand` or a
-  credential getter (`cf_cred`, `s3_cred`, `cat`, ...); the value goes on stdin instead (`printf '%s' "$S" | jq -Rs`,
+  credential getter (`cf_cred`, `s3_cred`, `kuma_cred`, `cat`, ...); the value goes on stdin instead (`printf '%s' "$S" | jq -Rs`,
   `gh api --input -`, `curl -K`). It is a name-based grep: a secret under another name is still
   on you.
 - Shellcheck exclusions. Scripts: only `.shellcheckrc` (`shell=bash`, `disable=SC2015,SC1091`),

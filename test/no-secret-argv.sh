@@ -7,7 +7,7 @@
 # where VALUE expands a secret-named variable (S, W, PW, PASS*, SECRET*, TOKEN*, KEY but not
 # KEY_UUID, URL (a DATABASE_URL with the password), each with an optional FOO_ prefix; token,
 # secret, pw, pass*), $(openssl rand, a credential getter ($(cf_cred, $(s3_cred, $(notify_cred,
-# $(coolify_get COOLIFY_TOKEN) or $(cat .
+# $(kuma_cred, $(coolify_get COOLIFY_TOKEN) or $(cat .
 # The fix is the value on stdin: `printf '%s' "$S" | jq -Rs '{x:.}'`, `openssl rand -hex 24 |
 # jq -Rn '{p:input}'`, `... | gh api --input -`, curl -K <(printf ...).
 # A name-based heuristic, no server, no network. Usage: bash test/no-secret-argv.sh [file ...]
@@ -15,10 +15,10 @@
 cd "$(dirname "$0")/.." || exit 1
 files=("$@")
 [ "${#files[@]}" -gt 0 ] || files=(phases/*.md SETUP.md PREPARE-APP.md STAGING.md ROLLBACK.md RESTORE.md DOCTOR.md
-  HANDOVER.md SERVICES.md UPGRADE.md REBUILD.md CHECKUP.md lib.sh verify.sh status.sh checkup.sh)
+  HANDOVER.md SERVICES.md UPGRADE.md REBUILD.md CHECKUP.md UPTIME.md lib.sh verify.sh status.sh checkup.sh)
 
 vars='(([A-Z0-9_]*_)?(S|W|PW|PASS[A-Z0-9_]*|SECRET[A-Z0-9_]*|TOKEN[A-Z0-9_]*|KEY|URL)|token|secret|pw|pass[a-z0-9_]*)'
-getters='(openssl rand|cf_cred |s3_cred |notify_cred |coolify_get COOLIFY_TOKEN|cat )'
+getters='(openssl rand|cf_cred |s3_cred |notify_cred |kuma_cred |coolify_get COOLIFY_TOKEN|cat )'
 sp='[[:space:]]+'
 pre='(^|[[:space:](])'
 secret="(\\\$\\{?$vars([^A-Za-z0-9_]|$)|\\\$\\($getters)"
