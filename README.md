@@ -245,6 +245,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   have **not been installed from the marketplace or run end to end yet**; that Codex and Cursor
   pick up `AGENTS.md` and the rule comes from their documentation, not a run. `claude plugin
   validate .` passes locally (warning only about the missing version) and is not in CI.
+- Fixtures for more stacks (R08: `fixtures/static`, `fixtures/python-fastapi`, `fixtures/go`,
+  `fixtures/compose`, the stack table in `PREPARE-APP.md` step 1) are built and health-checked
+  with Docker in CI only (`test/fixtures.sh`, `.github/workflows/fixtures.yml`) and have **not
+  been deployed on a server yet**; no app of these stacks has gone through `PREPARE-APP.md`.
+  Compose applications in Coolify come from the API docs and are marked `[verify]` in
+  `references/coolify-api.md`; the runbooks have no compose path yet.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
@@ -252,6 +258,6 @@ Tested with: Coolify 4.3.23, Ubuntu 24.04, Next.js 16.3, Postgres 17.
 
 ## Not included yet
 
-Preview environments per pull request (R21), uptime checks from outside with a status page (R06b), apps that
-are not Node.js, Git hosts other than GitHub, DNS through the API for providers other than Cloudflare. What comes next, in which order
+Preview environments per pull request (R21), uptime checks from outside with a status page (R06b), deploying apps
+that are not Node.js (fixtures exist, see Status), Git hosts other than GitHub, DNS through the API for providers other than Cloudflare. What comes next, in which order
 and how we will know it is done: [ROADMAP.md](ROADMAP.md).

@@ -1,0 +1,6 @@
+.git
+.env*
+!.env.example
+.coolify*.env
+__pycache__
+*.pyc

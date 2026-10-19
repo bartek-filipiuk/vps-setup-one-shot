@@ -1,0 +1,39 @@
+# Compose fixture for vps-setup-one-shot: a web app and its own Postgres in one stack.
+# SERVICE_PASSWORD_DB comes from the environment (Coolify generates SERVICE_PASSWORD_* [verify];
+# locally test/fixtures.sh exports one from openssl rand). No ports are published here: Coolify's
+# proxy reaches web on 8080, and the db is reachable only inside the stack.
+# Plain ${SERVICE_PASSWORD_DB}, no ${...:?} guard: how Coolify parses that syntax is unverified.
+# The db volume is outside Coolify's database backups and deploy_and_wait's dump.
+services:
+  web:
+    build: ./web
+    environment:
+      DATABASE_URL: postgres://app:${SERVICE_PASSWORD_DB}@db:5432/app
+      PORT: "8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_DB}
+      POSTGRES_DB: app
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  dbdata:
