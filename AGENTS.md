@@ -19,6 +19,7 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 | the monthly checkup | `CHECKUP.md` | `/vps-checkup` |
 | an existing app onto the server, from its repo | `PREPARE-APP.md` | `/vps-prepare-app` |
 | a staging copy of an app from its staging branch, promotion by merge | `STAGING.md` | `/vps-staging` |
+| a cron-and-queue worker as a second app from the same repo | `WORKER.md` | `/vps-worker` |
 | back to the previous version after a bad deploy | `ROLLBACK.md` | `/vps-rollback` |
 | a database back from an off-site backup | `RESTORE.md` | `/vps-restore` |
 | a self-hosted tool on its own domain | `SERVICES.md` | `/vps-services` |
@@ -32,7 +33,9 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 
 `SETUP.md` (entry point the user's agent reads), `phases/` (00–06, one file per step),
 `PREPARE-APP.md` (moving an existing app onto the server), `STAGING.md` (a staging app and
-database from the `staging` branch on the same server, promotion by merge, teardown), `ROLLBACK.md` (back to the previous
+database from the `staging` branch on the same server, promotion by merge, teardown), `WORKER.md`
+(a cron-and-queue worker from `starter-worker/` as a second app from the app's repo, no domain,
+the app's database), `ROLLBACK.md` (back to the previous
 version after a bad deploy), `RESTORE.md` (a database back from an off-site S3 backup), `DOCTOR.md`
 (from "my app is down" to a fix or to "this needs a human"), `HANDOVER.md` (a server or a
 project to a client, or a colleague joining, and removing the old access), `SERVICES.md`
@@ -51,7 +54,8 @@ one-click services, uptime checks (the Kuma login in `kuma.env`, `kuma_init`, `k
 `kuma_status`), status page domains (`dns_check`, `kuma_domain_add`, `kuma_domain_remove`),
 projects and environments and the generated PROJECTS.md, staging (the
 staging state, environment variable names, a second app, basic auth, the shared webhook
-secret, teardown), Postgres major
+secret, teardown), the worker (`worker_create`, `worker_env_db`, `worker_enqueue`,
+`worker_jobs`, `worker_teardown`), Postgres major
 versions, DNS records through the Cloudflare API, the
 rebuild inventory and the backups in the bucket, the read-only checkup helpers: hcloud list and
 describe only, advisories, backup success rate, the checkup log, the secrets vault: `vault_export`,
@@ -64,7 +68,9 @@ server state and says which phase is next), `status.sh` (one-screen health check
 disk growth, cost and the secrets vault, ending with the actions; read-only),
 `references/` (Coolify and Cloudflare API notes, troubleshooting, what differs per provider in
 `providers.md`), `starter/` (the Next.js + Postgres app the setup
-deploys; it is also the landing), `fixtures/` (the smallest app of each further stack: static,
+deploys; it is also the landing), `starter-worker/` (the worker `WORKER.md` copies into an
+app's repo: Node, `pg`, a job queue and schedules in Postgres, a health route without a domain;
+see `starter-worker/README.md`), `fixtures/` (the smallest app of each further stack: static,
 FastAPI, Go, compose; the model `PREPARE-APP.md` uses, see `fixtures/README.md`), `test/`
 (checks that need no server), `ROADMAP.md` (the plan, ids R01…, mirrored in `starter/app/roadmap.ts`), `.claude-plugin/` (the Claude Code plugin
 and marketplace manifests), `skills/` (one pointer per entry point, the plugin's commands),
@@ -113,15 +119,18 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   `age` from Ubuntu's apt for it. `lib.test.sh` and `checkup.test.sh` use a fake `age` and run
   without it.
 - `bash test/fixtures.sh` must print `ALL FIXTURES OK` (needs Docker with a recent compose v2,
-  for `up --wait --wait-timeout`; builds every fixture, checks its health contract, removes what
-  it created by name, never prunes).
-  CI runs it per fixture when `fixtures/` changes (`.github/workflows/fixtures.yml`).
+  for `up --wait --wait-timeout`; builds every fixture and `starter-worker/`, checks its health
+  contract, for the worker also a job through the queue and the cron slots against a real
+  Postgres, removes what it created by name, never prunes).
+  CI runs it per fixture when `fixtures/` or `starter-worker/` changes (`.github/workflows/fixtures.yml`).
+- `node --test starter-worker/test/*.test.js` must report `fail 0` (the worker's pure functions
+  and the SQL it sends, against a fake database; no Postgres, no `npm install` needed).
 - `shellcheck lib.sh verify.sh status.sh checkup.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins),
   and so is the server script `hostfw_script` prints (CI checks it, `lib.test.sh` too when shellcheck is installed);
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
   every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md`,
-  `PREPARE-APP.md`, `STAGING.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md`, `CHECKUP.md`, `UPTIME.md` and `VAULT.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
+  `PREPARE-APP.md`, `STAGING.md`, `WORKER.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md`, `CHECKUP.md`, `UPTIME.md` and `VAULT.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
   `json`, ...). `bash test/extract-blocks.test.sh` is its self-test and must print `ALL PASSED`.
 - `bash test/packaging.sh` must print `ALL POINTERS OK`: the "Entry points" table, the plugin and
   marketplace manifests, `skills/` and the Cursor rule agree, and the pointers carry no runbook
@@ -141,7 +150,7 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   `warning`. Anything else is fixed in the code or disabled inline with a reason.
 - CI runs the same on every PR and push to main (`.github/workflows/ci.yml`); the starter build
   (`npm ci && npm run build`) runs when `starter/` changes (`starter.yml`), the fixtures
-  (`test/fixtures.sh`) when `fixtures/` changes (`fixtures.yml`). The full run on a real
+  (`test/fixtures.sh`) when `fixtures/` or `starter-worker/` changes (`fixtures.yml`). The full run on a real
   server (`e2e.yml`) is manual only and still a stub that always fails. Actions are pinned by
   commit SHA with the version in a comment.
 - Changes to a phase: the PR says which run on a real server covered it, or is marked

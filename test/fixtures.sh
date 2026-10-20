@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# Builds every fixture in fixtures/ with Docker and checks the health contract: 200
+# Builds every fixture in fixtures/, and the worker in starter-worker/ (R24, WORKER.md), with
+# Docker and checks the health contract: 200
 # {"status":"ok","db":<expected>} on 127.0.0.1, the same answer on [::1] inside the container,
 # the image's HEALTHCHECK passing, a non-root user, and for fixtures with a database 503
-# {"status":"error","db":"error"} once the database is stopped. No server; needs Docker with
+# {"status":"error","db":"error"} once the database is stopped. For the worker also: a job
+# enqueued with enqueue.js (argument and stdin) runs, the cron slots are claimed, an unknown
+# kind is refused. No server; needs Docker with
 # a recent compose v2 (up --wait --wait-timeout), curl, jq and openssl.
 # Everything it creates is named vps-fixture-<name>-<pid> and removed by that name on exit;
 # nothing is pruned. The Postgres password comes from openssl rand and goes through the
 # environment, never argv.
-# Usage: bash test/fixtures.sh [static|python-fastapi|go|compose ...]   (prints ALL FIXTURES OK)
+# Usage: bash test/fixtures.sh [static|python-fastapi|go|compose|starter-worker ...]   (prints ALL FIXTURES OK)
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-# name port db kind
-TABLE='static 8080 none dockerfile
-python-fastapi 8000 ok dockerfile
-go 8080 ok dockerfile
-compose 8080 ok compose'
+# name port db kind dir (the build context)
+TABLE='static 8080 none dockerfile fixtures/static
+python-fastapi 8000 ok dockerfile fixtures/python-fastapi
+go 8080 ok dockerfile fixtures/go
+compose 8080 ok compose fixtures/compose
+starter-worker 3000 ok dockerfile starter-worker'
 PG_IMAGE=postgres:17-alpine
 WAIT=${FIXTURE_WAIT_SECONDS:-90}
 
@@ -99,8 +103,42 @@ tail_out() { tail -n 40 <<<"$1" | sed 's/^/     /'; }
 
 dump_logs() { echo "     logs of $1:"; docker logs --tail 30 "$1" 2>&1 | sed 's/^/     /'; }
 
+# psql_db CONTAINER SQL: one value from the test database
+psql_db() { docker exec "$1" psql -U app -d app -tAc "$2" 2>/dev/null; }
+
+# worker_checks NAME CONTAINER: the starter-worker's queue and cron against the real Postgres
+worker_checks() {
+  local name=$1 c=$2 i got rc
+  docker exec "$c" node enqueue.js echo '{"ci":1}' >/dev/null 2>&1; rc=$?
+  check "$name: enqueue.js with a JSON argument" "$rc" 0
+  printf '%s' '{"ci":2}' | docker exec -i "$c" node enqueue.js echo - >/dev/null 2>&1; rc=$?
+  check "$name: enqueue.js with the payload on stdin" "$rc" 0
+  for ((i = 0; i < WAIT; i++)); do
+    got=$(psql_db "$c-db" "select count(*) from jobs where status = 'done' and payload->>'ci' in ('1', '2')")
+    [ "$got" = 2 ] && break
+    sleep 1
+  done
+  check "$name: both jobs ran (status done)" "$got" 2
+  check "$name: cron slots claimed (heartbeat, prune)" "$(psql_db "$c-db" "select string_agg(distinct name, ',' order by name) from cron_runs")" "heartbeat,prune"
+  check "$name: the cron jobs ran" "$(psql_db "$c-db" "select count(*) >= 2 from jobs where status = 'done' and payload->>'ci' is null")" t
+  # A kind without a handler, inserted the way a web app would: fail() end to end.
+  psql_db "$c-db" "insert into jobs (kind, payload) values ('no_handler', '{\"ci\":3}')" >/dev/null
+  for ((i = 0; i < WAIT; i++)); do
+    got=$(psql_db "$c-db" "select status || ':' || (last_error is not null) || ':' || (lock_token is null) from jobs where payload->>'ci' = '3'")
+    [ "${got%%:*}" = failed ] && break
+    sleep 1
+  done
+  check "$name: a kind without a handler ends failed with last_error, unlocked" "$got" "failed:true:true"
+  docker exec "$c" node enqueue.js nope '{}' >/dev/null 2>&1; rc=$?
+  check "$name: an unknown kind is refused" "$rc" 1
+  docker exec "$c" node enqueue.js echo '[1]' >/dev/null 2>&1; rc=$?
+  check "$name: a payload that is not an object is refused" "$rc" 1
+  got=$(docker exec "$c" node enqueue.js stats 2>/dev/null); rc=$?
+  check "$name: enqueue.js stats" "$rc:$(grep -c '^done [0-9]* 0$' <<<"$got")" "0:1"
+}
+
 run_dockerfile() {
-  local name=$1 port=$2 db=$3 n="vps-fixture-$1-$$" hp f0=$fails
+  local name=$1 port=$2 db=$3 dir=$4 n="vps-fixture-$1-$$" hp f0=$fails
   echo "== $name"
   docker network create "$n" >/dev/null && networks+=("$n") || { check "$name: network" failed created; return; }
   if [ "$db" = ok ]; then
@@ -113,7 +151,7 @@ run_dockerfile() {
       "$PG_IMAGE" >/dev/null || { check "$name: postgres started" failed ok; return; }
   fi
   local out
-  if ! out=$(docker build -t "$n" "fixtures/$name" 2>&1); then
+  if ! out=$(docker build -t "$n" "$dir" 2>&1); then
     tail_out "$out"; check "$name: docker build" failed ok; return
   fi
   images+=("$n")
@@ -130,6 +168,7 @@ run_dockerfile() {
   hp=$(docker port "$n" "$port/tcp" | grep -m1 '^127\.0\.0\.1:')
   contract "$name" "http://$hp/api/health" 200 ok "$db"
   in_container "$name" "$n" "$port" "$db"
+  case $name in starter-worker) worker_checks "$name" "$n" ;; esac
   if [ "$db" = ok ]; then
     docker stop "$n-db" >/dev/null
     contract "$name (db stopped)" "http://$hp/api/health" 503 error error
@@ -174,9 +213,9 @@ for w in "${want[@]}"; do
     echo "FAIL unknown fixture: $w (known: $(cut -d' ' -f1 <<<"$TABLE" | paste -sd' ' -))"
     fails=$((fails + 1)); continue
   fi
-  read -r name port db kind <<<"$row"
+  read -r name port db kind dir <<<"$row"
   case $kind in
-    dockerfile) run_dockerfile "$name" "$port" "$db" ;;
+    dockerfile) run_dockerfile "$name" "$port" "$db" "${dir:-fixtures/$name}" ;;
     compose) run_compose "$name" "$port" "$db" ;;
   esac
 done

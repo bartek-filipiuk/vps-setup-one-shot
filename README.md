@@ -30,7 +30,8 @@ Or install it as a Claude Code plugin, no clone needed:
 (from a shell: `claude plugin marketplace add bartek-filipiuk/vps-setup-one-shot`, then
 `claude plugin install vps-setup-one-shot@bartek-filipiuk`), then type `/vps-setup` (or `/vps-setup-one-shot:vps-setup` if another command has that name). Later:
 `/vps-status`, `/vps-doctor`, `/vps-checkup`, and in the repo of an app you already have,
-`/vps-prepare-app` (later `/vps-staging` for a staging copy of it).
+`/vps-prepare-app` (later `/vps-staging` for a staging copy of it, `/vps-worker` for a
+background worker next to it).
 
 Any other agent (Codex, Cursor, ...) works the same way: open it in that folder and say
 `Read SETUP.md and guide me through it.` `AGENTS.md` lists every runbook and the matching command.
@@ -118,6 +119,10 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   staging values, HTTP basic auth so it is not public, and push-to-deploy through the same
   GitHub webhook. Promotion is a merge into `main`, with the rollback point and a dump first;
   removal only on your yes.
+- `WORKER.md` adds a background worker to an app: `starter-worker/` copied into the app's repo
+  as `worker/`, deployed as a second Coolify app from the same repo with no domain, keeping a job
+  queue and its schedules in the app's own Postgres. The web app enqueues a job with one SQL
+  insert; a push deploys both; removal only on your yes.
 - `SERVICES.md` puts a self-hosted tool next to your apps as a Coolify one-click service on its
   own domain: Umami, n8n, Uptime Kuma or Forgejo, with a DNS gate, the HTTPS wait, the first
   login, what is and is not backed up, and removal only on your yes. `status.sh` shows a line
@@ -254,6 +259,14 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   basic-auth write, the deletes, a second app on the same deploy key and one GitHub webhook
   serving two branches come from the 4.3.23 source and docs and are marked `[verify]` in
   `references/coolify-api.md`.
+- The worker (R24, first half: `WORKER.md`, `starter-worker/`, `worker_create`,
+  `worker_env_db`, `worker_enqueue`, `worker_jobs`, `worker_teardown`) is tested against a fake
+  Coolify API and a stubbed `ssh` only (`test/lib.test.sh`), and the worker itself with Docker
+  and a real Postgres in CI (`test/fixtures.sh starter-worker`: health, a job through the queue,
+  the cron slots, the database stopped). It has **not been run on a real server yet**; no worker
+  app has been created in a Coolify. An app with no domain (`autogenerate_domain:false`), the
+  health check without a domain and one webhook deploying both apps come from the Coolify 4.3.23
+  source and are marked `[verify]` in `references/coolify-api.md`.
 - `UPGRADE.md` (R14), `db_major`, `pg_major_upgrade_plan`, the `RESTORE_FROM_DB` guard of
   `db_restore` and the `status.sh` updates and postgres lines are tested against a fake Coolify
   API, a stubbed `ssh` and a fake `docker` only (`test/lib.test.sh`, `test/status.test.sh`) and

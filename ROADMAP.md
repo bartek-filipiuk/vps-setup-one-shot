@@ -173,13 +173,22 @@ Rules that apply to every item:
   so). Done when: a clean second machine restores the vault and passes `verify.sh` and
   `status.sh`, and the S3 pair is rotated end to end on the harness. (Code, fake-age tests and a
   real-age round trip done; not run on a server yet.)
+- **R24 Starter variants.** The same plumbing with auth and transactional mail, and a
+  cron-and-queue worker as a second app from the same repo. Worker half: `starter-worker/` (Node
+  22 and `pg`: a job queue with `SKIP LOCKED` and in-process schedules in the app's own Postgres,
+  a health route without a domain), `WORKER.md` (copied into the app's repo as `worker/`, a second
+  Coolify app on the same repo and deploy key with `base_directory`, no domain, the app's
+  `DATABASE_URL`, one webhook secret for every app of the repo), and `worker_create`,
+  `worker_env_db`, `worker_enqueue`, `worker_jobs`, `worker_teardown` in `lib.sh`. Done when: the
+  harness deploys the worker next to the starter, a job enqueued from the web app runs, a push
+  deploys both, and the teardown leaves the web app untouched.
+  (Worker half: built and checked against a real Postgres in CI, fake-API tests; not run on a
+  server yet. Auth and transactional mail: not started.)
 
 ## Ideas
 
 - **R21 Preview deployment per pull request**, if Coolify's GitHub App source becomes drivable
   without the UI.
-- **R24 Starter variants:** the same plumbing with auth and transactional mail; a cron-and-queue
-  worker example as a second app from the same repo.
 
 ## Done
 

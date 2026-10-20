@@ -1,5 +1,5 @@
 ---
-description: Which vps-setup-one-shot runbook to read when the user wants to set up, check, fix, upgrade, rebuild, stage or hand over their Coolify server or an app on it, or back up and rotate its secrets.
+description: Which vps-setup-one-shot runbook to read when the user wants to set up, check, fix, upgrade, rebuild, stage or hand over their Coolify server or an app on it, add a background worker, or back up and rotate its secrets.
 alwaysApply: false
 ---
 The markdown is the source; nothing here repeats it. Work from the repo root, read the file, follow it exactly, in the user's language.
@@ -10,6 +10,7 @@ The markdown is the source; nothing here repeats it. Work from the repo root, re
 - The monthly checkup: `CHECKUP.md`
 - An existing app onto the server, from the app's own repo: `PREPARE-APP.md`
 - A staging copy of an app (staging branch, own database, staging domain), promotion by merge: `STAGING.md`
+- A background worker (scheduled jobs and a job queue) as a second app from the same repo: `WORKER.md`
 - Back to the previous version after a bad deploy: `ROLLBACK.md`
 - A database back from an off-site backup: `RESTORE.md`
 - A self-hosted tool on its own domain (Umami, n8n, Uptime Kuma, Forgejo): `SERVICES.md`

@@ -1515,6 +1515,165 @@ staging_teardown() {
   echo "left as they are: the DNS record ${domain:-of the staging domain} (remove it at the DNS provider if it should go), the staging branch, and the GitHub webhook (production uses it)"
 }
 
+# --- worker: a second app from the same repo, no domain, the same database (R24, WORKER.md) ---
+
+# The worker (starter-worker/ of this repo, copied into the app's repo as worker/) is a second
+# Coolify application on the app's repo, deploy key, project and environment, with its own base
+# directory and no domain; its jobs and cron_runs tables live in the app's Postgres. Its state is
+# two keys in the app's state file (VPS_STATE): WORKER_APP_UUID and WORKER_BASE_DIR. The
+# DATABASE_URL goes to Coolify through stdin and is never printed.
+
+# worker_create BASE_DIR [PORT] [HEALTH_PATH] -> the application <APP_NAME>-worker from GH_REPO at
+# GIT_BRANCH (default main) with the deploy key KEY_UUID, built from BASE_DIR, in the project and
+# environment of project_ctx, with no domain (autogenerate_domain:false, else Coolify makes one
+# up) and a health check on PORT (default 3000) and HEALTH_PATH (default /api/health), not
+# deployed. Records WORKER_APP_UUID and WORKER_BASE_DIR. A second run finds WORKER_APP_UUID and
+# sends only the health check, when Coolify does not show that path and port.
+worker_create() {
+  local base=${1:-} port=${2:-3000} health=${3:-/api/health} name repo key branch app ctx project env server body r
+  [ -n "$base" ] || { echo "usage: worker_create BASE_DIR [PORT] [HEALTH_PATH]  (like /worker)" >&2; return 1; }
+  [[ $base =~ ^/[A-Za-z0-9._/-]*$ ]] && [[ $base != *..* ]] || { echo "not a base directory: '$base' (like /worker)" >&2; return 1; }
+  [[ $port =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || { echo "not a port: '$port'" >&2; return 1; }
+  [[ $health =~ ^/[A-Za-z0-9._/-]*$ ]] || { echo "not a health check path: '$health' (like /api/health)" >&2; return 1; }
+  name=$(state_get APP_NAME); repo=$(state_get GH_REPO); key=$(state_get KEY_UUID); branch=$(state_get GIT_BRANCH)
+  branch=${branch:-main}
+  [ -n "$name" ] && [ -n "$repo" ] && [ -n "$key" ] ||
+    { echo "worker_create: APP_NAME, GH_REPO and KEY_UUID must be in $VPS_STATE (the web app's state)" >&2; return 1; }
+  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "not a GitHub repo: '$repo' (owner/name)" >&2; return 1; }
+  [[ $branch =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] && [[ $branch != *..* ]] || { echo "not a branch name: '$branch'" >&2; return 1; }
+  service_valid_uuid "$key" || return 1
+  name=$name-worker
+  app=$(state_get WORKER_APP_UUID)
+  if [ -n "$app" ]; then
+    service_valid_uuid "$app" || return 1
+    r=$(capi GET "/applications/$app") || { echo "worker_create: WORKER_APP_UUID=$app in $VPS_STATE is not readable in Coolify; nothing created" >&2; return 1; }
+    if jq -e --arg h "$health" --arg port "$port" \
+      '.health_check_enabled == true and .health_check_path == $h and ((.health_check_port // "") | tostring) == $port' <<<"$r" >/dev/null; then
+      echo "worker $name: $app (existing, health check $health on port $port)"; return 0
+    fi
+  else
+    ctx=$(project_ctx 2>&1) || { echo "worker_create: $ctx" >&2; return 1; }
+    read -r project env <<<"$ctx"
+    server=$(coolify_server) && [ -n "$server" ] || { echo "worker_create: no Coolify server found (phase 04 step 4)" >&2; return 1; }
+    body=$(jq -n --arg p "$project" --arg e "$env" --arg s "$server" --arg n "$name" --arg r "git@github.com:$repo.git" \
+      --arg b "$branch" --arg port "$port" --arg k "$key" --arg base "$base" \
+      '{project_uuid:$p, server_uuid:$s, environment_name:$e, name:$n, git_repository:$r, git_branch:$b,
+        build_pack:"dockerfile", ports_exposes:$port, private_key_uuid:$k, instant_deploy:false,
+        base_directory:$base, autogenerate_domain:false}') || return 1
+    r=$(capi POST /applications/private-deploy-key "$body") || return 1
+    app=$(jq -r '.uuid // empty' <<<"$r")
+    service_valid_uuid "$app" 2>/dev/null || { echo "no uuid in the answer to POST /applications/private-deploy-key" >&2; return 1; }
+    state_set WORKER_APP_UUID "$app" && state_set WORKER_BASE_DIR "$base" || return 1
+    echo "worker $name: $app (created in $project / $env, branch $branch, base directory $base, no domain, not deployed)"
+  fi
+  capi PATCH "/applications/$app" "$(jq -n --arg port "$port" --arg h "$health" \
+    '{health_check_enabled:true, health_check_path:$h, health_check_port:$port}')" >/dev/null ||
+    { echo "worker_create: worker $app exists but its health check is not set; run worker_create again" >&2; return 1; }
+  echo "health check $health on port $port set (no domain)"
+}
+
+# worker_env_db WORKER_APP_UUID -> sets DATABASE_URL on the worker to the internal URL of the
+# app's database (DB_UUID in VPS_STATE, GET /databases/{uuid}), through stdin; never printed.
+worker_env_db() {
+  local app=${1:-} db r url
+  [ -n "$app" ] || { echo "usage: worker_env_db WORKER_APP_UUID" >&2; return 1; }
+  service_valid_uuid "$app" || return 1
+  [ "$app" != "$(state_get APP_UUID)" ] || { echo "worker_env_db: $app is the web app itself, not the worker; nothing sent" >&2; return 1; }
+  db=$(state_get DB_UUID)
+  [ -n "$db" ] || { echo "worker_env_db: no DB_UUID in $VPS_STATE; the worker uses the web app's database" >&2; return 1; }
+  service_valid_uuid "$db" || return 1
+  r=$(capi GET "/databases/$db") || return 1
+  url=$(jq -r '.internal_db_url // empty' <<<"$r"); r=
+  [ -n "$url" ] || { echo "worker_env_db: database $db has no internal_db_url; nothing sent" >&2; return 1; }
+  printf '%s' "$url" | app_env_set "$app" DATABASE_URL; r=$?
+  url=
+  return "$r"
+}
+
+# worker_enqueue KIND [JSON] -> one job into the worker's queue, run inside the running worker
+# container (node enqueue.js KIND -, the payload on stdin; default {}). The payload is checked
+# locally first: a JSON object. Prints "enqueued job <id> <kind>".
+worker_enqueue() {
+  local kind=${1:-} json=${2:-'{}'} app
+  [ -n "$kind" ] || { echo "usage: worker_enqueue KIND [JSON]" >&2; return 1; }
+  [[ $kind =~ ^[a-z][a-z0-9_.-]{0,99}$ ]] || { echo "not a job kind: '$kind' (lower-case letters, digits, _ . -)" >&2; return 1; }
+  json=$(jq -ce 'if type == "object" then . else error("not an object") end' <<<"$json" 2>/dev/null) ||
+    { echo "worker_enqueue: the payload must be a JSON object, like '{\"id\":1}'; nothing sent" >&2; return 1; }
+  app=$(state_get WORKER_APP_UUID)
+  [ -n "$app" ] || { echo "worker_enqueue: no WORKER_APP_UUID in $VPS_STATE (WORKER.md step 4)" >&2; return 1; }
+  service_valid_uuid "$app" || return 1
+  # Coolify names an app's container <uuid>-<time> (<uuid> with "consistent container name" on):
+  # the anchored filter matches only this app. During a rolling deploy two match; either one
+  # is fine (enqueue.js only inserts a row), and docker ps lists the newest first.
+  printf '%s' "$json" | rssh "c=\$(docker ps -q -f 'name=^/?$app(-|\$)' | head -n 1); [ -n \"\$c\" ] || { echo 'no running container for the worker $app' >&2; exit 1; }; docker exec -i \"\$c\" node enqueue.js $kind -"
+}
+
+# worker_jobs -> read-only: the jobs per status in the app's database (DB_UUID), and how long the
+# oldest due queued job waits, through psql in the database container. Returns 1 when the table
+# does not exist yet (the worker has not started) or the database cannot be read.
+worker_jobs() {
+  local db user dbname out rc st n old any=0
+  db=$(state_get DB_UUID)
+  [ -n "$db" ] || { echo "worker_jobs: no DB_UUID in $VPS_STATE" >&2; return 1; }
+  service_valid_uuid "$db" || return 1
+  { read -r user; read -r dbname; } < <(db_pg_params "$db") || return 1
+  [ -n "$user" ] || return 1
+  out=$(rssh "sh -s -- $(printf %q "$db") $(printf %q "$user") $(printf %q "$dbname")" <<'EOF'
+set -u
+c=$(docker ps -q -f "name=^/?$1\$"); [ -n "$c" ] || { echo "no running container for database $1" >&2; exit 1; }
+[ "$(printf '%s\n' "$c" | wc -l)" = 1 ] || { echo "more than one container matches database $1" >&2; exit 1; }
+if ! r=$(docker exec "$c" psql -U "$2" -d "$3" -tA -F ' ' -c "select status, count(*), coalesce(extract(epoch from now() - min(run_at) filter (where status = 'queued' and run_at <= now())), 0)::int from jobs group by status order by status" 2>&1); then
+  case $r in *'relation "jobs" does not exist'*) exit 3 ;; esac
+  printf '%s\n' "$r" >&2; exit 1
+fi
+printf '%s\n' "$r"
+EOF
+  ); rc=$?
+  if [ "$rc" = 3 ]; then
+    echo "worker_jobs: no jobs table in database $db yet; the worker creates it when it starts (WORKER.md step 5)" >&2; return 1
+  fi
+  [ "$rc" = 0 ] || { echo "worker_jobs: could not read the jobs of database $db" >&2; return 1; }
+  while read -r st n old; do
+    [ -n "$st" ] || continue
+    any=1
+    if [ "$st" = queued ]; then echo "jobs queued: $n (the oldest due one waits ${old}s)"; else echo "jobs $st: $n"; fi
+  done <<<"$out"
+  [ "$any" = 1 ] || echo "jobs: none yet"
+}
+
+# worker_teardown STATE --yes -> deletes the worker app (DELETE /applications/{uuid}?delete_volumes=true&delete_configurations=true&docker_cleanup=true)
+# and clears WORKER_APP_UUID and WORKER_BASE_DIR in STATE. Refuses without --yes (nothing sent)
+# and when the uuid is the web app's or its staging app's. The jobs and cron_runs tables stay in
+# the shared database, the worker directory in the repo and the GitHub hook stay.
+worker_teardown() {
+  local f=${1:-} app name r
+  [ -n "$f" ] || { echo "usage: worker_teardown STATE --yes" >&2; return 1; }
+  [ -s "$f" ] || { echo "worker_teardown: no state in $f" >&2; return 1; }
+  app=$(VPS_STATE=$f state_get WORKER_APP_UUID)
+  [ -n "$app" ] || { echo "worker_teardown: no WORKER_APP_UUID in $f; nothing to delete" >&2; return 1; }
+  service_valid_uuid "$app" || return 1
+  for name in APP_UUID COOLIFY_APP_UUID STAGING_APP_UUID; do
+    [ "$app" != "$(VPS_STATE=$f state_get "$name")" ] ||
+      { echo "worker_teardown: WORKER_APP_UUID in $f is the $name; nothing sent" >&2; return 1; }
+  done
+  if [ "${2:-}" != --yes ]; then
+    echo "worker_teardown: refusing without --yes. This deletes the worker app $app; queued jobs stop running (the jobs table stays). Ask the user, then: worker_teardown $f --yes" >&2
+    return 1
+  fi
+  if r=$(capi GET "/applications/$app" 2>&1); then
+    name=$(jq -r '.name // "?"' <<<"$r")
+    capi DELETE "/applications/$app?delete_volumes=true&delete_configurations=true&docker_cleanup=true" >/dev/null || return 1
+    name="worker app $name ($app) deleted"
+  elif [ "$(capi_code "$r")" = 404 ]; then
+    name="worker app $app not in Coolify any more (404); cleared from the state"
+  else
+    echo "$r" >&2; return 1
+  fi
+  VPS_STATE=$f state_set WORKER_APP_UUID '' && VPS_STATE=$f state_set WORKER_BASE_DIR '' || return 1
+  echo "$name"
+  echo "left as they are: the jobs and cron_runs tables in the app's database (drop them by hand if they should go), the worker directory in the repo, and the GitHub webhook (the web app uses it)"
+}
+
 # --- off-site backups: Coolify scheduled backups copied to S3-compatible storage (RESTORE.md) ---
 
 # S3 credentials: S3_KEY= and S3_SECRET= lines in S3_ENV (default ~/.config/vps-setup/s3.env,
@@ -2065,10 +2224,11 @@ dns_set_a() {
 # State keys that belong to one server and its Coolify: on a new server they point at nothing,
 # and verify.sh and phase 05 would skip steps while they are set (ADMIN_REGISTERED, APP_UUID,
 # WEBHOOK, HOOK_ID, HANDOVER_DONE). SERVICE_<NAME>_UUID keys count too, and STAGING_APP_UUID (the
-# staging app is made again with STAGING.md, its database empty), and UPTIME_SERVICE,
+# staging app is made again with STAGING.md, its database empty), WORKER_APP_UUID (the worker
+# app is made again with WORKER.md; its tables come back with the app's database), and UPTIME_SERVICE,
 # UPTIME_PAGES and UPTIME_DOMAINS (the new Kuma starts empty, and the client domains were in the
 # old Kuma and the old Coolify; UPTIME_URL, the domain, stays). Everything else survives.
-REBUILD_CLEAR="VPS_IP SERVER_NAME ADMIN_REGISTERED COOLIFY_VERSION PROJECT_UUID DB_UUID APP_UUID KEY_UUID HOOK_ID WEBHOOK S3_STORAGE_UUID BACKUP_UUID ALERTS HANDOVER_DONE ROLLBACK_COMMIT LAST_DUMP PG_UPGRADE_OLD PG_UPGRADE_NEW PG_UPGRADE_DUMP COOLIFY_PROJECT_UUID COOLIFY_APP_UUID STAGING_APP_UUID UPTIME_SERVICE UPTIME_PAGES UPTIME_DOMAINS"
+REBUILD_CLEAR="VPS_IP SERVER_NAME ADMIN_REGISTERED COOLIFY_VERSION PROJECT_UUID DB_UUID APP_UUID KEY_UUID HOOK_ID WEBHOOK S3_STORAGE_UUID BACKUP_UUID ALERTS HANDOVER_DONE ROLLBACK_COMMIT LAST_DUMP PG_UPGRADE_OLD PG_UPGRADE_NEW PG_UPGRADE_DUMP COOLIFY_PROJECT_UUID COOLIFY_APP_UUID STAGING_APP_UUID WORKER_APP_UUID UPTIME_SERVICE UPTIME_PAGES UPTIME_DOMAINS"
 
 rebuild_clears() {
   case " $REBUILD_CLEAR " in *" $1 "*) return 0 ;; esac

@@ -262,6 +262,8 @@ printf '%s' "$W" | jq -Rs '{secret:.}' | gh api -X PATCH "repos/$(state_get GH_R
 echo "one secret on production, staging and the hook" && unset W
 ```
 
+With a worker (`WORKER_APP_UUID` in P, `WORKER.md`) the hook serves it too: rotate with
+`WORKER.md` step 6's block instead, which puts the value on the worker, staging and production.
 Staging goes first: if it refuses, production and the hook still share the old secret and
 nothing else changed; run the block again. `apps_webhook_secret` stops at the first app that
 refuses and says which ones have the new value. If staging got it and production refused, or

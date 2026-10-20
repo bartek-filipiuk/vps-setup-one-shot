@@ -244,6 +244,10 @@ first time. Move the old file aside (`mv .coolify.staging.env .coolify.staging.e
 it holds uuids only and the old server's hook id), then `STAGING.md` from step 1. Its
 `STAGING_APP_UUID` in the production state is among the keys `rebuild_inventory` clears.
 
+A worker (`WORKER.md`) comes back the same way, after its web app works: its code is in the
+app's repo and its tables in the app's database (restored with it), so `WORKER.md` from step 4.
+`WORKER_APP_UUID` is among the keys `rebuild_inventory` clears; `WORKER_BASE_DIR` stays.
+
 ## 8. Backups, alerts, services
 
 Backups, phase 06 step 1b from the attach on (the storage exists since step 4):

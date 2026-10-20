@@ -33,6 +33,15 @@ stopped. On exit it removes the containers, images, networks and volumes it crea
 pulled base images and the build cache stay, and nothing is pruned. CI runs it per fixture
 (`.github/workflows/fixtures.yml`).
 
+The worker of `WORKER.md` (`starter-worker/`, Node 22 with `pg`) is built and checked by the
+same script (`bash test/fixtures.sh starter-worker`): the health contract above, then a job
+enqueued with `enqueue.js` (as an argument and on stdin) runs, both cron slots are claimed, an
+unknown kind and a payload that is not an object are refused. Its two keys read: `db` is the
+database (`select 1 from jobs limit 1`), `status` also says whether the job loop is alive, so
+`503 {"status":"error","db":"ok"}` is a stuck loop with a working database. It has no domain;
+only Coolify's and Docker's checks call it.
+
 Lockfiles are generated, never written by hand: `go.sum` by `go mod tidy` (golang:1.25-alpine),
 `python-fastapi/requirements.txt` by `pip-compile --generate-hashes` from `requirements.in`
-(python:3.12-slim), installed with `--require-hashes`.
+(python:3.12-slim), installed with `--require-hashes`, `starter-worker/package-lock.json` by
+`npm install`, installed with `npm ci --omit=dev`.

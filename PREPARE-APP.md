@@ -85,8 +85,10 @@ Things to flag rather than silently fix:
   **Persistent Storage** → add a volume with the mount path) or moving to Postgres / S3. Ask.
 - **Database other than Postgres**: Coolify can run MySQL, MariaDB, MongoDB and Redis too, but
   this guide only covers Postgres. Say so; proceed only if the user wants to adapt.
-- **Background workers**: a second Coolify app from the same repo with a different start command.
-  Out of scope for this version; tell the user.
+- **Background workers** (cron jobs, a queue): a second Coolify app from the same repo, with
+  no domain and the app's database: `$SETUP_DIR/WORKER.md`, after this app is deployed. Move
+  the app's own in-process timers there only with the user; until then they keep running in
+  the web app.
 
 ## 3. Make it deployable
 

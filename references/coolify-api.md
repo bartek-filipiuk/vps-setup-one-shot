@@ -199,6 +199,24 @@ read-only on a live 4.3.23 on 2026-10-17 (`GET /version` = 4.3.23); everything e
 | `DELETE /databases/{uuid}?delete_volumes=true` | remove the staging database (`staging_teardown`) | **[verify]** |
 | `PATCH https://api.github.com/repos/{owner}/{repo}/hooks/{id}/config {secret}` | the GitHub side of the rotation (`STAGING.md` step 9, `HANDOVER.md` step 3) | GitHub REST, body on stdin (`gh api --input -`); `url` and `content_type` stay as they are |
 
+Worker (R24: `worker_create`, `worker_env_db`, `worker_enqueue`, `worker_jobs`,
+`worker_teardown`, `WORKER.md`). From the 4.3.23 source (`ApplicationsController.php`,
+`ApplicationDeploymentJob.php`, `routes/api.php`, read on GitHub at the tag); nothing of it has
+been sent to a Coolify yet **[verify]**.
+
+| Call or field | Use | Notes |
+|------|-----|-------|
+| `POST /applications/private-deploy-key` with `base_directory:"/worker"`, `autogenerate_domain:false` and no `domains` | the worker app from the web app's repo and deploy key (`worker_create`) | `domains` is optional; `autogenerate_domain` **defaults to true**, and with blank `domains` Coolify then sets `fqdn` to a generated `sslip.io` (or wildcard) URL; `false` leaves `fqdn` empty, so no proxy route. Confirmed in the 4.3.23 source at `ApplicationsController.php:1247` (the default) and `:1524` (the generated URL); not seen on a server **[verify]** |
+| `ports_exposes:"3000"` without `domains` or `ports_mappings` | the health check's port | `nullable` string in the validation, confirmed in the 4.3.23 source at `ApplicationsController.php:1836` (private-deploy-key rules); the health check falls back to the first `ports_exposes`. Without a domain or a port mapping nothing should be published on the host; not seen on a server **[verify]** |
+| `PATCH /applications/{uuid} {health_check_enabled, health_check_path, health_check_port}` | the worker's health check without a domain | allowed fields of the PATCH, confirmed in the 4.3.23 source at `ApplicationsController.php:3133`; the Dockerfile rule at `ApplicationDeploymentJob.php:3446`; not seen on a server. For a `dockerfile` app Coolify reads the Dockerfile: with a `HEALTHCHECK` it uses that one and adds none ("Custom healthcheck found in Dockerfile"); without one it injects `curl -s -X GET -f http://localhost:<port><path> \|\| wget -q -O- ... \|\| exit 1`, host `localhost` by default. The worker has its own `HEALTHCHECK` (busybox `wget` on `${PORT:-3000}`), the fields are sent so the UI shows the check **[verify]** |
+| `PATCH /applications/{uuid} {stop_grace_period}` | how long a running job may finish on a deploy or stop (`WORKER.md` step 5) | an application setting in the PATCH allow-list (`APPLICATION_SETTING_FIELDS`, spread into the list at `ApplicationsController.php:3133`), integer 1 to 3600; `DEFAULT_STOP_GRACE_PERIOD_SECONDS = 30` (`bootstrap/helpers/constants.php:38`), used for `docker stop` during a deploy. Confirmed in the 4.3.23 source; not sent, not seen on a server **[verify]** |
+| application container name | finding the worker's container (`worker_enqueue`) | `<uuid>-<time>` (`Hisu`), just `<uuid>` with "consistent container name" on, `<uuid>-pr-<n>` for previews: `generateApplicationContainerName`, `bootstrap/helpers/docker.php:347-357` at v4.3.23. Hence the anchored filter `name=^/?<uuid>(-\|$)`; during a rolling deploy two containers match and the newest is used **[verify]** |
+| `GET /applications/{uuid}` `.health_check_enabled`, `.health_check_path`, `.health_check_port` | `worker_create` rerun: nothing sent when they match | fields of the application model; not checked on a live GET **[verify]** |
+| `base_directory:"/worker"` | the Dockerfile and `.dockerignore` read from that directory | as for the landing's `/starter` **[verify]** |
+| `manual_webhook_secret_github` on the worker and the web app, one GitHub hook | push-to-deploy for both apps of one branch (`WORKER.md` step 6) | the manual endpoint looks up the apps by repository and branch, each checks the signature with its own secret (Known quirks below) **[verify]** |
+| `DELETE /applications/{uuid}?delete_volumes=true&delete_configurations=true&docker_cleanup=true` | remove the worker (`worker_teardown`, only with `--yes`) | as for staging **[verify]** |
+| `GET/POST /applications/{uuid}/scheduled-tasks`, `PATCH/DELETE .../{task_uuid}`, `GET .../executions`, `POST .../execute` | not used | exist in the 4.3.23 routes; a task is `{name, command, frequency (cron), container?, timeout?, enabled?}` and runs as `docker exec` into the running container, failing with "No containers running" while the app restarts. The worker's schedules run in the worker itself instead (`starter-worker/src/cron.js`), one way **[verify]** |
+
 Upgrades (R14: `db_major`, `pg_major_upgrade_plan`, the `status.sh` updates and postgres lines,
 `UPGRADE.md`). From the 4.3.23 source, `routes/api.php` and the Coolify docs; none of it has been
 exercised on a server yet **[verify]**.
@@ -261,7 +279,7 @@ from the internet only by the cloud firewall **[verify]**.
 | `ports_exposes` | required or ignored for compose **[verify]** |
 | `health_check_*` | honoured for compose, or only the services' own `healthcheck` **[verify]** |
 | `SERVICE_PASSWORD_*` in the compose file | generated by Coolify on import and kept across deploys **[verify]** |
-| Dockerfile `HEALTHCHECK` vs `health_check_*` on a `dockerfile` app | which one decides the status **[verify]** |
+| Dockerfile `HEALTHCHECK` vs `health_check_*` on a `dockerfile` app | settled from the 4.3.23 source (table "Worker" below): a Dockerfile `HEALTHCHECK` wins and Coolify adds none; not seen on a server **[verify]** |
 | `.dockerignore` with `base_directory` | read from the base directory **[verify]** |
 | localhost health check against nginx-unprivileged on 8080 and a dual-stack Python socket | as the fixtures listen; not seen on a server **[verify]** |
 

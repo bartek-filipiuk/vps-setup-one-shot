@@ -231,7 +231,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"current": None, "images": imgs})
         if p == "/databases/db-pg":
             return self.send(200, {"uuid": "db-pg", "name": "starter-db", "database_type": "standalone-postgresql", "image": "postgres:17-alpine",
-                                   "postgres_user": "app", "postgres_db": "app", "postgres_password": "pw-SECRET-123"})
+                                   "postgres_user": "app", "postgres_db": "app", "postgres_password": "pw-SECRET-123",
+                                   "internal_db_url": DBS[0]["internal_db_url"]})
         if p.startswith("/databases/db-pg1") or p == "/databases/db-latest":   # db-pg16, db-pg18 (R14), image by name
             u = p.split("/")[2]
             return self.send(200, {"uuid": u, "name": u + "-db", "database_type": "standalone-postgresql",
@@ -344,7 +345,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(201, {"uuid": u})
         if re.match(r"^/applications/[^/]+/envs$", p):
             b = json.loads(body); a = p.split("/")[2]
-            seq("env POST %s %s preview=%s value=%s" % (a, b["key"], b.get("is_preview"), "ok" if b.get("value") == ENV_VAL else "ok2" if b.get("value") == "v-SECRET-1 a=b|c" else "other"))
+            seq("env POST %s %s preview=%s value=%s" % (a, b["key"], b.get("is_preview"), "ok" if b.get("value") == ENV_VAL else "ok2" if b.get("value") == "v-SECRET-1 a=b|c"
+                else "dburl" if b.get("value") == DBS[0]["internal_db_url"] else "other"))
             ENVS.setdefault(a, []).append(env("ev-new", b["key"]))
             return self.send(201, {"uuid": "ev-new", "echo": b})   # the value comes back: the lib must not print it
         if p.endswith("/rollback"):
@@ -396,6 +398,7 @@ class H(BaseHTTPRequestHandler):
             if "manual_webhook_secret_github" in b:
                 seq("app PATCH %s webhook=%s" % (a, "ok" if b["manual_webhook_secret_github"] == "wh-sec-0123456789abcdef" else "other"))
             if a in CREATED and "domains" in b: CREATED[a]["fqdn"] = b["domains"]
+            if a in CREATED: CREATED[a].update({k: b[k] for k in ("health_check_enabled", "health_check_path", "health_check_port") if k in b})
             return self.send(200, {"uuid": a})
         if p.startswith("/s3-storages/"):
             u = p.split("/")[2]; storages[u].update({k: v for k, v in b.items() if k not in ("key", "secret")})
@@ -515,6 +518,16 @@ case "$*" in
       domain_absent) echo '{"ok":true,"page":"/status/acme-corp","domains":[],"added":[],"removed":[],"absent":["status.acme.com"],"changed":false}' ;;
     esac ;;
   *pg_database_size*) echo "${FAKE_DB_SIZE:-4096}" ;;
+  "exec -i cid node enqueue.js "*)
+    # the worker's enqueue.js (R24): the payload on stdin
+    cat > "$HOME/enqueue.stdin"; echo "enqueued job 7 $6" ;;
+  *" from jobs group by status "*)
+    case ${FAKE_JOBS:-rows} in
+      rows) printf '%s\n' 'done 12 0' 'failed 1 0' 'queued 3 42' ;;
+      empty) ;;
+      norel) echo 'ERROR:  relation "jobs" does not exist' >&2; echo 'LINE 1: select status, count(*) ...' >&2; exit 1 ;;
+      fail) echo 'psql: error: connection to server on socket failed' >&2; exit 2 ;;
+    esac ;;
   *" pg_dump "*) [ "${FAKE_PG_DUMP_FAIL:-0}" = 1 ] && exit 1; [ "${FAKE_PG_DUMP_EMPTY:-0}" = 1 ] && exit 0; printf 'PGDMP fake dump: %s\n' "$*" ;;
   *pg_restore*) cat >/dev/null; [ "${FAKE_PG_RESTORE_FAIL:-0}" = 1 ] && { echo "pg_restore: error: fake" >&2; exit 1; }; echo "pg_restore done" ;;
   *"drop schema public"*) echo "wiped" ;;
@@ -1656,6 +1669,126 @@ check "staging_teardown 404: only the database DELETE" "$(cat "$HOME/seq.log")" 
 check "staging_teardown 404: states cleared" "$(VPS_STATE=$SS state_get APP_UUID):$(VPS_STATE=$SS state_get DB_UUID):$(VPS_STATE=$PS state_get STAGING_APP_UUID)" "::"
 check "rebuild clears STAGING_APP_UUID" "$(rebuild_clears STAGING_APP_UUID && echo yes)" "yes"
 check "staging: argv log has the env POSTs" "$(grep -c '^curl .*/applications/a-new/envs' "$HOME/argv.log" | awk '{print ($1 > 0) ? "yes" : "no"}')" "yes"
+
+# worker (R24): a second app from the same repo, no domain, the web app's database; DATABASE_URL
+# through stdin only; enqueue and the job counts through the ssh stub; teardown only with --yes.
+WD=$HOME/wk; mkdir -p "$WD"; PW=$WD/.coolify.env
+printf '%s\n' APP_UUID=a-shop GH_REPO=acme/shop KEY_UUID=key-gh APP_NAME=shop PROJECT_UUID=p-acme ENV_NAME=production \
+  DB_UUID=db-pg STAGING_APP_UUID=a-new "APP_DIR=$WD" > "$PW"; chmod 600 "$PW"
+: > "$HOME/seq.log"
+VPS_STATE=$PW s3run worker_create /worker
+check "worker_create rc:output" "$rc:$out" "0:worker shop-worker: a-shop-worker (created in p-acme / production, branch main, base directory /worker, no domain, not deployed)
+health check /api/health on port 3000 set (no domain)"
+check "worker_create: exact POST (no domain, autogenerate off), then the health PATCH" "$(grep -E '^app ' "$HOME/seq.log")" 'app POST {"autogenerate_domain":false,"base_directory":"/worker","build_pack":"dockerfile","environment_name":"production","git_branch":"main","git_repository":"git@github.com:acme/shop.git","instant_deploy":false,"name":"shop-worker","ports_exposes":"3000","private_key_uuid":"key-gh","project_uuid":"p-acme","server_uuid":"s2"}
+app PATCH a-shop-worker health_check_enabled,health_check_path,health_check_port'
+check "worker_create: no domain anywhere" "$(grep -c domain= "$HOME/seq.log")" "0"
+check "worker_create: state" "$(VPS_STATE=$PW state_get WORKER_APP_UUID):$(VPS_STATE=$PW state_get WORKER_BASE_DIR):$(VPS_STATE=$PW state_get APP_UUID)" "a-shop-worker:/worker:a-shop"
+: > "$HOME/seq.log"
+VPS_STATE=$PW s3run worker_create /worker
+check "worker_create rerun: existing, nothing sent" "$rc:$out:$(grep -cE 'POST|PATCH' "$HOME/seq.log")" "0:worker shop-worker: a-shop-worker (existing, health check /api/health on port 3000):0"
+VPS_STATE=$PW s3run worker_create /worker 3000 /healthz
+check "worker_create rerun, other health path: PATCH only" "$rc:$(grep -c '^app POST' "$HOME/seq.log"):$(grep -c '^app PATCH a-shop-worker health_check' "$HOME/seq.log")" "0:0:1"
+: > "$HOME/seq.log"
+VPS_STATE=$PW s3run worker_create /worker 8080 /healthz
+check "worker_create rerun, other port: PATCH only" "$rc:$(grep -c '^app POST' "$HOME/seq.log"):$(grep -c '^app PATCH a-shop-worker health_check' "$HOME/seq.log")" "0:0:1"
+: > "$HOME/seq.log"
+VPS_STATE=$PW s3run worker_create /worker 8080 /healthz
+check "worker_create rerun, same port and path again: nothing sent" "$rc:$(grep -cE 'POST|PATCH' "$HOME/seq.log")" "0:0"
+: > "$HOME/seq.log"
+out=$({ VPS_STATE=$PW worker_create; VPS_STATE=$PW worker_create worker; VPS_STATE=$PW worker_create /a/../b; VPS_STATE=$PW worker_create /worker 0; VPS_STATE=$PW worker_create /worker 3000 health; } 2>&1)
+has "worker_create: usage" "$out" "^usage: worker_create BASE_DIR \[PORT\] \[HEALTH_PATH\]"
+has "worker_create: bad base directory" "$out" "^not a base directory: 'worker' \(like /worker\)$"
+has "worker_create: base directory with .." "$out" "^not a base directory: '/a/\.\./b' \(like /worker\)$"
+has "worker_create: bad port" "$out" "^not a port: '0'$"
+has "worker_create: bad health path" "$out" "^not a health check path: 'health' \(like /api/health\)$"
+grep -v '^KEY_UUID=' "$PW" > "$WD/nokey.env"
+VPS_STATE=$WD/nokey.env s3run worker_create /worker
+check "worker_create: no deploy key" "$rc:$out" "1:worker_create: APP_NAME, GH_REPO and KEY_UUID must be in $WD/nokey.env (the web app's state)"
+printf 'WORKER_APP_UUID=a-gone\nAPP_NAME=x\nGH_REPO=u/x\nKEY_UUID=key-gh\n' > "$WD/gone.env"
+VPS_STATE=$WD/gone.env s3run worker_create /worker
+check "worker_create: recorded uuid not in Coolify" "$rc:$(tail -n 1 <<<"$out")" "1:worker_create: WORKER_APP_UUID=a-gone in $WD/gone.env is not readable in Coolify; nothing created"
+check "worker_create refused: nothing sent" "$(grep -cE 'POST|PATCH' "$HOME/seq.log")" "0"
+printf 'APP_NAME=x\nGH_REPO=u/x\nKEY_UUID=key-gh\nGIT_BRANCH=release\nPROJECT_UUID=p-acme\n' > "$WD/branch.env"
+VPS_STATE=$WD/branch.env worker_create /app/worker 8080 /healthz >/dev/null 2>&1
+has "worker_create: GIT_BRANCH, port and base directory from the arguments" "$(cat "$HOME/seq.log")" '^app POST \{"autogenerate_domain":false,"base_directory":"/app/worker",.*"git_branch":"release",.*"name":"x-worker","ports_exposes":"8080"'
+
+# worker_env_db: the web app's internal URL onto the worker, on stdin, never printed
+: > "$HOME/seq.log"; n0=$(wc -l < "$HOME/argv.log")
+VPS_STATE=$PW s3run worker_env_db a-shop-worker
+check "worker_env_db rc:output" "$rc:$out" "0:set DATABASE_URL"
+check "worker_env_db: the database's internal URL sent" "$(grep '^env POST' "$HOME/seq.log")" "env POST a-shop-worker DATABASE_URL preview=False value=dburl"
+check "worker_env_db: the URL is on no command line and in no output" "$(tail -n +"$((n0 + 1))" "$HOME/argv.log" | grep -c 'pw-SECRET-123'):$(grep -c 'pw-SECRET-123' <<<"$out")" "0:0"
+VPS_STATE=$PW s3run worker_env_db a-shop
+check "worker_env_db: refuses the web app itself" "$rc:$out" "1:worker_env_db: a-shop is the web app itself, not the worker; nothing sent"
+grep -v '^DB_UUID=' "$PW" > "$WD/nodb.env"
+VPS_STATE=$WD/nodb.env s3run worker_env_db a-shop-worker
+check "worker_env_db: no DB_UUID" "$rc:$out" "1:worker_env_db: no DB_UUID in $WD/nodb.env; the worker uses the web app's database"
+printf 'DB_UUID=db-stg\n' > "$WD/nourl.env"
+VPS_STATE=$WD/nourl.env s3run worker_env_db a-shop-worker
+check "worker_env_db: no internal URL" "$rc:$out" "1:worker_env_db: database db-stg has no internal_db_url; nothing sent"
+VPS_STATE=$PW s3run worker_env_db '../x'
+check "worker_env_db: bad uuid" "$rc" "1"
+check "worker_env_db refused: one env POST in all" "$(grep -c '^env POST' "$HOME/seq.log")" "1"
+
+# worker_enqueue: the payload checked here, then on stdin into node enqueue.js in the container
+: > "$HOME/seq.log"; : > "$HOME/docker.log"
+VPS_STATE=$PW s3run worker_enqueue echo '{"hello": 1}'
+check "worker_enqueue rc:output" "$rc:$out" "0:enqueued job 7 echo"
+check "worker_enqueue: payload on stdin, compact" "$(cat "$HOME/enqueue.stdin")" '{"hello":1}'
+has "worker_enqueue: the worker's container by its uuid, anchored" "$(cat "$HOME/docker.log")" '^docker ps -q -f name=\^/\?a-shop-worker\(-\|\$\)$'
+has "worker_enqueue: node enqueue.js KIND - in the container" "$(cat "$HOME/docker.log")" '^docker exec -i cid node enqueue\.js echo -$'
+VPS_STATE=$PW s3run worker_enqueue prune
+check "worker_enqueue: default payload {}" "$rc:$(cat "$HOME/enqueue.stdin")" "0:{}"
+: > "$HOME/seq.log"
+out=$({ VPS_STATE=$PW worker_enqueue; VPS_STATE=$PW worker_enqueue 'Bad;kind'; VPS_STATE=$PW worker_enqueue echo '[1]'; VPS_STATE=$PW worker_enqueue echo '{nope'; } 2>&1)
+has "worker_enqueue: usage" "$out" "^usage: worker_enqueue KIND \[JSON\]$"
+has "worker_enqueue: bad kind" "$out" "^not a job kind: 'Bad;kind'"
+check "worker_enqueue: not an object, not JSON" "$(grep -c '^worker_enqueue: the payload must be a JSON object' <<<"$out")" "2"
+printf 'DB_UUID=db-pg\n' > "$WD/noworker.env"
+VPS_STATE=$WD/noworker.env s3run worker_enqueue echo
+check "worker_enqueue: no worker yet" "$rc:$out" "1:worker_enqueue: no WORKER_APP_UUID in $WD/noworker.env (WORKER.md step 4)"
+FAKE_NO_CONTAINER=1 VPS_STATE=$PW s3run worker_enqueue echo
+check "worker_enqueue: worker not running" "$rc:$out" "1:no running container for the worker a-shop-worker"
+check "worker_enqueue refused: no ssh" "$(grep -c '^ssh' "$HOME/seq.log")" "1"
+
+# worker_jobs: read-only counts per status from psql in the database container
+: > "$HOME/docker.log"
+VPS_STATE=$PW s3run worker_jobs
+check "worker_jobs rc:output" "$rc:$out" "0:jobs done: 12
+jobs failed: 1
+jobs queued: 3 (the oldest due one waits 42s)"
+has "worker_jobs: psql as the database's user" "$(cat "$HOME/docker.log")" '^docker exec cid psql -U app -d app -tA -F +-c select status, count\(\*\)'
+FAKE_JOBS=norel VPS_STATE=$PW s3run worker_jobs
+check "worker_jobs: no table yet" "$rc:$out" "1:worker_jobs: no jobs table in database db-pg yet; the worker creates it when it starts (WORKER.md step 5)"
+FAKE_JOBS=empty VPS_STATE=$PW s3run worker_jobs
+check "worker_jobs: an empty table" "$rc:$out" "0:jobs: none yet"
+FAKE_JOBS=fail VPS_STATE=$PW s3run worker_jobs
+check "worker_jobs: psql error" "$rc:$(tail -n 1 <<<"$out")" "1:worker_jobs: could not read the jobs of database db-pg"
+check "worker_jobs: the ssh script only reads (no insert, update, delete, drop)" "$(grep -ciE 'insert|update|delete|drop|truncate' "$HOME/ssh.stdin")" "0"
+
+# worker_teardown: only with --yes, never the web app's or staging's uuid; tables stay
+: > "$HOME/seq.log"
+s3run worker_teardown "$PW"
+check "worker_teardown without --yes" "$rc:$out" "1:worker_teardown: refusing without --yes. This deletes the worker app a-shop-worker; queued jobs stop running (the jobs table stays). Ask the user, then: worker_teardown $PW --yes"
+cp -p "$PW" "$WD/twisted.env"; VPS_STATE=$WD/twisted.env state_set WORKER_APP_UUID a-shop
+s3run worker_teardown "$WD/twisted.env" --yes
+check "worker_teardown: the web app refused" "$rc:$out" "1:worker_teardown: WORKER_APP_UUID in $WD/twisted.env is the APP_UUID; nothing sent"
+VPS_STATE=$WD/twisted.env state_set WORKER_APP_UUID a-new
+s3run worker_teardown "$WD/twisted.env" --yes
+check "worker_teardown: the staging app refused" "$rc:$out" "1:worker_teardown: WORKER_APP_UUID in $WD/twisted.env is the STAGING_APP_UUID; nothing sent"
+check "worker_teardown refused: nothing sent" "$(cat "$HOME/seq.log")" ""
+s3run worker_teardown "$PW" --yes
+check "worker_teardown rc:output" "$rc:$out" "0:worker app shop-worker (a-shop-worker) deleted
+left as they are: the jobs and cron_runs tables in the app's database (drop them by hand if they should go), the worker directory in the repo, and the GitHub webhook (the web app uses it)"
+check "worker_teardown: one DELETE with the volume flags" "$(cat "$HOME/seq.log")" "DELETE /applications/a-shop-worker?delete_volumes=true&delete_configurations=true&docker_cleanup=true"
+check "worker_teardown: state cleared, the web app kept" "$(VPS_STATE=$PW state_get WORKER_APP_UUID):$(VPS_STATE=$PW state_get WORKER_BASE_DIR):$(VPS_STATE=$PW state_get APP_UUID):$(VPS_STATE=$PW state_get DB_UUID)" "::a-shop:db-pg"
+s3run worker_teardown "$PW" --yes
+check "worker_teardown rerun: nothing left" "$rc:$out" "1:worker_teardown: no WORKER_APP_UUID in $PW; nothing to delete"
+VPS_STATE=$PW state_set WORKER_APP_UUID a-gone; : > "$HOME/seq.log"
+s3run worker_teardown "$PW" --yes
+check "worker_teardown: already gone (404)" "$rc:$(head -n 1 <<<"$out"):$(VPS_STATE=$PW state_get WORKER_APP_UUID):$(grep -c DELETE "$HOME/seq.log")" "0:worker app a-gone not in Coolify any more (404); cleared from the state::0"
+check "rebuild clears WORKER_APP_UUID, keeps WORKER_BASE_DIR" "$(rebuild_clears WORKER_APP_UUID && echo yes):$(rebuild_clears WORKER_BASE_DIR || echo no)" "yes:no"
+check "worker: no database password in any output" "$(grep -c 'pw-SECRET-123' "$HOME/outputs.log")" "0"
 
 # uptime checks (R06b): kuma.env, kuma_init, kuma_targets, kuma_sync, kuma_status; kuma.js runs in the
 # fake docker (its plan on the ssh stdin and its own stdin, never on a command line). Own state file.
