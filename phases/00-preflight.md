@@ -107,8 +107,9 @@ phase 04, and tell them where the backup is.
 
 ## 6. Cost and time, said plainly
 
-"A 4 GB VPS costs about 5-10 EUR per month, billed by the hour; you can delete it any time and
-billing stops. This takes about an hour, mostly waiting for installs and DNS."
+"A 4 GB VPS is billed by the hour; I will show you Hetzner's current monthly prices for your
+location before creating anything, and you can delete it any time and billing stops. Most of the
+time goes to waiting for installs and DNS; the whole run has not been timed end to end yet."
 
 On `PROVIDER=other` with a dedicated server, say instead: "A dedicated server is a monthly
 contract, often with a setup fee and a notice period; check both before ordering."

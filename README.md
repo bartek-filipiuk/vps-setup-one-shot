@@ -1,6 +1,6 @@
 # vps-setup-one-shot
 
-Your own deploy server in about an hour, with an AI coding agent guiding you through it.
+Your own deploy server, with an AI coding agent guiding you through it.
 
 You end up with a VPS (Hetzner, or any Ubuntu 24.04 server) running [Coolify](https://coolify.io),
 the panel on its own HTTPS domain, and a Next.js + Postgres landing page deployed to your domain.
@@ -55,7 +55,9 @@ Read /path/to/vps-setup-one-shot/PREPARE-APP.md and prepare this app for deploym
 
 ## What it costs
 
-A 4 GB server is about 5-10 EUR per month, billed by the hour. Optional Hetzner backups add 20%.
+A 4 GB server costs what Hetzner charges for it that day, billed by the hour: phase 01 lists every 4 GB type with its
+monthly price for your location before anything is created (prices and the available types change; CX22, for example, is
+no longer offered). Optional Hetzner backups add 20%.
 Optional off-site database backups to Hetzner Object Storage have their own monthly price.
 Delete the server and billing stops; `~/.config/vps-setup/SERVER.md` lists the teardown commands.
 
