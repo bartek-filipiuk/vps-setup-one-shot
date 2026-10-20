@@ -177,7 +177,8 @@ export type SignInRequest = { origin: string | null; referer: string | null; xff
 
 // handleSignIn: POST /api/auth/sign-in. The answer never depends on whether the address has an
 // account (none exist before the first sign-in), and an address over its limit gets the same
-// "sent" answer without a mail, so nobody can flood an inbox or probe for accounts.
+// "sent" answer without a mail, so nobody can probe for accounts. This limits inbox flooding, it does not
+// prevent it: plus-addresses (a+1@, a+2@) count as separate addresses, the per-IP limit still applies.
 export async function handleSignIn(
   db: Db,
   req: SignInRequest,

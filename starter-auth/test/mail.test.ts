@@ -10,8 +10,8 @@ import { logger } from "./fake-db.ts";
 const base = { SITE_URL: "https://app.example.com/", MAIL_FROM: "App <no-reply@example.com>" };
 
 test("readConfig: MAIL_LOG=1 needs no SMTP and wins over it", () => {
-  const c = readConfig({ ...base, MAIL_LOG: "1", SMTP_URL: "smtps://u:p@smtp.example.com" });
-  assert.deepEqual(c, { siteUrl: "https://app.example.com", appName: "app.example.com", mail: { mode: "log", from: "App <no-reply@example.com>" } });
+  const c = readConfig({ ...base, SITE_URL: "http://localhost:3000", MAIL_LOG: "1", SMTP_URL: "smtps://u:p@smtp.example.com" });
+  assert.deepEqual(c, { siteUrl: "http://localhost:3000", appName: "localhost", mail: { mode: "log", from: "App <no-reply@example.com>" } });
   assert.deepEqual(transportOptions(c.mail), { jsonTransport: true });
   const lines = describe(c, { SMTP_URL: "x" });
   assert.match(lines[0], /^mail: MAIL_LOG=1, nothing is sent: sign-in links go to this log, and anyone who reads the log can sign in/);
@@ -47,6 +47,7 @@ test("readConfig: missing or wrong settings throw, and no message repeats the UR
     [{}, /SITE_URL is not set/],
     [{ SITE_URL: "app.example.com" }, /SITE_URL is not set/],
     [{ SITE_URL: "ftp://app.example.com", MAIL_LOG: "1" }, /must start with https:\/\/ or http:\/\//],
+    [{ ...base, MAIL_LOG: "1" }, /MAIL_LOG=1 is refused when SITE_URL is https:\/\//],
     [{ ...base }, /SMTP_URL is not set \(or MAIL_LOG=1 for a log-only dev run\)/],
     [{ ...base, MAIL_LOG: "0" }, /SMTP_URL is not set/],
     [{ SITE_URL: base.SITE_URL, SMTP_URL: "smtps://u:p@h.example.com" }, /MAIL_FROM is not set/],

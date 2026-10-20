@@ -41,7 +41,8 @@ in; the app says so at start).
   and a new one is made at every sign-in. Sign-out deletes the row.
 - Limits in Postgres, per 15 minutes: 20 sign-in requests per IP (the last `X-Forwarded-For`
   entry, the one Coolify's proxy adds), 5 mails per address (over it the answer stays "sent",
-  without a mail, so nobody can flood an inbox or learn anything).
+  without a mail, so nobody learns anything). This limits inbox flooding, it does not prevent
+  it: `a+1@` and `a+2@` count as separate addresses; the per-IP limit still applies.
 - Logged: "link requested", "signed in user <id>", the provider's message id. Never a token, a
   link or an address, except in `MAIL_LOG=1` mode.
 - Turn the provider's click tracking off for these mails: it rewrites the link through the

@@ -21,6 +21,7 @@ export function readConfig(env: Env = process.env): Config {
   const appName = (env.APP_NAME ?? "").trim() || site.hostname;
   const from = (env.MAIL_FROM ?? "").trim();
 
+  if (env.MAIL_LOG === "1" && site.protocol === "https:") throw new Error("MAIL_LOG=1 is refused when SITE_URL is https:// (a public site): anyone who reads the log could sign in as anyone. Remove MAIL_LOG and set SMTP_URL");
   if (env.MAIL_LOG === "1") return { siteUrl, appName, mail: { mode: "log", from: from || `${appName} <no-reply@example.com>` } };
 
   const raw = env.SMTP_URL ?? "";

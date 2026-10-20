@@ -40,7 +40,7 @@ in `references/coolify-api.md`.
 ```
 
 - The API fails: the setup is incomplete. Tell the user to run `$SETUP_DIR/verify.sh`.
-- The app and its database need about 300 MB of memory and a few GB of disk. With less than
+- The app and its database need about 300 MB of memory [verify] and a few GB of disk. With less than
   1 GB of memory free or the disk above 80 %, say so first.
 - An SMTP provider: the user has one or picks one (Brevo, Postmark, Mailgun, Amazon SES, Resend,
   or the SMTP of their own mailbox for a first test). Free tiers are enough for sign-in mail.
@@ -296,8 +296,8 @@ the provider's servers).
   `rssh "docker exec \$(docker ps -q -f name=<DB_UUID>) psql -U app -d app -c 'delete from sessions'"`
   with the user's yes.
 - **A staging copy** (`STAGING.md`): its own `SITE_URL` (`https://staging.<domain>`), and for
-  mail either the provider's test mode or a sandbox, or `MAIL_LOG=1` only behind the staging
-  basic auth and only when everyone who can read the staging logs may sign in as anyone there.
+  mail the provider's test mode or a sandbox. `MAIL_LOG=1` does not work there: the app refuses
+  to start with it when `SITE_URL` is `https://`.
 - **Slow mail through the worker** (`WORKER.md`): a job kind that sends, enqueued by the app.
 - **A page behind sign-in**: `starter-auth/README.md` ("A page behind sign-in"), in the app's
   repo as `README.md`.

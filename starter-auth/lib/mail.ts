@@ -32,7 +32,7 @@ function transport(m: MailSettings): Transporter {
 // sendMail: in log mode prints one line `mail: {"to":...,"subject":...,"text":...}` (the sign-in
 // link included; that is the point of the mode); over SMTP only the message id is logged.
 export async function sendMail(m: MailSettings, mail: Mail, log: { log(s: string): void } = console): Promise<void> {
-  const info = await transport(m).sendMail({ from: m.from, to: mail.to, subject: mail.subject, text: mail.text, html: mail.html });
+  const info = await transport(m).sendMail({ from: m.from, to: { name: "", address: mail.to }, subject: mail.subject, text: mail.text, html: mail.html });
   if (m.mode === "log") {
     log.log(`mail: ${JSON.stringify({ to: mail.to, subject: mail.subject, text: mail.text })}`);
   } else {
