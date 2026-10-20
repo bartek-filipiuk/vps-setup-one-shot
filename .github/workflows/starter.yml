@@ -2,10 +2,10 @@ name: starter
 
 on:
   pull_request:
-    paths: ['starter/**']
+    paths: ['starter/**', 'starter-auth/**', '.github/workflows/starter.yml']
   push:
     branches: [main]
-    paths: ['starter/**']
+    paths: ['starter/**', 'starter-auth/**', '.github/workflows/starter.yml']
 
 permissions:
   contents: read
@@ -17,9 +17,13 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [starter, starter-auth]
     defaults:
       run:
-        working-directory: starter
+        working-directory: ${{ matrix.dir }}
     env:
       NEXT_TELEMETRY_DISABLED: 1
     steps:
@@ -28,6 +32,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: starter/package-lock.json
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
       - run: npm ci
+      - name: unit tests (starter-auth only; fake database, mail to the JSON transport, nothing sent)
+        if: matrix.dir == 'starter-auth'
+        run: node --version && npm test
       - run: npm run build

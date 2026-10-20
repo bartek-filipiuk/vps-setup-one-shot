@@ -31,7 +31,8 @@ Or install it as a Claude Code plugin, no clone needed:
 `claude plugin install vps-setup-one-shot@bartek-filipiuk`), then type `/vps-setup` (or `/vps-setup-one-shot:vps-setup` if another command has that name). Later:
 `/vps-status`, `/vps-doctor`, `/vps-checkup`, and in the repo of an app you already have,
 `/vps-prepare-app` (later `/vps-staging` for a staging copy of it, `/vps-worker` for a
-background worker next to it).
+background worker next to it), and `/vps-auth` for a new app with sign-in by email link and
+mail.
 
 Any other agent (Codex, Cursor, ...) works the same way: open it in that folder and say
 `Read SETUP.md and guide me through it.` `AGENTS.md` lists every runbook and the matching command.
@@ -123,6 +124,12 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   as `worker/`, deployed as a second Coolify app from the same repo with no domain, keeping a job
   queue and its schedules in the app's own Postgres. The web app enqueues a job with one SQL
   insert; a push deploys both; removal only on your yes.
+- `AUTH.md` starts a new app with sign-in: `starter-auth/` (the starter's plumbing with sign-in
+  by a link sent by email, no passwords, sessions and rate limits in Postgres) becomes your own
+  private repo and a Coolify app with its own database, through the same steps as phase 05. Mail
+  goes over SMTP from the provider you pick; you type its login and password into your own
+  terminal and they go to Coolify on stdin. The SPF, DKIM and DMARC records are yours to add,
+  copied from the provider's page.
 - `SERVICES.md` puts a self-hosted tool next to your apps as a Coolify one-click service on its
   own domain: Umami, n8n, Uptime Kuma or Forgejo, with a DNS gate, the HTTPS wait, the first
   login, what is and is not backed up, and removal only on your yes. `status.sh` shows a line
@@ -267,6 +274,13 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   app has been created in a Coolify. An app with no domain (`autogenerate_domain:false`), the
   health check without a domain and one webhook deploying both apps come from the Coolify 4.3.23
   source and are marked `[verify]` in `references/coolify-api.md`.
+- Sign-in and mail (R24, second half: `AUTH.md`, `starter-auth/`) are built and checked with
+  Docker and a real Postgres in CI (`test/fixtures.sh starter-auth`: an end-to-end sign-in with
+  the mail read from the container's log, `MAIL_LOG=1`, nothing sent; single use, the session
+  cookie, posts from another site refused, the per-address limit, sign-out), with unit tests for
+  the logic (`npm test` in `starter-auth/`), and `test/starter-variants.sh` keeps the shared
+  plumbing identical to the starter's. They have **not been run on a real server yet**, and no
+  sign-in mail has been sent through a real SMTP provider by this guide.
 - `UPGRADE.md` (R14), `db_major`, `pg_major_upgrade_plan`, the `RESTORE_FROM_DB` guard of
   `db_restore` and the `status.sh` updates and postgres lines are tested against a fake Coolify
   API, a stubbed `ssh` and a fake `docker` only (`test/lib.test.sh`, `test/status.test.sh`) and

@@ -41,7 +41,19 @@ database (`select 1 from jobs limit 1`), `status` also says whether the job loop
 `503 {"status":"error","db":"ok"}` is a stuck loop with a working database. It has no domain;
 only Coolify's and Docker's checks call it.
 
+The sign-in app of `AUTH.md` (`starter-auth/`, the starter's Dockerfile with Next.js 16, `pg`
+and `nodemailer`) is checked by the same script too (`bash test/fixtures.sh starter-auth`): the
+health contract above (`select 1 from users limit 1`), then a whole sign-in against the real
+Postgres with `MAIL_LOG=1`, so the mail is read from the container's log and nothing is sent:
+the request, the link in the mail, the confirm page (opening it uses nothing), the confirm post,
+the session cookie (`HttpOnly`, `SameSite=Lax`, no `Secure` on the test's http address), the
+protected page with and without it, the link refused a second time, posts from another site and
+without an `Origin` refused (403), five mails for six requests from one address, sign-out. Its
+image has no `HEALTHCHECK`, like the starter's (the Dockerfile is the same file); the script
+skips those two checks for it only, and Coolify's own health check calls `/api/health`.
+
 Lockfiles are generated, never written by hand: `go.sum` by `go mod tidy` (golang:1.25-alpine),
 `python-fastapi/requirements.txt` by `pip-compile --generate-hashes` from `requirements.in`
 (python:3.12-slim), installed with `--require-hashes`, `starter-worker/package-lock.json` by
-`npm install`, installed with `npm ci --omit=dev`.
+`npm install`, installed with `npm ci --omit=dev`, `starter-auth/package-lock.json` by `npm
+install` (the starter's lockfile plus `nodemailer`), installed with `npm ci`.

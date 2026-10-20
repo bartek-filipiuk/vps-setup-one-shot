@@ -179,11 +179,20 @@ Rules that apply to every item:
   a health route without a domain), `WORKER.md` (copied into the app's repo as `worker/`, a second
   Coolify app on the same repo and deploy key with `base_directory`, no domain, the app's
   `DATABASE_URL`, one webhook secret for every app of the repo), and `worker_create`,
-  `worker_env_db`, `worker_enqueue`, `worker_jobs`, `worker_teardown` in `lib.sh`. Done when: the
-  harness deploys the worker next to the starter, a job enqueued from the web app runs, a push
-  deploys both, and the teardown leaves the web app untouched.
-  (Worker half: built and checked against a real Postgres in CI, fake-API tests; not run on a
-  server yet. Auth and transactional mail: not started.)
+  `worker_env_db`, `worker_enqueue`, `worker_jobs`, `worker_teardown` in `lib.sh`. Auth half:
+  `starter-auth/` (Next.js 16, `pg`, `nodemailer`: sign-in by email link with hashed,
+  single-use 15-minute tokens, sessions and rate limits in Postgres, a confirm step against link
+  prefetch by mail scanners and login CSRF, no auth secret, mail over SMTP from any provider or
+  into the log for dev and CI), `AUTH.md` (`/vps-auth`: a new app from it through the phase-05
+  machinery, the SMTP credentials typed by the user and sent on stdin, deliverability DNS as the
+  user's step), `test/starter-variants.sh` (the shared plumbing stays identical to the
+  starter's). Done when: the harness deploys the worker next to the starter, a job enqueued from
+  the web app runs, a push deploys both, and the teardown leaves the web app untouched; and an
+  app from `starter-auth/` on the harness domain gets a sign-in mail into a real inbox and the
+  protected page opens.
+  (Both halves built and checked against a real Postgres in CI, the auth half with an end-to-end
+  sign-in and the mail read from the log; fake-API tests for the helpers; not run on a server
+  yet, and no mail sent through a real SMTP provider yet.)
 
 ## Ideas
 

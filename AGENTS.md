@@ -20,6 +20,7 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 | an existing app onto the server, from its repo | `PREPARE-APP.md` | `/vps-prepare-app` |
 | a staging copy of an app from its staging branch, promotion by merge | `STAGING.md` | `/vps-staging` |
 | a cron-and-queue worker as a second app from the same repo | `WORKER.md` | `/vps-worker` |
+| a new app with sign-in by email link and transactional mail, from starter-auth/ | `AUTH.md` | `/vps-auth` |
 | back to the previous version after a bad deploy | `ROLLBACK.md` | `/vps-rollback` |
 | a database back from an off-site backup | `RESTORE.md` | `/vps-restore` |
 | a self-hosted tool on its own domain | `SERVICES.md` | `/vps-services` |
@@ -35,7 +36,9 @@ runbook step; it names the file. `test/packaging.sh` parses this table.
 `PREPARE-APP.md` (moving an existing app onto the server), `STAGING.md` (a staging app and
 database from the `staging` branch on the same server, promotion by merge, teardown), `WORKER.md`
 (a cron-and-queue worker from `starter-worker/` as a second app from the app's repo, no domain,
-the app's database), `ROLLBACK.md` (back to the previous
+the app's database), `AUTH.md` (a new app with sign-in by email link and transactional mail
+from `starter-auth/`, through the phase-05 machinery, SMTP from any provider on stdin),
+`ROLLBACK.md` (back to the previous
 version after a bad deploy), `RESTORE.md` (a database back from an off-site S3 backup), `DOCTOR.md`
 (from "my app is down" to a fix or to "this needs a human"), `HANDOVER.md` (a server or a
 project to a client, or a colleague joining, and removing the old access), `SERVICES.md`
@@ -70,7 +73,12 @@ disk growth, cost and the secrets vault, ending with the actions; read-only),
 `providers.md`), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `starter-worker/` (the worker `WORKER.md` copies into an
 app's repo: Node, `pg`, a job queue and schedules in Postgres, a health route without a domain;
-see `starter-worker/README.md`), `fixtures/` (the smallest app of each further stack: static,
+see `starter-worker/README.md`), `starter-auth/` (the app `AUTH.md` copies: the starter's
+plumbing with sign-in by email link, sessions and rate limits in Postgres and SMTP mail through
+`nodemailer`; its Dockerfile, ignores, Next config and shared UI files are the starter's byte for
+byte, checked by `test/starter-variants.sh`; `lib/db.ts`, the health route and
+`instrumentation.ts` differ on purpose, so a fix there is mirrored by hand; see
+`starter-auth/README.md`), `fixtures/` (the smallest app of each further stack: static,
 FastAPI, Go, compose; the model `PREPARE-APP.md` uses, see `fixtures/README.md`), `test/`
 (checks that need no server), `ROADMAP.md` (the plan, ids R01…, mirrored in `starter/app/roadmap.ts`), `.claude-plugin/` (the Claude Code plugin
 and marketplace manifests), `skills/` (one pointer per entry point, the plugin's commands),
@@ -119,18 +127,27 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   `age` from Ubuntu's apt for it. `lib.test.sh` and `checkup.test.sh` use a fake `age` and run
   without it.
 - `bash test/fixtures.sh` must print `ALL FIXTURES OK` (needs Docker with a recent compose v2,
-  for `up --wait --wait-timeout`; builds every fixture and `starter-worker/`, checks its health
-  contract, for the worker also a job through the queue and the cron slots against a real
-  Postgres, removes what it created by name, never prunes).
-  CI runs it per fixture when `fixtures/` or `starter-worker/` changes (`.github/workflows/fixtures.yml`).
+  for `up --wait --wait-timeout`; builds every fixture, `starter-worker/` and `starter-auth/`,
+  checks its health contract, for the worker also a job through the queue and the cron slots,
+  for `starter-auth` a whole sign-in by email link with `MAIL_LOG=1` (the mail read from the
+  container's log, nothing sent), all against a real Postgres; removes what it created by name,
+  never prunes). CI runs it per fixture when `fixtures/`, `starter-worker/` or `starter-auth/`
+  changes (`.github/workflows/fixtures.yml`).
 - `node --test starter-worker/test/*.test.js` must report `fail 0` (the worker's pure functions
   and the SQL it sends, against a fake database; no Postgres, no `npm install` needed).
+- `cd starter-auth && npm ci && npm test && npm run build`: `fail 0` (the sign-in logic and the
+  SQL it sends against a fake database, the settings, the mail through nodemailer's JSON
+  transport; no Postgres, no network, never a real mail) and a clean build. Node 22.18 or newer
+  (the tests are TypeScript, run with Node's type stripping).
+- `bash test/starter-variants.sh` must print `ALL VARIANT FILES OK`: the files `starter-auth/`
+  shares with `starter/` are identical, the shared dependency versions and the tsconfig agree,
+  and every variable `starter-auth/` reads is in its `.env.example`.
 - `shellcheck lib.sh verify.sh status.sh checkup.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins),
   and so is the server script `hostfw_script` prints (CI checks it, `lib.test.sh` too when shellcheck is installed);
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
   every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md`,
-  `PREPARE-APP.md`, `STAGING.md`, `WORKER.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md`, `CHECKUP.md`, `UPTIME.md` and `VAULT.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
+  `PREPARE-APP.md`, `STAGING.md`, `WORKER.md`, `AUTH.md`, `ROLLBACK.md`, `RESTORE.md`, `DOCTOR.md`, `HANDOVER.md`, `SERVICES.md`, `UPGRADE.md`, `REBUILD.md`, `CHECKUP.md`, `UPTIME.md` and `VAULT.md`, and fails on a fence left open. Tag blocks that are not shell (`text`,
   `json`, ...). `bash test/extract-blocks.test.sh` is its self-test and must print `ALL PASSED`.
 - `bash test/packaging.sh` must print `ALL POINTERS OK`: the "Entry points" table, the plugin and
   marketplace manifests, `skills/` and the Cursor rule agree, and the pointers carry no runbook
@@ -149,8 +166,9 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   `-e SC2034,SC2154`, because blocks set and read variables across blocks, at severity
   `warning`. Anything else is fixed in the code or disabled inline with a reason.
 - CI runs the same on every PR and push to main (`.github/workflows/ci.yml`); the starter build
-  (`npm ci && npm run build`) runs when `starter/` changes (`starter.yml`), the fixtures
-  (`test/fixtures.sh`) when `fixtures/` or `starter-worker/` changes (`fixtures.yml`). The full run on a real
+  (`npm ci && npm run build`, for `starter-auth/` also `npm test`) runs when `starter/` or
+  `starter-auth/` changes (`starter.yml`), the fixtures (`test/fixtures.sh`) when `fixtures/`,
+  `starter-worker/` or `starter-auth/` changes (`fixtures.yml`). The full run on a real
   server (`e2e.yml`) is manual only and still a stub that always fails. Actions are pinned by
   commit SHA with the version in a comment.
 - Changes to a phase: the PR says which run on a real server covered it, or is marked
