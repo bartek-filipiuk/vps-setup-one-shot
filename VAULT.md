@@ -298,7 +298,8 @@ the user deletes the old webhook in Discord. Not run yet.
 
 It lives in Coolify and in the GitHub hook only, never on this machine. `HANDOVER.md` step 3 has
 the rotation for one app; with a staging app (`STAGING_APP_UUID`), `STAGING.md` step 9's block
-puts one new value on every app of the repo and the hook. `apps_webhook_secret` says which apps
+puts one new value on every app of the repo and the hook, and with a worker (`WORKER_APP_UUID`)
+`WORKER.md` step 6's block does (the worker, a staging app and the web app). `apps_webhook_secret` says which apps
 already have the new value when one refuses; the block's text says how to finish. Prove it with
 the test push of phase 05 step 6 (`200`, a deployment `finished`). Not run yet.
 

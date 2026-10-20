@@ -186,6 +186,8 @@ printf '%s' "$S" | jq -Rs '{secret:.}' | gh api -X PATCH "repos/$(state_get GH_R
 
 With a staging app (`STAGING_APP_UUID` in the state, `STAGING.md`) the hook serves both apps
 with one secret: rotate with `STAGING.md` step 9's block instead, so both get the new value.
+With a worker (`WORKER_APP_UUID`, `WORKER.md`) use `WORKER.md` step 6's block, which covers the
+worker, a staging app and the web app.
 
 Then the test push from phase 05 step 6; expect `200`.
 

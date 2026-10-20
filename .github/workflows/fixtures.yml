@@ -2,10 +2,10 @@ name: fixtures
 
 on:
   pull_request:
-    paths: ['fixtures/**', 'test/fixtures.sh', 'test/fixtures-compose.ci.yaml', '.github/workflows/fixtures.yml']
+    paths: ['fixtures/**', 'starter-worker/**', 'test/fixtures.sh', 'test/fixtures-compose.ci.yaml', '.github/workflows/fixtures.yml']
   push:
     branches: [main]
-    paths: ['fixtures/**', 'test/fixtures.sh', 'test/fixtures-compose.ci.yaml', '.github/workflows/fixtures.yml']
+    paths: ['fixtures/**', 'starter-worker/**', 'test/fixtures.sh', 'test/fixtures-compose.ci.yaml', '.github/workflows/fixtures.yml']
 
 permissions:
   contents: read
@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fixture: [static, python-fastapi, go, compose]
+        fixture: [static, python-fastapi, go, compose, starter-worker]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: docker and compose versions

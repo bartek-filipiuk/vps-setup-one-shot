@@ -1,6 +1,6 @@
 {
   "name": "vps-setup-one-shot",
-  "description": "Runbooks an AI coding agent follows to set up and run a Hetzner/Ubuntu VPS with Coolify: setup, status, doctor, checkup, rollback, restore, upgrade, rebuild, handover, services, uptime, prepare an existing app, staging, secrets vault and rotation.",
+  "description": "Runbooks an AI coding agent follows to set up and run a Hetzner/Ubuntu VPS with Coolify: setup, status, doctor, checkup, rollback, restore, upgrade, rebuild, handover, services, uptime, prepare an existing app, staging, a background worker, secrets vault and rotation.",
   "author": {
     "name": "Bartek Filipiuk"
   },
