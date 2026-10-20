@@ -1,6 +1,6 @@
 ---
 name: vps-setup
-description: Guide the user through SETUP.md: a Hetzner or Ubuntu VPS with Coolify and a deployed starter app, about an hour. User-invoked only.
+description: Guide the user through SETUP.md: a Hetzner or Ubuntu VPS with Coolify and a deployed starter app. User-invoked only.
 disable-model-invocation: true
 ---
 The runbook is `${CLAUDE_PLUGIN_ROOT}/SETUP.md`. `${CLAUDE_PLUGIN_ROOT}` is a complete copy of the vps-setup-one-shot repo and is the repo root the runbook means (its `SETUP_DIR`).
