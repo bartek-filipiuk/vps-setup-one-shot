@@ -93,7 +93,8 @@ if it is newer; API details may have changed.
 . ./lib.sh; curl -s -o /dev/null --max-time 5 "http://$(state_get VPS_IP):8000" && echo "OPEN - fix firewall" || echo "closed"
 ```
 
-`OPEN` on a non-Hetzner server: the user adds a rule in their provider's cloud firewall that
-allows only 22, 80, 443. `ufw` is not enough, because Docker bypasses it.
+`OPEN` on Hetzner: the cloud firewall is not applied (phase 01). On another provider: the host
+firewall is off or incomplete; `. ./lib.sh; hostfw_status` says what (`CHECKUP.md` 3a), and
+phase 02 step 4 puts it in place. `ufw` is not enough, because Docker bypasses it.
 
 Run `./verify.sh`.

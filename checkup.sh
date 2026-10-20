@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Monthly checkup (CHECKUP.md): everything status.sh checks, plus what changes slowly: open ports
-# against the cloud firewall, the SSH daemon, Docker exposure, Coolify security advisories, the
-# backup success rate of the last 30 days, disk growth since the last checkup, the monthly
-# cost and whether the secrets vault on this machine is current. Ends with the actions, each
-# with its runbook.
+# against the firewall (Hetzner's cloud firewall, or the host firewall on another provider), the
+# SSH daemon, Docker exposure, Coolify security advisories, the backup success rate of the last
+# 30 days, disk growth since the last checkup, the monthly cost and whether the secrets vault on
+# this machine is current. Ends with the actions, each with its runbook.
 # Run from anywhere on YOUR machine: ./checkup.sh
 # Exit code: 0 all OK, 1 something needs attention (WARN or FAIL), 2 server or Coolify API unreachable.
 # Read-only on the server, in Coolify and at Hetzner (hcloud list and describe only). The one
@@ -65,15 +65,47 @@ action_for() {
 # kB -> "12.1 GB"
 gb() { awk -v k="$1" 'BEGIN { printf "%.1f GB", k / 1048576 }'; }
 
-# probe PORT -> open, closed or unknown, from this machine to the server's public IP. curl's
-# time_connect is 0 unless the TCP connection was made, so a silent open port counts as open.
-probe() {
-  local t rc
-  t=$(curl -s -o /dev/null --connect-timeout "$CHECKUP_PROBE_TIMEOUT" --max-time $((CHECKUP_PROBE_TIMEOUT + 3)) \
-    -w '%{time_connect}' "http://$ip:$1/" 2>/dev/null); rc=$?
-  [ "$rc" = 7 ] && { echo closed; return; }
-  if [ "$(awk -v t="${t:-0}" 'BEGIN { print ((t + 0 > 0) ? 1 : 0) }')" = 1 ]; then echo open; return; fi
-  case $rc in 28) echo closed ;; 0) echo open ;; *) echo unknown ;; esac
+# probe PORT -> open, closed or unknown, from this machine to the server's public IP (lib.sh).
+probe() { port_probe "$ip" "$1" "$CHECKUP_PROBE_TIMEOUT"; }
+
+# hostfw_line -> the firewall line of PROVIDER=other: the host firewall (vps-hostfw, phase 02
+# step 4) as its status reports it in the server facts, against the same ports as Hetzner's.
+hostfw_line() {
+  local hf short k seen=' ' extra='' missing='' mark=OK d probs='' w
+  hf=$(awk '$1 == "hostfw" { $1 = ""; sub(/^ /, ""); print }' <<<"$facts")
+  hv() { awk -v k="$1" '$1 == k { $1 = ""; sub(/^ /, ""); print; exit }' <<<"$hf"; }
+  if [ "$have_facts" = 0 ] || [ -z "$hf" ]; then
+    cline WARN "firewall" "n/a (could not read the server)"; return
+  fi
+  if [ "$(hv installed)" = no ]; then
+    cline WARN "firewall" "n/a (no host firewall: vps-hostfw is not installed; phase 02 step 4)"; return
+  fi
+  for k in $(hv tcp); do seen="${seen}tcp/$k "; done
+  [ "$(hv icmp)" = yes ] && seen="${seen}icmp "
+  for k in $seen; do case " $FIREWALL_EXPECT $ports_ok " in *" $k "*) ;; *) extra="$extra${extra:+, }$k" ;; esac; done
+  for k in $FIREWALL_EXPECT; do case $seen in *" $k "*) ;; *) missing="$missing${missing:+ }$k" ;; esac; done
+  d="host (vps-hostfw on $(hv iface)): in $FIREWALL_EXPECT${ports_ok:+ $ports_ok} only, IPv4 and IPv6"
+  short=$(hv short)
+  for w in $short; do
+    case $w in
+      active|persisted) ;;
+      not-persisted) mark=$(worst "$mark" WARN); probs="$probs; not persisted (vps-hostfw.service disabled: hostfw_confirm)" ;;
+      unit-failed) mark=FAIL; probs="$probs; vps-hostfw.service failed: the rules may not have come back at the last boot or Docker restart" ;;
+      trial-pending) mark=$(worst "$mark" WARN); probs="$probs; a trial is pending and reverts by itself (hostfw_confirm keeps it)" ;;
+      input4-off|input6-off) mark=FAIL; probs="$probs; no drop rule in INPUT for IPv${w:5:1}" ;;
+      docker-user4-unreferenced) mark=FAIL; probs="$probs; DOCKER-USER is not used by FORWARD (Docker's nftables backend?)" ;;
+      docker-user?-missing) mark=FAIL; probs="$probs; DOCKER-USER rules missing for IPv${w:11:1}" ;;
+      docker-user?-unguarded) mark=FAIL; probs="$probs; DOCKER-USER rules for IPv${w:11:1} without -i $(hv iface) or without the drop" ;;
+      docker-user?-shadowed) mark=FAIL; probs="$probs; another rule comes first in DOCKER-USER for IPv${w:11:1}" ;;
+      docker-nftables) mark=FAIL; probs="$probs; Docker uses its nftables backend: DOCKER-USER does not exist there" ;;
+      ipv6-ports-differ) mark=FAIL; probs="$probs; IPv6 opens tcp $(hv tcp6), IPv4 tcp $(hv tcp)" ;;
+      *) mark=$(worst "$mark" WARN); probs="$probs; $w" ;;
+    esac
+  done
+  [ -n "$missing" ] && { mark=$(worst "$mark" WARN); probs="$probs; missing $missing"; }
+  [ -n "$extra" ] && { mark=FAIL; probs="$probs; extra open: $extra"; }
+  [ -n "$probs" ] || probs=", DOCKER-USER guarded, persisted"
+  cline "$mark" "firewall" "$d$probs"
 }
 
 # --- status.sh as it is, without its RESULT line ---
@@ -90,7 +122,7 @@ have_facts=0; grep -qx 'facts done' <<<"$facts" && have_facts=1
 # --- Ports and firewall ---
 section "Ports and firewall"
 if [ "$provider" != hetzner ]; then
-  cline OK "firewall" "n/a (no cloud firewall API for this provider; it must let in only 22, 80 and 443: CHECKUP.md 3a)"
+  hostfw_line
 elif ! rules=$(firewall_rules "$FIREWALL_NAME" 2>&1); then
   cline WARN "firewall" "n/a ($(head -n 1 <<<"$rules"))"
 else

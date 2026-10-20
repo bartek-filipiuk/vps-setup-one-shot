@@ -117,6 +117,8 @@ Run them as written; `./verify.sh` leads. What differs on a rebuild:
 - Phase 01, Hetzner: reuse the `vps-setup` ssh key and the `vps-setup-fw` firewall (the phase
   says so). If `hcloud server list` still shows the old server, `coolify-1` is taken: record
   `state_set SERVER_NAME coolify-2` instead. The old one is step 10.
+- Phase 01, another provider: a new box installed in the panel (or the same one reinstalled,
+  which wipes it), checked with `server_check`; phase 02 step 4 puts the host firewall on it.
 - Phase 01 step 4, DNS: with `DNS_PROVIDER=cloudflare`, `dns_set_a` prints
   `A updated <old IP> -> <new IP>`. Run it also for every app domain (each app's `.coolify.env`
   has `COOLIFY_DOMAIN`) and every service domain. Any other DNS provider: the user changes the
@@ -290,7 +292,8 @@ older copies.
 Only after step 9 is green, and only if the old server still exists (`hcloud server list`, or the
 provider's panel): it is still billed. Deleting it is irreversible, so name it and wait for the
 user's yes: `hcloud server delete "<OLD SERVER_NAME from the state copy>"`. Keep the `vps-setup-fw`
-firewall and the `vps-setup` ssh key; the new server uses them.
+firewall and the `vps-setup` ssh key; the new server uses them. Another provider: the user
+cancels the old server in its panel (the notice period counts from then).
 
 Afterwards: `~/.config/coolify/config.before-rebuild-<DATE>` holds the old API token, which opens
 nothing now; delete it (`rm`). Keep the state copies until the user is happy, then delete them

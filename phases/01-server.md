@@ -5,7 +5,8 @@ records have been created (they may still be propagating; phase 04 waits for the
 
 Tell the user: "Now we create the server and a firewall that only lets in SSH and web traffic.
 The Coolify admin panel will never be open to the internet; we'll reach it through an SSH
-tunnel until it has its own HTTPS domain."
+tunnel until it has its own HTTPS domain." (On `PROVIDER=other` the server already exists and
+the firewall comes in phase 02 step 4, on the server itself.)
 
 ## Hetzner path (`PROVIDER=hetzner`)
 
@@ -98,13 +99,63 @@ Expect the server listed under "Applied To". From that moment only 22, 80, 443 a
 the server; anything else that was running on it is cut off, which is the point on a fresh box.
 Then continue with step 3 (SSH check) and step 4 (DNS).
 
-## Other provider (`PROVIDER=other`)
+## Other provider (`PROVIDER=other`): check the box the user installed
 
-Ask the user to create: Ubuntu 24.04, at least 2 vCPU / 4 GB RAM, their SSH public key added
-at creation (show them `cat $(state_get SSH_PUBKEY)`), and the provider's **cloud firewall**
-allowing inbound TCP 22, 80, 443 only. If the provider has no cloud firewall, say so plainly:
-the Coolify panel on port 8000 will be public until phase 04, so the admin account must be
-registered immediately after install. Record the IP: `state_set VPS_IP <ip>`.
+Dedicated servers and most non-Hetzner VPSs: the user installs the OS in the provider's panel
+(or through its API) and gives you the IP. Nothing here creates or buys a server.
+`references/providers.md` has the panel paths, rescue and out-of-band console per provider.
+
+### 1. In the provider's panel (user)
+
+Tell them what to pick when they install (or reinstall) the server:
+
+- **Ubuntu 24.04 LTS**, the plain server image.
+- **Their SSH public key** added at install (show them `cat "$(. ./lib.sh; state_get SSH_PUBKEY)"`).
+- At least 2 cores and 4 GB RAM.
+- **Disks:** one `/` partition with at least 40 GB free, on software RAID-1 when the server has
+  two disks. No small separate `/` with everything in `/home`: Docker lives in `/var/lib/docker`
+  and Coolify in `/data`.
+- A public IPv4 address (IPv6 is fine as well; the DNS records stay A only).
+- Before going on: where the provider's **rescue system and out-of-band console** are
+  (providers.md). That is the way back in if SSH ever locks out (phase 02).
+
+A reinstall wipes the disks; the provider's panel says so.
+
+### 2. Root access with the key (you)
+
+Record the IP: `. ./lib.sh; state_set VPS_IP <ip>`. Then try root with the key:
+`. ./lib.sh; rssh true && echo root-ok`.
+
+If that fails because the provider's image logs in as another user (the panel or its email
+says which; OVHcloud and Scaleway images often use a named user **[verify]**), copy that user's
+key to root once. `<user>` is the login the provider gave; the user runs it in their own
+terminal if `sudo` asks for a password:
+
+```
+. ./lib.sh; U="<user>"
+ssh -o StrictHostKeyChecking=accept-new "$U@$(state_get VPS_IP)" 'sudo install -d -m 700 /root/.ssh && sudo install -m 600 ~/.ssh/authorized_keys /root/.ssh/authorized_keys'
+rssh true && echo root-ok
+```
+
+This replaces root's `authorized_keys`: any key already there is gone (cloud images may put a
+`command="Please login as ..."` line there that refuses root **[verify]**). Phase 02 keeps root
+by key only, which Coolify needs.
+
+### 3. Check the box (you)
+
+```
+. ./lib.sh; server_check
+```
+
+Expect `OK` lines for `os` (Ubuntu 24.04), `cpu`, `memory`, `disk /`, `network` (the IP on the
+interface of the default route, which phase 02 step 4 guards), `machine` (`none` is bare
+metal) and `sshd port`. A `FAIL` stops here: tell the user which one and why (reinstall with
+another image or layout in the panel, or a bigger server). `WARN network` (the IP is not on the
+interface, so the box sits behind NAT): ask the user whether the provider maps the public IP
+to this box; the firewall still guards the default route's interface.
+
+Then step 3 below (SSH) and step 4 (DNS). Until phase 02 step 4 the box has no firewall; nothing
+listens on it but SSH yet, and Coolify comes only after the firewall (phase 03).
 
 ## 3. Check SSH (you)
 

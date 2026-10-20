@@ -21,6 +21,11 @@ Say this plainly: right now nothing is backed up. Two options, they can pick bot
 
 Option 1 only with the user's yes to the cost; it is their account and their money.
 
+`PROVIDER=other`: option 1 works the same with any S3-compatible bucket (the provider's own
+object storage, or Hetzner Object Storage in a Hetzner account of theirs): step 1b with that
+endpoint, bucket and region. Option 2 does not exist there; a dedicated server's backup space
+(FTP or NFS at most providers, `references/providers.md`) is not driven by this setup.
+
 ### 1a. Bucket and S3 credentials (user, in the Hetzner Console)
 
 The wording of the Console may differ **[verify]**:
@@ -145,6 +150,7 @@ Then write a summary the user can keep. No secrets in it.
 # My deploy server
 
 - Server: $(state_get SERVER_NAME) at $(state_get VPS_IP) ($(state_get PROVIDER)), SSH: ssh root@$(state_get VPS_IP)
+- Firewall: $([ "$(state_get PROVIDER)" = other ] && echo "on the server (vps-hostfw: INPUT and DOCKER-USER, tcp 22 80 443 and icmp only; check: cd $(state_get SETUP_DIR) && . ./lib.sh && hostfw_status; rescue and console of the provider: $(state_get SETUP_DIR)/references/providers.md)" || echo "Hetzner Cloud Firewall vps-setup-fw (tcp 22 80 443 and icmp only)")
 - Coolify: https://$(state_get COOLIFY_DOMAIN) (version $(state_get COOLIFY_VERSION) at setup)
 - Starter app: https://$(state_get APP_DOMAIN), repo $(state_get GH_REPO), local copy $(state_get APP_DIR)
 - Push-to-deploy: $(state_get WEBHOOK)
@@ -182,6 +188,7 @@ In that app's repo, tell your agent: Read $(state_get SETUP_DIR)/PREPARE-APP.md 
 ## Tear everything down (billing stops when the server is deleted)
 
 - Hetzner: hcloud server delete $(state_get SERVER_NAME); hcloud firewall delete vps-setup-fw; hcloud ssh-key delete vps-setup
+- Other provider: cancel the server in the provider's panel (mind the notice period); a reinstall or the end of the contract wipes its disks
 - Hetzner Object Storage (if used): delete the bucket $(state_get S3_BUCKET) and the vps-setup S3 credentials in the Console (billed until then)
 - Discord (if used): delete the Coolify webhook (Server Settings -> Integrations -> Webhooks)
 - DNS: delete the A records for $(state_get COOLIFY_DOMAIN) and $(state_get APP_DOMAIN) $([ "$(state_get DNS_PROVIDER)" = cloudflare ] && echo "(Cloudflare: DNS -> Records; nothing here deletes them; then My Profile -> API Tokens -> delete the vps-setup token and rm ~/.config/vps-setup/cloudflare.env)")

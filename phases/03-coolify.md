@@ -23,7 +23,19 @@ a message that Coolify is ready and a URL on port 8000. Then:
 ```
 
 Expect `coolify`, `coolify-db`, `coolify-redis`, `coolify-realtime` (and `coolify-proxy` after the
-first proxy start) with status `Up`.
+first proxy start) with status `Up`. `coolify-db` and `coolify-redis` healthy also mean traffic
+between containers works (it never passes the firewall's rules).
+
+`PROVIDER=other`: the install restarted Docker; check the host firewall is still in place, and
+that the panel port is closed from outside while Coolify listens on it:
+
+```
+. ./lib.sh; hostfw_status | tail -n 1; hostfw_probe
+```
+
+Expect `hostfw short active persisted` and 8000, 6001, 6002, 8080 `closed`. Anything else:
+stop and show the user (`CHECKUP.md` 3a explains each word); the panel must not be reachable
+before step 3.
 
 ## 2. Tunnel (you)
 
@@ -42,9 +54,6 @@ The redirects to `/dev/null` matter: without them your tool call waits for the b
 and hangs. Expect `tunnel-up` and a 200 or 302. (`lsof` exists on macOS and most Linux; if it
 is missing, `ss -ltn | grep ":$p "` does the same on Linux.) If a local port is busy, ask the user what is using it
 (often another dev server) and have them stop it; the panel's websocket expects these exact ports.
-
-Other providers without a cloud firewall: skip the tunnel, the user opens `http://<VPS_IP>:8000`
-right now. Registration must happen immediately, because the first visitor becomes the admin.
 
 ## 3. Register the admin (user)
 

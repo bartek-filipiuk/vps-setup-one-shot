@@ -10,7 +10,10 @@ log, explain the error to the user in plain words, and decide together. Do not l
 | `Host key verification failed` | a new server reused an IP you connected to before | `ssh-keygen -R <ip>`, retry |
 | `Permission denied (publickey)` | key not on the server, or passphrase key not loaded | `ssh-add`; check the key chosen in phase 00 was the one added at server creation |
 | `Connection timed out` | server still booting, or firewall without port 22 | wait 30 s; `hcloud firewall describe vps-setup-fw` |
-| locked out after phase 02 | hardening applied before key login worked | phase 02 recovery: Hetzner Rescue → reset root password → Console |
+| locked out after phase 02 | hardening applied before key login worked | phase 02 recovery: Hetzner Rescue → reset root password → Console; another provider: its rescue or console (`references/providers.md`) |
+| `Connection timed out` right after `hostfw_apply` (another provider) | the trial's rules cut the way in | wait until the time it printed (5 minutes): the rules remove themselves; then `rssh 'echo back'` and read `hostfw_status` |
+| timed out later, another provider, the panel says the server is on | host firewall, network | the provider's out-of-band console (`references/providers.md`), log in, `/usr/local/sbin/vps-hostfw status`; `/usr/local/sbin/vps-hostfw off` removes only its own rules |
+| `hostfw_apply`: `refusing` | a check before any change: sshd port not in the list, unclear default route, Docker's nftables backend, a pending trial | the message names it; phase 02 step 4 |
 
 ## Coolify install and panel
 

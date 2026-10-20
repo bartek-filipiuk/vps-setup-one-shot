@@ -33,8 +33,9 @@ The first visitor becomes admin for n8n and Forgejo, and Umami's default passwor
 is public: the address is on the internet from the moment HTTPS works, so the user logs in
 within minutes of step 4, not tomorrow.
 
-Forgejo over HTTPS needs nothing more. Git over SSH needs port 22222 open in the cloud firewall,
-which only allows 22, 80 and 443 (phase 01). Only if the user wants it, and after their yes:
+Forgejo over HTTPS needs nothing more. Git over SSH needs port 22222 open in the firewall,
+which only allows 22, 80 and 443 (phase 01 on Hetzner, phase 02 step 4 elsewhere). Only if the
+user wants it, and after their yes, on Hetzner:
 
 ```
 hcloud firewall add-rule vps-setup-fw --direction in --protocol tcp --port 22222 \
@@ -44,8 +45,15 @@ hcloud firewall add-rule vps-setup-fw --direction in --protocol tcp --port 22222
 
 The state key tells the monthly checkup (`CHECKUP.md` 3a) that this port is open on purpose.
 
-On `PROVIDER=other` the user adds the same rule in their provider's firewall; `ufw` is not
-enough, because Docker bypasses it.
+On `PROVIDER=other` the host firewall opens it (a trial, a fresh ssh connection, then it is kept;
+it also records `CHECKUP_PORTS_OK`):
+
+```
+. ./lib.sh; hostfw_port_add 22222
+```
+
+Expect `confirmed: tcp/22 tcp/80 tcp/443 tcp/22222 icmp kept` and `CHECKUP_PORTS_OK=tcp/22222`.
+Closing it again: `hostfw_port_remove 22222`.
 
 **Not supported yet:** MinIO and Plausible are not one-click templates on Coolify 4.3.23
 (Coolify ignores them), MinIO only as a hand-written compose file. Any other template is not
