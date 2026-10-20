@@ -39,6 +39,11 @@ echo "02 harden"
 rssh "sshd -T 2>/dev/null | grep -qx 'passwordauthentication no'" && ok "password SSH login disabled" || { bad "password SSH login still enabled"; next phases/02-harden.md; }
 rssh "swapon --show --noheadings | grep -q ." && ok "swap enabled" || { bad "no swap"; next phases/02-harden.md; }
 rssh "dpkg -s unattended-upgrades >/dev/null 2>&1" && ok "unattended-upgrades installed" || { bad "unattended-upgrades missing"; next phases/02-harden.md; }
+if [ "$(state_get PROVIDER)" = other ]; then
+  # the host firewall of phase 02 step 4 (vps-hostfw): rules in place and kept at boot
+  fw=$(rssh "if [ -x '$HOSTFW_PATH' ]; then '$HOSTFW_PATH' status --short; else echo 'not installed'; fi" 2>/dev/null)
+  [ "$fw" = "active persisted" ] && ok "host firewall active and persisted" || { bad "host firewall: ${fw:-could not read it}"; next phases/02-harden.md; }
+fi
 
 echo "03 coolify"
 rssh "docker ps --format '{{.Names}}' | grep -qx coolify" && ok "coolify container running" || { bad "Coolify not running"; next phases/03-coolify.md; }

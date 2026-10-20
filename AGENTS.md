@@ -55,12 +55,15 @@ secret, teardown), Postgres major
 versions, DNS records through the Cloudflare API, the
 rebuild inventory and the backups in the bucket, the read-only checkup helpers: hcloud list and
 describe only, advisories, backup success rate, the checkup log, the secrets vault: `vault_export`,
-`vault_import`, `vault_check`), `kuma.js` (runs inside the Kuma
+`vault_import`, `vault_check`, and for other providers the box check and the host firewall:
+`server_check`, `hostfw_install`, `hostfw_apply`, `hostfw_confirm`, `hostfw_status`,
+`hostfw_port_add`; the server script itself is `hostfw_script`), `kuma.js` (runs inside the Kuma
 container and drives Kuma through socket.io; `lib.sh` sends it there), `verify.sh` (reads the real
 server state and says which phase is next), `status.sh` (one-screen health check, read-only),
 `checkup.sh` (the monthly checkup: `status.sh` plus ports, sshd, Docker, advisories, backup rate,
 disk growth, cost and the secrets vault, ending with the actions; read-only),
-`references/` (Coolify and Cloudflare API notes, troubleshooting), `starter/` (the Next.js + Postgres app the setup
+`references/` (Coolify and Cloudflare API notes, troubleshooting, what differs per provider in
+`providers.md`), `starter/` (the Next.js + Postgres app the setup
 deploys; it is also the landing), `fixtures/` (the smallest app of each further stack: static,
 FastAPI, Go, compose; the model `PREPARE-APP.md` uses, see `fixtures/README.md`), `test/`
 (checks that need no server), `ROADMAP.md` (the plan, ids R01…, mirrored in `starter/app/roadmap.ts`), `.claude-plugin/` (the Claude Code plugin
@@ -90,7 +93,10 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
 
 ## Checks
 
-- `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network). With
+- `bash test/lib.test.sh` must print `ALL PASSED` (fake Coolify API, no server, no network; the
+  host firewall runs against fake `iptables`, `ip6tables`, `systemctl`, `systemd-run`, `ip`,
+  `sshd` and `docker` through the ssh stub with `SSH_STUB_PATH`, so the real ones are out of
+  reach; never run `vps-hostfw` on your own machine). With
   `node` on the PATH it also runs `node --check kuma.js` and `test/kuma.test.js` (`kuma.js` against
   a fake Kuma socket and fetch, prints `ALL PASSED`).
 - `bash test/status.test.sh` must print `ALL PASSED` (`status.sh` against a fake Coolify API with
@@ -110,7 +116,8 @@ and marketplace manifests), `skills/` (one pointer per entry point, the plugin's
   for `up --wait --wait-timeout`; builds every fixture, checks its health contract, removes what
   it created by name, never prunes).
   CI runs it per fixture when `fixtures/` changes (`.github/workflows/fixtures.yml`).
-- `shellcheck lib.sh verify.sh status.sh checkup.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins);
+- `shellcheck lib.sh verify.sh status.sh checkup.sh test/*.sh` is clean (shellcheck v0.10.0, the version CI pins),
+  and so is the server script `hostfw_script` prints (CI checks it, `lib.test.sh` too when shellcheck is installed);
   `bash -n` on every other changed shell file.
 - `bash test/extract-blocks.sh` must print `ALL BLOCKS OK`: it runs `bash -n` and shellcheck on
   every untagged, `bash` or `sh` code block (backtick or tilde fences) in `phases/`, `SETUP.md`,

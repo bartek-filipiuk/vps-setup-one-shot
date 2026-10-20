@@ -269,12 +269,14 @@ Read it:
 | ssh OK, disk at 100 % | Coolify's database cannot write |
 
 Fix: the "SSH" table in `references/troubleshooting.md` (keys, host key, `hcloud firewall
-describe vps-setup-fw` for port 22). Powering the server on (`hcloud server poweron`) or
-changing the firewall only after the user's yes. Disk full: section C.
+describe vps-setup-fw` for port 22, the host firewall on another provider). Powering the server
+on (`hcloud server poweron`) or changing the firewall only after the user's yes. Disk full:
+section C. Another provider: its panel shows whether the server is on, and has the reset, the
+rescue system and the out-of-band console (`references/providers.md`); the user does those.
 
 Stop, needs a human when: the server needs the Hetzner Console or the rescue system (the user
-logs in to the Console; phase 02 has the recovery), the provider is not Hetzner and its panel is
-the only way in, Coolify itself does not start (`coolify` keeps restarting, its log shows a
+logs in to the Console; phase 02 has the recovery), the server needs another provider's rescue
+system or out-of-band console (the user logs in there, `references/providers.md`), Coolify itself does not start (`coolify` keeps restarting, its log shows a
 database or migration error), or the server is gone for good (`REBUILD.md`: a new server, the data from the off-site backups).
 
 ## 4. Afterwards

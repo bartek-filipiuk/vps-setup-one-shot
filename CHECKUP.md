@@ -67,8 +67,28 @@ and icmp) and whether it is applied to the server. An extra inbound rule is `FAI
 is open that the setup never opened. A port opened on purpose (Forgejo's 22222 in `SERVICES.md`)
 is recorded once with `. ./lib.sh; state_set CHECKUP_PORTS_OK tcp/22222` (several: space
 separated) and is OK from then on. Not applied to the server is `FAIL`: everything Docker
-publishes is on the internet. On another provider the line says `n/a`; the `listening` line is
-the real check there.
+publishes is on the internet.
+
+`firewall` (another provider): the host firewall of phase 02 step 4 (`vps-hostfw`), read from
+its own status on the server, against the same ports. `OK` reads `host (vps-hostfw on eth0): in
+tcp/22 tcp/80 tcp/443 icmp only, IPv4 and IPv6, DOCKER-USER guarded, persisted`. Each problem is
+added to the line:
+
+| Words in the line | Mark | Meaning |
+|-------------------|------|---------|
+| `extra open: tcp/<port>` | FAIL | a port open that the setup never opened (or not recorded in `CHECKUP_PORTS_OK`) |
+| `missing tcp/<port>` | WARN | a base port is not in the rules (80 missing: certificates cannot renew) |
+| `no drop rule in INPUT` | FAIL | the host's own ports are open to everyone |
+| `DOCKER-USER rules missing`, `... without -i <iface> or without the drop` | FAIL | Docker's published ports (8000 the panel) are not guarded |
+| `another rule comes first in DOCKER-USER` | FAIL | a rule above ours lets traffic through first |
+| `DOCKER-USER is not used by FORWARD`, `Docker uses its nftables backend` | FAIL | Docker no longer reads `DOCKER-USER`; Docker 29 can run an nftables backend that has no such chain |
+| `IPv6 opens ..., IPv4 ...` | FAIL | the two families differ |
+| `not persisted` | WARN | the rules are in place now but not after a reboot |
+| `a trial is pending` | WARN | someone ran a trial and did not confirm it; it removes itself |
+| `n/a (no host firewall ...)` | WARN | `vps-hostfw` not installed (a setup from before R20, or phase 02 step 4 skipped) |
+
+On another provider the rules are only as good as the interface they guard: the `listening`
+line below is the outside proof.
 
 `listening`: every TCP port the server listens on, on a public address, outside the firewall's
 ports, probed from this machine. A clean Coolify listens on 8000, 6001, 6002 and 8080 (its
@@ -79,7 +99,12 @@ is `FAIL`. UDP is listed, not probed (Coolify's proxy has 443/udp for HTTP/3).
 Fix, only after the user's yes: remove the extra rule (`hcloud firewall delete-rule vps-setup-fw
 --direction in --protocol tcp --port <port> --source-ips 0.0.0.0/0 --source-ips ::/0`), apply the
 firewall (`hcloud firewall apply-to-resource vps-setup-fw --type server --server
-"$(state_get SERVER_NAME)"`), or on another provider the rule in its panel (phase 04 step 5).
+"$(state_get SERVER_NAME)"`). On another provider: an extra port opened on purpose with
+`hostfw_port_add`, closed with `hostfw_port_remove <port>`; anything else (rules missing,
+unguarded, shadowed, not persisted) is fixed by running phase 02 step 4 again from its step 1,
+trial and confirm included, which puts every rule back in place. `DOCKER-USER is not used` with
+Docker's nftables backend: stop, this needs a human (the host firewall cannot guard Docker's
+ports there; `references/providers.md`).
 A reachable port with no firewall rule for it on Hetzner means the firewall is not applied, or
 the probe went somewhere else (VPN, a proxy on this machine): run `./checkup.sh` again from
 another network before changing anything.

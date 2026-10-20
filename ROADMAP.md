@@ -127,6 +127,10 @@ Rules that apply to every item:
   - Servers.com: demanding recovery (iDRAC, IPKVM, Virtual Media).
   - Worldstream: best published value (ECC, RAID-1, iDRAC, DDoS protection).
   Done when: the generic path is green on one of them in addition to Hetzner.
+  (Phase 01 "Other provider" with `server_check`, the host firewall of phase 02 step 4
+  (`hostfw_install`, `hostfw_apply`, `hostfw_confirm`, `hostfw_status`, `hostfw_port_add`, the
+  server script `vps-hostfw` in `INPUT` and `DOCKER-USER`), the checkup's firewall line and
+  `references/providers.md` done, with fake tests; not run on a dedicated server yet.)
 - **R08 More stacks, by fixture.** Each supported stack gets a sample app in `fixtures/` that the
   harness deploys: static site, Docker Compose stack, Python (FastAPI, Django), Go. A stack without
   a green fixture stays "not supported yet". Done when: three stacks beyond Node are green.

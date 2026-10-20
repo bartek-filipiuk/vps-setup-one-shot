@@ -161,7 +161,9 @@ run or failed: its log above says why (most often a full disk or a held package)
 
 Optional, costs money: a Hetzner snapshot of the whole server, the fastest way back if the
 server does not come back after the reboot. Snapshots are billed per GB per month until they are
-deleted. Only with the user's yes (Hetzner only):
+deleted. Only with the user's yes (Hetzner only; a dedicated server has no snapshot: the
+off-site database backups and, if the user keeps one, the provider's backup space,
+`references/providers.md`):
 
 ```
 . ./lib.sh; hcloud server create-image --type snapshot --description "before upgrade $(date -u +%F)" "$(state_get SERVER_NAME)"

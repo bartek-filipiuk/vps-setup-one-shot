@@ -52,6 +52,8 @@ jobs:
         run: shellcheck --version
       - name: shellcheck scripts
         run: shellcheck lib.sh verify.sh status.sh checkup.sh test/*.sh
+      - name: shellcheck the host firewall script lib.sh generates (not run)
+        run: bash -c '. ./lib.sh && hostfw_script' > "$RUNNER_TEMP/vps-hostfw" && shellcheck -s bash "$RUNNER_TEMP/vps-hostfw"
       - name: block extractor self-test
         run: bash test/extract-blocks.test.sh
       - name: check shell blocks in the runbooks

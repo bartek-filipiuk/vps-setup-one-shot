@@ -49,7 +49,9 @@ Read /path/to/vps-setup-one-shot/PREPARE-APP.md and prepare this app for deploym
 - A domain where you can edit DNS records (at Cloudflare, the agent creates them with a token you
   make for that one zone).
 - A Hetzner Cloud account (new accounts may need identity verification, which can take hours),
-  a fresh Hetzner server you already have, or a fresh Ubuntu 24.04 server from any provider.
+  a fresh Hetzner server you already have, or a fresh Ubuntu 24.04 server from any provider: a
+  dedicated server or a VPS, installed in the provider's panel with your SSH key
+  (`references/providers.md`).
 
 ## What it costs
 
@@ -168,7 +170,9 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
 
 - The Coolify panel is never open to the internet before it has HTTPS: the firewall allows only
   22, 80 and 443, and you register the admin through an SSH tunnel.
-- Hetzner Cloud Firewall instead of `ufw`, because Docker bypasses `ufw`.
+- Hetzner Cloud Firewall instead of `ufw`, because Docker bypasses `ufw`. On any other provider
+  a host firewall in `INPUT` and Docker's `DOCKER-USER` chain, on the public interface only,
+  IPv4 and IPv6 (phase 02 step 4), tried with a five-minute automatic revert before it is kept.
 - SSH: key only. Root login stays allowed with keys only, because Coolify manages its own host
   over SSH as root.
 - Coolify clones your private repo with a read-only deploy key for that repo only. GitHub calls
@@ -287,6 +291,15 @@ GitHub repo, deploy key, database, app and webhook, deploys, and proves each ste
   been deployed on a server yet**; no app of these stacks has gone through `PREPARE-APP.md`.
   Compose applications in Coolify come from the API docs and are marked `[verify]` in
   `references/coolify-api.md`; the runbooks have no compose path yet.
+- Providers beyond Hetzner (R20: the "Other provider" path of phase 01 with `server_check`, the
+  host firewall of phase 02 step 4 with `hostfw_install`, `hostfw_apply`, `hostfw_confirm`,
+  `hostfw_status`, `hostfw_port_add` and the server script `vps-hostfw`, the checkup's host
+  firewall line, `references/providers.md`) are tested against a stubbed `ssh` and fake
+  `iptables`, `systemctl` and `systemd-run` only (`test/lib.test.sh`, `test/checkup.test.sh`) and
+  have **not been run on a dedicated server yet**; no rule has been applied to a real firewall.
+  Docker's firewall backend field and Ubuntu 24.04's nft-backed `iptables` were checked on a live
+  Coolify server; the provider panel paths come from the providers' docs and are marked
+  `[verify]` in `references/providers.md`.
 - Phases 01-04 (new server, hardening, Coolify install, panel domain) have **not yet been run
   end to end on a fresh server**.
 
@@ -295,5 +308,6 @@ Tested with: Coolify 4.3.23, Ubuntu 24.04, Next.js 16.3, Postgres 17.
 ## Not included yet
 
 Preview environments per pull request (R21), uptime checks from outside the server, deploying apps
-that are not Node.js (fixtures exist, see Status), Git hosts other than GitHub, DNS through the API for providers other than Cloudflare. What comes next, in which order
+that are not Node.js (fixtures exist, see Status), Git hosts other than GitHub, DNS through the API for providers other than Cloudflare, installing the OS through a server
+provider's API (documented in `references/providers.md`, not driven). What comes next, in which order
 and how we will know it is done: [ROADMAP.md](ROADMAP.md).

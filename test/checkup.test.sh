@@ -120,6 +120,13 @@ echo "df ${FAKE_USED_KB:-12000000} ${FAKE_TOTAL_KB:-40000000}"
 echo "du /data/coolify/backups 1258291"
 echo "du /root/db-dumps 314573"
 printf 'ddf Images\t4.2GB\t2.1GB (50%%)\nddf Build Cache\t1GB\t1GB\n'
+# the host firewall (PROVIDER=other) as vps-hostfw status prints it; FAKE_HOSTFW=1 installs it
+if [ "${FAKE_HOSTFW:-0}" = 1 ]; then
+  t=${FAKE_HOSTFW_TCP:-22 80 443}
+  printf '%s\n' "hostfw installed yes" "hostfw iface eth0" "hostfw input4 on" "hostfw docker_user4 guarded" "hostfw forward4 yes" \
+    "hostfw input6 on" "hostfw docker_user6 guarded" "hostfw forward6 yes" "hostfw tcp $t" "hostfw tcp6 ${FAKE_HOSTFW_TCP6:-$t}" \
+    "hostfw icmp yes" "hostfw backend iptables" "hostfw persisted yes" "hostfw trial none" "hostfw short ${FAKE_HOSTFW_SHORT:-active persisted}"
+else echo "hostfw installed no"; fi
 echo "facts done"
 STUB
 # Fake openssl: every certificate has FAKE_CERT_DAYS (default 60) left.
@@ -258,10 +265,34 @@ FAKE_FW_UNAPPLIED=1 expect "firewall: not applied" 1 '^FAIL +firewall +.*; NOT a
 FAKE_FW_NO80=1 expect "firewall: a rule missing" 1 '^WARN +firewall +.*, applied to coolify-1; missing tcp/80$'
 FAKE_HCLOUD_FAIL=1 expect "firewall: hcloud fails" 1 '^WARN +firewall +n/a \(hcloud firewall describe failed: hcloud: no active context or token'
 has "hcloud fails: cost" "$out" '^WARN +cost +n/a \(hcloud server list failed'
+# another provider (R20): the host firewall from the server facts, never hcloud
 sed -i 's/^PROVIDER=hetzner$/PROVIDER=other/' "$STATE"; : > "$HOME/hcloud.log"
-expect "other provider: firewall n/a" 0 '^OK +firewall +n/a \(no cloud firewall API for this provider; it must let in only 22, 80 and 443: CHECKUP\.md 3a\)$'
+export FAKE_HOSTFW=1
+run .
+check "other provider, clean: exit 0" "$rc" "0"
+hasnt "other provider, clean: no WARN or FAIL line" "$out" '^(WARN|FAIL) '
+has "other provider: host firewall" "$out" '^OK +firewall +host \(vps-hostfw on eth0\): in tcp/22 tcp/80 tcp/443 icmp only, IPv4 and IPv6, DOCKER-USER guarded, persisted$'
 has "other provider: cost n/a" "$out" "^OK +cost +n/a \\(not Hetzner; check your provider's invoice\\)$"
 check "other provider: hcloud never called" "$(wc -l < "$HOME/hcloud.log")" "0"
+FAKE_HOSTFW_TCP="22 80 443 8000" expect "host firewall: an extra port" 1 '^FAIL +firewall +host .*; extra open: tcp/8000$'
+has "host firewall: Actions with its runbook" "$out" '^  FAIL +firewall .* -> CHECKUP\.md 3a$'
+echo "CHECKUP_PORTS_OK=tcp/22222" >> "$STATE"
+FAKE_HOSTFW_TCP="22 80 443 22222" expect "host firewall: CHECKUP_PORTS_OK" 0 '^OK +firewall +host \(vps-hostfw on eth0\): in tcp/22 tcp/80 tcp/443 icmp tcp/22222 only, IPv4 and IPv6, DOCKER-USER guarded, persisted$'
+sed -i '/^CHECKUP_PORTS_OK=/d' "$STATE"
+FAKE_HOSTFW_TCP="22 443" expect "host firewall: a port missing" 1 '^WARN +firewall +host .*; missing tcp/80$'
+FAKE_HOSTFW_SHORT="docker-user4-unguarded" expect "host firewall: unguarded" 1 '^FAIL +firewall +host .*; DOCKER-USER rules for IPv4 without -i eth0 or without the drop$'
+FAKE_HOSTFW_SHORT="docker-user4-shadowed" expect "host firewall: shadowed" 1 '^FAIL +firewall +host .*; another rule comes first in DOCKER-USER for IPv4$'
+FAKE_HOSTFW_SHORT="docker-user4-unreferenced docker-nftables" expect "host firewall: Docker's nftables backend" 1 "^FAIL +firewall +host .*; DOCKER-USER is not used by FORWARD \\(Docker's nftables backend\\?\\); Docker uses its nftables backend"
+FAKE_HOSTFW_SHORT="docker-user6-missing" expect "host firewall: IPv6 DOCKER-USER missing" 1 '^FAIL +firewall +host .*; DOCKER-USER rules missing for IPv6$'
+FAKE_HOSTFW_SHORT="input4-off" expect "host firewall: no INPUT drop" 1 '^FAIL +firewall +host .*; no drop rule in INPUT for IPv4$'
+FAKE_HOSTFW_SHORT="not-persisted" expect "host firewall: not persisted" 1 '^WARN +firewall +host .*; not persisted \(vps-hostfw\.service disabled: hostfw_confirm\)$'
+FAKE_HOSTFW_SHORT="not-persisted trial-pending" expect "host firewall: a trial pending" 1 '^WARN +firewall +host .*; a trial is pending and reverts by itself'
+FAKE_HOSTFW_TCP6="22 80 443 8000" FAKE_HOSTFW_SHORT=ipv6-ports-differ expect "host firewall: IPv6 differs" 1 '^FAIL +firewall +host .*; IPv6 opens tcp 22 80 443 8000, IPv4 tcp 22 80 443$'
+FAKE_HOSTFW=0 expect "host firewall: not installed" 1 '^WARN +firewall +n/a \(no host firewall: vps-hostfw is not installed; phase 02 step 4\)$'
+FAKE_FACTS_FAIL=1 expect "host firewall: server unreadable" 1 '^WARN +firewall +n/a \(could not read the server\)$'
+check "other provider: hcloud still never called" "$(wc -l < "$HOME/hcloud.log")" "0"
+unset FAKE_HOSTFW
+rm -f "$LOG"
 sed -i 's/^PROVIDER=other$/PROVIDER=hetzner/' "$STATE"
 
 # listening: probed from this machine; the fake API's port is a port that answers

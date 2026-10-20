@@ -48,8 +48,10 @@ Always record the key and this repo's location (the absolute path, used later in
    - "Hetzner, create the server for me" → `PROVIDER=hetzner`.
    - "Hetzner, I already have a fresh server" → `PROVIDER=hetzner` and `SERVER_EXISTS=1`.
      Fresh means Ubuntu 24.04 with nothing installed yet; phase 02 and 03 assume that.
-   - "Another provider" (they create an Ubuntu 24.04 server with their SSH key and give you
-     the IP) → `PROVIDER=other`.
+   - "Another provider" (a dedicated server or any VPS: they install Ubuntu 24.04 with their SSH
+     key through the provider's panel or API and give you the IP; the firewall will live on the
+     server itself, phase 02 step 4) → `PROVIDER=other`. `references/providers.md` has what
+     differs at Scaleway Dedibox, OVHcloud, Servers.com and Worldstream.
    For Hetzner, warn now: a brand new Hetzner account can require identity verification that
    takes hours. If they have no account yet, they should create it at console.hetzner.com now.
 2. **Domain.** "Which domain do you control?" → `DOMAIN=example.com`. They need access to its
@@ -107,5 +109,8 @@ phase 04, and tell them where the backup is.
 
 "A 4 GB VPS costs about 5-10 EUR per month, billed by the hour; you can delete it any time and
 billing stops. This takes about an hour, mostly waiting for installs and DNS."
+
+On `PROVIDER=other` with a dedicated server, say instead: "A dedicated server is a monthly
+contract, often with a setup fee and a notice period; check both before ordering."
 
 Run `./verify.sh`.

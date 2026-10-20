@@ -465,8 +465,8 @@ check "env upload loop" "$got" "API_KEY=a=b c;SMTP_PASS=x|y"
 
 # deploy_and_wait: rollback point, dump over a stubbed ssh, deploy, rollback instructions.
 # The ssh stub logs the remote command and runs it locally with `sh` (as rssh would on the server)
-# with a fake docker on PATH; SSH_STUB_FAIL=1 makes it fail like a dead server. Dumps land in
-# $HOME/dumps (DUMP_DIR) instead of /root/db-dumps.
+# with a fake docker on PATH (SSH_STUB_PATH replaces that PATH); SSH_STUB_FAIL=1 makes it fail
+# like a dead server. Dumps land in $HOME/dumps (DUMP_DIR) instead of /root/db-dumps.
 mkdir -p "$HOME/bin" "$HOME/fakebin"
 cat > "$HOME/bin/ssh" <<'STUB'
 #!/bin/sh
@@ -474,7 +474,7 @@ printf '%s\n' "$*" > "$HOME/ssh.args"; cat > "$HOME/ssh.stdin"
 echo ssh >> "$HOME/seq.log"
 [ "${SSH_STUB_FAIL:-0}" = 1 ] && { echo "ssh: connect to host 203.0.113.9 port 22: Connection refused" >&2; exit 255; }
 cmd=${*#*root@203.0.113.9 }
-PATH="$HOME/fakebin:$PATH" sh -c "$cmd" < "$HOME/ssh.stdin"
+PATH="${SSH_STUB_PATH:-$HOME/fakebin:$PATH}" sh -c "$cmd" < "$HOME/ssh.stdin"
 STUB
 cat > "$HOME/fakebin/docker" <<'STUB'
 #!/bin/sh
@@ -2191,6 +2191,338 @@ has "capi: Coolify token handed to curl as a config on a pipe" "$(cat "$HOME/arg
 check "argv log was written" "$(grep -c '^jq ' "$HOME/argv.log" | awk '{print ($1 > 10) ? "yes" : "no"}')" "yes"
 PATH=${PATH#"$HOME/argvbin:"}; unset TMPDIR BACKUP_POLL_SECONDS
 
+# --- other providers (R20): the server check and the host firewall, against fakes only ---
+# Nothing here may reach the real iptables, systemctl, systemd-run or docker of this machine: the
+# ssh stub runs the server side with SSH_STUB_PATH, the fakes plus a few plain tools (minbin),
+# and nothing else. FW records every firewall and systemd call in order.
+MINBIN=$HOME/minbin; mkdir -p "$MINBIN" "$HOME/fwbin"
+for t in sh bash sed awk grep sort paste readlink date cp mv chmod cat flock timeout tail head mkdir rm tr cut wc env sleep touch; do
+  p=$(command -v "$t") && ln -sf "$p" "$MINBIN/$t"
+done
+FW=$HOME/fw.log
+cat > "$HOME/fwbin/iptables" <<'STUB'
+#!/bin/bash
+# A fake iptables (and ip6tables): chains are files under $HOME/ipt/<4|6>/, one rule per line as
+# `iptables -S` prints it after "-A CHAIN" (with the -m tcp/-m udp the real one adds).
+fam=4; [ "${0##*/}" = ip6tables ] && fam=6
+d=$HOME/ipt/$fam; mkdir -p "$d"
+echo "${0##*/} $*" >> "$HOME/fw.log"
+[ "${1:-}" = -w ] && shift
+op=${1:-} ch=${2:-}; shift 2
+f=$d/$ch
+norm() { local out=() prev='' a; for a in "$@"; do
+  case $a in --dport|--sport) case $prev in tcp|udp) case " ${out[*]} " in *" -m $prev "*) ;; *) out+=(-m "$prev") ;; esac ;; esac ;; esac
+  out+=("$a"); case $a in tcp|udp) prev=$a ;; esac; done; printf '%s' "${out[*]}"; }
+nochain() { echo "${0##*/}: No chain/target/match by that name." >&2; exit 1; }
+case $op in
+  -S) [ -f "$f" ] || nochain
+      case $ch in INPUT|FORWARD|OUTPUT) echo "-P $ch ACCEPT" ;; *) echo "-N $ch" ;; esac
+      while IFS= read -r l; do echo "-A $ch $l"; done < "$f" ;;
+  -N) [ -f "$f" ] && { echo "Chain already exists." >&2; exit 1; }; : > "$f" ;;
+  -I|-A)
+      [ -f "$f" ] || nochain
+      n=$(wc -l < "$f"); pos=$((n + 1))
+      if [ "$op" = -I ]; then pos=1; case ${1:-} in [0-9]*) pos=$1; shift ;; esac; fi
+      [ "$pos" -le $((n + 1)) ] || { echo "Index of insertion too big." >&2; exit 1; }
+      c=$(($(cat "$HOME/ipt/inserts" 2>/dev/null || echo 0) + 1)); echo "$c" > "$HOME/ipt/inserts"
+      [ "$c" = "${FAKE_IPT_FAIL_AT:-0}" ] && { echo "iptables: fake failure" >&2; exit 4; }
+      r=$(norm "$@")
+      { head -n $((pos - 1)) "$f"; echo "$r"; tail -n +"$pos" "$f"; } > "$f.new" && mv "$f.new" "$f" ;;
+  -D|-C)
+      [ -f "$f" ] || nochain
+      r="$*"; grep -qxF -- "$r" "$f" || { echo "iptables: Bad rule (does a matching rule exist in that chain?)." >&2; exit 1; }
+      [ "$op" = -C ] && exit 0
+      awk -v r="$r" '!done && $0 == r { done = 1; next } { print }' "$f" > "$f.new" && mv "$f.new" "$f" ;;
+  *) echo "FORBIDDEN $op" >> "$HOME/fw.log"; echo "fake iptables: $op is not allowed" >&2; exit 3 ;;
+esac
+STUB
+ln -sf iptables "$HOME/fwbin/ip6tables"
+cat > "$HOME/fwbin/systemctl" <<'STUB'
+#!/bin/sh
+echo "systemctl $*" >> "$HOME/fw.log"
+d=$HOME/sysd; mkdir -p "$d"; a=''
+for x in "$@"; do case $x in --*) ;; *) a="$a $x" ;; esac; done
+set -- $a
+case $1 in
+  is-active) [ -e "$d/active-$2" ] ;;
+  is-enabled) [ -e "$d/enabled-$2" ] ;;
+  enable) touch "$d/enabled-$2" ;;
+  disable) rm -f "$d/enabled-$2" ;;
+  stop) [ "${FAKE_STOP_FAIL:-0}" = 1 ] && exit 1; rm -f "$d/active-$2" ;;
+  reset-failed|daemon-reload) ;;
+  *) echo "fake systemctl: unexpected $*" >&2; exit 2 ;;
+esac
+STUB
+cat > "$HOME/fwbin/systemd-run" <<'STUB'
+#!/bin/sh
+echo "systemd-run $*" >> "$HOME/fw.log"
+[ "${FAKE_SYSTEMD_RUN_FAIL:-0}" = 1 ] && exit 1
+d=$HOME/sysd; mkdir -p "$d"
+for x in "$@"; do case $x in --unit=*) touch "$d/active-${x#--unit=}.timer" ;; esac; done
+STUB
+cat > "$HOME/fwbin/ip" <<'STUB'
+#!/bin/sh
+case "$*" in
+  "-4 -o route show default") [ "${FAKE_NO_ROUTE:-0}" = 1 ] || echo "default via 203.0.113.1 dev ${FAKE_IFACE:-eth0} proto static" ;;
+  "-6 -o route show default") echo "default via fe80::1 dev ${FAKE_IFACE6:-eth0} proto static metric 1024 pref medium" ;;
+  "-o -4 addr show dev "*) echo "2: eth0    inet ${FAKE_IP4:-203.0.113.9}/24 brd 203.0.113.255 scope global eth0\\       valid_lft forever preferred_lft forever" ;;
+  "-o -6 addr show dev "*) echo "2: eth0    inet6 2001:db8::9/64 scope global \\       valid_lft forever preferred_lft forever" ;;
+  *) echo "fake ip: unexpected $*" >&2; exit 2 ;;
+esac
+STUB
+cat > "$HOME/fwbin/sshd" <<'STUB'
+#!/bin/sh
+[ "$1" = -T ] || exit 2
+[ "${FAKE_SSHD_NONE:-0}" = 1 ] && exit 1
+printf '%s\n' "port ${FAKE_SSHD_PORT:-22}" "passwordauthentication no" "permitrootlogin without-password"
+STUB
+printf '#!/bin/sh\necho none; exit 1\n' > "$HOME/fwbin/systemd-detect-virt"
+printf '#!/bin/sh\necho "/swapfile file 4G 0B -2"\n' > "$HOME/fwbin/swapon"
+printf '#!/bin/sh\nexit 0\n' > "$HOME/fwbin/dpkg"
+cat > "$HOME/fwbin/docker" <<'STUB'
+#!/bin/sh
+echo "docker $*" >> "$HOME/fw.log"
+case "$*" in
+  "info --format {{.FirewallBackend.Driver}}") printf '%s\n' "${FAKE_FW_BACKEND-iptables}" ;;
+  *) echo "fake docker: unexpected $*" >&2; exit 2 ;;
+esac
+STUB
+chmod +x "$HOME/fwbin/"*
+# the same fakes without docker: a box before phase 03
+mkdir -p "$HOME/fwbin-nd"; cp -P "$HOME/fwbin/"* "$HOME/fwbin-nd/"; rm "$HOME/fwbin-nd/docker"
+export SSH_STUB_PATH="$HOME/fwbin:$MINBIN"
+# shellcheck disable=SC2016 # $t belongs to the sh -c loop
+check "hostfw: the stub's PATH has no real iptables, systemctl or docker" \
+  "$(env PATH="$SSH_STUB_PATH" sh -c 'for t in iptables ip6tables systemctl systemd-run docker ip sshd nft ufw; do command -v "$t" || echo "$t:none"; done' | sed "s#^$HOME/fwbin/##" | paste -sd ' ' -)" \
+  "iptables ip6tables systemctl systemd-run docker ip sshd nft:none ufw:none"
+
+SRV=$HOME/srv; mkdir -p "$SRV/run"
+export HOSTFW_PATH=$SRV/usr/local/sbin/vps-hostfw HOSTFW_CONF=$SRV/etc/vps-hostfw.conf HOSTFW_UNIT_FILE=$SRV/etc/systemd/system/vps-hostfw.service
+export VPS_HOSTFW_CONF=$HOSTFW_CONF VPS_HOSTFW_LOCK=$SRV/run/vps-hostfw.lock
+VPS_STATE=$VPS_SETUP_STATE state_set VPS_IP 203.0.113.9
+# fwreset: a box with Docker's chains (FORWARD jumps to DOCKER-USER, Docker's own RETURN at the
+# end) and someone else's INPUT rule for the bridge; no vps-hostfw rules, no units, empty logs.
+fwreset() {
+  rm -rf "$HOME/ipt" "$HOME/sysd" "$SRV/etc/vps-hostfw.conf.ok"; : > "$FW"
+  local fam; for fam in 4 6; do
+    mkdir -p "$HOME/ipt/$fam"; : > "$HOME/ipt/$fam/OUTPUT"
+    echo "-i docker0 -j ACCEPT" > "$HOME/ipt/$fam/INPUT"
+    printf '%s\n' "-j DOCKER-USER" "-j DOCKER-FORWARD" > "$HOME/ipt/$fam/FORWARD"
+    echo "-j RETURN" > "$HOME/ipt/$fam/DOCKER-USER"
+  done
+}
+# fwrun CMD... -> out and rc, server side through the ssh stub
+fwrun() { out=$("$@" 2>&1 </dev/null); rc=$?; printf '%s\n' "$out" >> "$HOME/outputs.log"; }
+ours() { grep -c 'vps-hostfw' "$HOME/ipt/$1/$2" 2>/dev/null; }
+
+# the script and the unit
+check "hostfw_script: bash -n" "$(hostfw_script | bash -n 2>&1 && echo ok)" "ok"
+if command -v shellcheck >/dev/null 2>&1; then
+  check "hostfw_script: shellcheck clean" "$(hostfw_script | shellcheck -s bash - 2>&1 && echo ok)" "ok"
+else echo "skip hostfw_script shellcheck (not installed)"; fi
+check "hostfw_script: no flush, no delete of a chain, no policy" "$(hostfw_script | grep -cE '(^|[ "])-(F|X|P)( |$)|--flush|--delete-chain|--policy')" "0"
+u=$(hostfw_unit)
+has "hostfw_unit: after Docker" "$u" '^After=network-online\.target docker\.service$'
+has "hostfw_unit: applies the confirmed rules" "$u" "^ExecStart=$HOSTFW_PATH apply --boot$"
+has "hostfw_unit: enabled for boot" "$u" '^WantedBy=multi-user\.target$'
+
+# server_check: the facts script runs (read-only) and a box is judged by its facts
+check "server_facts_script: sh -n" "$(server_facts_script | sh -n 2>&1 && echo ok)" "ok"
+fwrun server_facts
+has "server_facts: os line" "$out" '^os [a-z]+ [0-9.?]+$'
+has "server_facts: memory in MB" "$out" '^mem_mb [0-9]+$'
+has "server_facts: the default route's interface" "$out" '^iface eth0$'
+has "server_facts: its address" "$out" '^ip4 203\.0\.113\.9$'
+has "server_facts: sshd port" "$out" '^sshd_port 22$'
+has "server_facts: done" "$out" '^facts done$'
+cat > "$HOME/bin/fake-server" <<'STUB'
+#!/bin/sh
+cat >/dev/null
+printf '%s\n' "os ${F_OS:-ubuntu 24.04}" "cpu ${F_CPU:-4}" "mem_mb ${F_MEM:-7820}" "disk_free_gb ${F_DISK:-180}" "iface eth0" \
+  "ip4 ${F_IP:-203.0.113.9}" "ip6 2001:db8::9" "virt none" "sshd_port ${F_SSHD:-22}" "facts done"
+STUB
+chmod +x "$HOME/bin/fake-server"
+SERVER_SSH=$HOME/bin/fake-server fwrun server_check
+check "server_check: a good box" "$rc:$(grep -c '^OK ' <<<"$out"):$(grep -cE '^(WARN|FAIL) ' <<<"$out")" "0:7:0"
+has "server_check: network line" "$out" '^OK +network +203\.0\.113\.9 on eth0 \(the host firewall guards eth0\)$'
+F_OS="ubuntu 22.04" F_CPU=1 F_MEM=1950 F_DISK=12 SERVER_SSH=$HOME/bin/fake-server fwrun server_check
+check "server_check: a small old box fails four times" "$rc:$(grep -c '^FAIL ' <<<"$out")" "1:4"
+has "server_check: says reinstall" "$out" "^FAIL +os +ubuntu 22\\.04 \\(want Ubuntu 24\\.04 LTS: reinstall it in the provider's panel\\)$"
+has "server_check: disk" "$out" '^FAIL +disk / +12 GB free \(want 40 GB'
+F_IP=10.0.0.5 F_SSHD=2222 SERVER_SSH=$HOME/bin/fake-server fwrun server_check
+check "server_check: behind NAT is a WARN, not a FAIL" "$rc:$(grep -cE '^WARN +network' <<<"$out")" "0:1"
+has "server_check: another sshd port is noted" "$out" '^OK +sshd port +2222 \(not 22'
+SERVER_SSH=false fwrun server_check
+check "server_check: unreachable" "$rc:$out" "1:server_check: could not read the server (does rssh true work?)"
+
+# hostfw_install: the script, the unit and the config, one round trip, nothing applied
+fwreset
+fwrun hostfw_install
+check "hostfw_install: rc" "$rc" "0"
+check "hostfw_install: the script as hostfw_script prints it, executable" "$(hostfw_script | cmp - "$HOSTFW_PATH" && stat -c %a "$HOSTFW_PATH")" "755"
+check "hostfw_install: the unit" "$(hostfw_unit | cmp - "$HOSTFW_UNIT_FILE" && stat -c %a "$HOSTFW_UNIT_FILE")" "644"
+check "hostfw_install: the config" "$(grep -v '^#' "$HOSTFW_CONF")" 'PORTS="22 80 443"
+IFACE=""'
+has "hostfw_install: says so" "$out" "^installed: PORTS=\"22 80 443\" in $HOSTFW_CONF$"
+check "hostfw_install: nothing applied, only daemon-reload" "$(paste -sd ' ' "$FW")" "systemctl daemon-reload"
+echo 'PORTS="22 80 443 22222"' > "$HOSTFW_CONF"
+fwrun hostfw_install
+check "hostfw_install: again keeps the config" "$(cat "$HOSTFW_CONF")" 'PORTS="22 80 443 22222"'
+rm -f "$HOSTFW_CONF"; FAKE_SSHD_PORT=2222 fwrun hostfw_install
+check "hostfw_install: sshd's own port goes into a new config" "$(grep '^PORTS=' "$HOSTFW_CONF")" 'PORTS="22 80 443 2222"'
+rm -f "$HOSTFW_CONF"; fwrun hostfw_install
+
+# hostfw_apply: the timer first, then the rules, all on eth0 and marked
+fwreset
+fwrun hostfw_apply
+check "hostfw_apply: rc" "$rc" "0"
+has "hostfw_apply: says when it reverts" "$out" '^trial: in tcp/22 tcp/80 tcp/443 icmp on eth0 \(IPv4 and IPv6\); reverts at [0-9]{2}:[0-9]{2}:[0-9]{2} UTC unless confirmed$'
+first_run=$(grep -n '^systemd-run ' "$FW" | head -1 | cut -d: -f1); first_ins=$(grep -nE '^ip6?tables -w -(I|A|N) ' "$FW" | head -1 | cut -d: -f1)
+check "hostfw_apply: the revert timer is scheduled before the first rule" "$([ -n "$first_run" ] && [ -n "$first_ins" ] && [ "$first_run" -lt "$first_ins" ] && echo yes)" "yes"
+has "hostfw_apply: the timer runs revert in 300 s" "$(cat "$FW")" "^systemd-run --quiet --unit=vps-hostfw-revert --on-active=300 --timer-property=AccuracySec=1s $HOSTFW_PATH revert$"
+check "hostfw_apply: every inserted rule is on eth0 and marked" "$(grep -E '^ip6?tables -w -I ' "$FW" | grep -cvE -- '-i eth0 .*--comment vps-hostfw ')" "0"
+check "hostfw_apply: no flush, no chain deleted, no policy" "$(grep -cE '^ip6?tables .* -(F|X|P|Z)( |$)|FORBIDDEN' "$FW")" "0"
+check "hostfw_apply: DOCKER-USER rules match the original destination port" "$(grep -cE '^iptables -w -I DOCKER-USER [0-9]+ -i eth0 -p tcp -m conntrack --ctorigdstport (22|80|443) --ctdir ORIGINAL ' "$FW")" "3"
+check "hostfw_apply: rules on both families" "$(ours 4 INPUT):$(ours 4 DOCKER-USER):$(ours 6 INPUT):$(ours 6 DOCKER-USER)" "7:5:7:5"
+check "hostfw_apply: IPv6 keeps ICMPv6 and DHCPv6" "$(grep -cE -- '^-i eth0 -p (ipv6-icmp|udp -m udp --dport 546) ' "$HOME/ipt/6/INPUT")" "2"
+check "hostfw_apply: INPUT ends with the drop on eth0, others' rules after it" "$(sed -n '7p;8p' "$HOME/ipt/4/INPUT" | paste -sd '|' -)" "-i eth0 -m comment --comment vps-hostfw -j DROP|-i docker0 -j ACCEPT"
+check "hostfw_apply: DOCKER-USER ours on top, Docker's RETURN last" "$(head -1 "$HOME/ipt/4/DOCKER-USER"):$(tail -1 "$HOME/ipt/4/DOCKER-USER")" "-i eth0 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment vps-hostfw -j RETURN:-j RETURN"
+check "hostfw_apply: FORWARD untouched" "$(paste -sd '|' "$HOME/ipt/4/FORWARD")" "-j DOCKER-USER|-j DOCKER-FORWARD"
+fwrun hostfw_status
+has "hostfw_status: trial pending" "$out" '^hostfw short not-persisted trial-pending$'
+has "hostfw_status: the open ports" "$out" '^hostfw tcp 22 80 443$'
+: > "$FW"; fwrun hostfw_apply
+check "hostfw_apply: refused while a trial is pending, nothing changed" "$rc:$(grep -cE '^(systemd-run|ip6?tables -w -[ID]) ' "$FW")" "1:0"
+has "hostfw_apply: says why" "$out" 'a trial is already pending'
+
+# hostfw_confirm: timer gone, config kept, unit enabled
+fwrun hostfw_confirm
+check "hostfw_confirm: rc" "$rc" "0"
+has "hostfw_confirm: timer stopped, unit enabled" "$(cat "$FW")" '^systemctl enable --quiet vps-hostfw\.service$'
+check "hostfw_confirm: the confirmed config" "$(cmp "$HOSTFW_CONF" "$HOSTFW_CONF.ok" && echo same)" "same"
+fwrun hostfw_status
+has "hostfw_status: active persisted" "$out" '^hostfw short active persisted$'
+has "hostfw_status: DOCKER-USER guarded" "$out" '^hostfw docker_user4 guarded$'
+check "hostfw_status --short (verify.sh)" "$(rssh "$HOSTFW_PATH status --short" </dev/null)" "active persisted"
+fwrun hostfw_confirm
+check "hostfw_confirm: nothing to confirm" "$rc" "1"
+fwrun hostfw_apply; fwrun hostfw_confirm
+check "hostfw_apply again: no duplicates" "$(ours 4 INPUT):$(ours 4 DOCKER-USER):$(ours 6 INPUT):$(grep -c . "$HOME/ipt/4/INPUT")" "7:5:7:8"
+# the unit at boot applies the confirmed config, without a timer
+fwreset; mkdir -p "$HOME/sysd"; touch "$HOME/sysd/enabled-vps-hostfw.service"
+cp "$HOSTFW_CONF" "$HOSTFW_CONF.ok"
+fwrun rssh "$HOSTFW_PATH apply --boot"
+check "apply --boot: the confirmed rules, no timer" "$rc:$(ours 4 INPUT):$(grep -c '^systemd-run' "$FW")" "0:7:0"
+
+# refusals: nothing scheduled, nothing changed
+refused() {  # NAME REGEX: the trial was refused before the timer and before any rule
+  check "$1: refused" "$rc:$(grep -cE '^(systemd-run|ip6?tables -w -[IDN]) ' "$FW")" "1:0"
+  has "$1: says why" "$out" "$2"
+}
+fwreset; FAKE_SSHD_PORT=2222 fwrun hostfw_apply
+refused "sshd on a port not in PORTS" 'sshd listens on port 2222, which is not in PORTS \(22 80 443\); refusing: it would lock you out'
+fwreset; FAKE_SSHD_NONE=1 fwrun hostfw_apply
+refused "sshd -T says nothing" 'sshd -T printed no port; refusing'
+fwreset; FAKE_FW_BACKEND=nftables fwrun hostfw_apply
+refused "Docker's nftables backend" "Docker uses its nftables firewall backend: there is no DOCKER-USER chain to guard; refusing"
+fwreset; FAKE_FW_BACKEND='' fwrun hostfw_apply
+refused "Docker's backend unknown" "could not read Docker's firewall backend"
+fwreset; FAKE_IFACE6=eth1 fwrun hostfw_apply
+refused "IPv6 on another interface" 'the IPv6 default route is on eth1, IPv4 on eth0'
+fwreset; FAKE_NO_ROUTE=1 fwrun hostfw_apply
+refused "no default route" 'no IPv4 default route'
+fwreset; FAKE_SYSTEMD_RUN_FAIL=1 fwrun hostfw_apply
+check "no revert timer: nothing applied" "$rc:$(grep -cE '^ip6?tables -w -[IDN] ' "$FW")" "1:0"
+# before Docker (phase 02 on a fresh box): DOCKER-USER is made, FORWARD stays Docker's to fill
+fwreset; rm -f "$HOME/ipt/"*/DOCKER-USER; : > "$HOME/ipt/4/FORWARD"; : > "$HOME/ipt/6/FORWARD"
+SSH_STUB_PATH="$HOME/fwbin-nd:$MINBIN" fwrun hostfw_apply
+check "no Docker yet: applied, DOCKER-USER created" "$rc:$(grep -c '^iptables -w -N DOCKER-USER$' "$FW"):$(ours 4 DOCKER-USER)" "0:1:5"
+SSH_STUB_PATH="$HOME/fwbin-nd:$MINBIN" fwrun hostfw_status
+has "no Docker yet: status" "$out" '^hostfw forward4 nodocker$'
+has "no Docker yet: short" "$out" '^hostfw short not-persisted trial-pending$'
+
+# a failure halfway: back to nothing (or the confirmed config), the timer stopped
+fwreset; rm -f "$HOME/ipt/inserts"; FAKE_IPT_FAIL_AT=5 fwrun hostfw_apply
+check "a rule fails: rc, timer stopped, no rules left" "$rc:$(ours 4 INPUT):$(ours 6 INPUT):$([ -e "$HOME/sysd/active-vps-hostfw-revert.timer" ] && echo pending || echo none)" "1:0:0:none"
+has "a rule fails: says so" "$out" '^vps-hostfw: applying failed; going back$'
+
+# revert (what the timer runs): without a confirmed config no rules at all; with one, that one
+fwreset; fwrun hostfw_apply; fwrun rssh "$HOSTFW_PATH revert"
+check "revert, nothing confirmed: only our rules gone" "$rc:$(paste -sd '|' "$HOME/ipt/4/INPUT"):$(paste -sd '|' "$HOME/ipt/4/DOCKER-USER"):$(paste -sd '|' "$HOME/ipt/6/DOCKER-USER")" "0:-i docker0 -j ACCEPT:-j RETURN:-j RETURN"
+has "revert: says so" "$out" '^reverted: no vps-hostfw rules \(nothing was confirmed yet\)$'
+check "revert: deletes rule by rule, no flush" "$(grep -cE -- ' -(F|X)( |$)|FORBIDDEN' "$FW"):$(grep -c '^iptables -w -D INPUT ' "$FW")" "0:7"
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+fwrun rssh "$HOSTFW_PATH open 22222"
+has "open: a trial with the new port" "$out" '^trial: in tcp/22 tcp/80 tcp/443 tcp/22222 icmp on eth0'
+fwrun rssh "$HOSTFW_PATH revert"
+check "revert: back to the confirmed config" "$rc:$(grep '^PORTS=' "$HOSTFW_CONF"):$(ours 4 INPUT)" '0:PORTS="22 80 443":7'
+has "revert: says which" "$out" '^reverted to the confirmed config \(22 80 443 on eth0\)$'
+fwrun rssh "$HOSTFW_PATH close 22"
+check "close the sshd port: refused, config as confirmed" "$rc:$(grep '^PORTS=' "$HOSTFW_CONF"):$([ -e "$HOME/sysd/active-vps-hostfw-revert.timer" ] && echo pending || echo none)" '1:PORTS="22 80 443":none'
+
+# hostfw_status: what can go wrong, as the checkup reads it
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+st() { rssh "$HOSTFW_PATH status --short" </dev/null; }
+echo "-p tcp -m tcp --dport 8000 -m comment --comment vps-hostfw -j RETURN" >> "$HOME/ipt/4/DOCKER-USER"
+check "status: a marked rule without -i" "$(st)" "docker-user4-unguarded"
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+sed -i '1i -p tcp -j ACCEPT' "$HOME/ipt/4/DOCKER-USER"
+check "status: someone else's rule above ours" "$(st)" "docker-user4-shadowed"
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+: > "$HOME/ipt/4/FORWARD"
+check "status: DOCKER-USER not used by FORWARD" "$(st)" "docker-user4-unreferenced"
+: > "$HOME/ipt/6/FORWARD"; printf '%s\n' "-j DOCKER-USER" > "$HOME/ipt/4/FORWARD"
+check "status: IPv6 without Docker's rules is fine (docker-proxy, INPUT)" "$(st)" "active persisted"
+sed -i '/-j DROP$/d' "$HOME/ipt/6/INPUT"
+check "status: no IPv6 drop" "$(st)" "input6-off"
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm; rm -f "$HOME/sysd/enabled-vps-hostfw.service"
+check "status: not persisted" "$(st)" "not-persisted"
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm; rm -f "$HOME/ipt/4/DOCKER-USER"; touch "$HOME/ipt/4/DOCKER-USER"
+check "status: DOCKER-USER rules gone" "$(st)" "docker-user4-missing"
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+check "status: nftables backend now" "$(FAKE_FW_BACKEND=nftables st)" "docker-nftables"
+rm -f "$HOSTFW_PATH"; fwrun hostfw_status
+check "hostfw_status: not installed" "$out" "hostfw installed no"
+fwrun hostfw_install
+
+# hostfw_port_add / hostfw_port_remove: trial, a fresh connection, confirm, CHECKUP_PORTS_OK
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+fwrun hostfw_port_add 22222
+check "hostfw_port_add: rc and state" "$rc:$(VPS_STATE=$VPS_SETUP_STATE state_get CHECKUP_PORTS_OK)" "0:tcp/22222"
+check "hostfw_port_add: confirmed with the port" "$(grep '^PORTS=' "$HOSTFW_CONF.ok"):$(st)" 'PORTS="22 80 443 22222":active persisted'
+has "hostfw_port_add: in DOCKER-USER too" "$(cat "$HOME/ipt/4/DOCKER-USER")" '^-i eth0 -p tcp -m conntrack --ctorigdstport 22222 --ctdir ORIGINAL '
+fwrun hostfw_port_add 22222
+check "hostfw_port_add: twice, one entry" "$rc:$(VPS_STATE=$VPS_SETUP_STATE state_get CHECKUP_PORTS_OK):$(grep -o 22222 "$HOSTFW_CONF" | wc -l)" "0:tcp/22222:1"
+fwrun hostfw_port_remove 22222
+check "hostfw_port_remove: gone" "$rc:$(VPS_STATE=$VPS_SETUP_STATE state_get CHECKUP_PORTS_OK):$(grep '^PORTS=' "$HOSTFW_CONF.ok")" '0::PORTS="22 80 443"'
+fwrun hostfw_port_remove 443
+check "hostfw_port_remove: a base port stays" "$rc:$out" "1:tcp/443 is a base port of the setup; it stays open"
+fwrun hostfw_port_add 80
+check "hostfw_port_add: a base port is already open" "$rc" "0"
+fwrun hostfw_port_add 99999
+check "hostfw_port_add: not a port" "$rc:$out" "1:not a port: 99999"
+fwrun hostfw_port_add x1
+check "hostfw_port_add: usage" "$rc" "1"
+fwrun hostfw_off
+check "hostfw_off: our rules out, unit off" "$rc:$(ours 4 INPUT):$(ours 6 DOCKER-USER):$([ -e "$HOME/sysd/enabled-vps-hostfw.service" ] && echo on || echo off):$(paste -sd '|' "$HOME/ipt/4/INPUT")" "0:0:0:off:-i docker0 -j ACCEPT"
+check "hostfw: no forbidden iptables operation in the whole run" "$(grep -c FORBIDDEN "$FW")" "0"
+
+# hostfw_probe and port_probe from this machine: only 127.0.0.1, the fake API port answers
+read -r C1 C2 <<<"$(python3 -c 'import socket
+ps = []
+for _ in range(2):
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); ps.append(s)
+print(*[s.getsockname()[1] for s in ps])')"
+check "port_probe: open" "$(port_probe 127.0.0.1 "$PORT" 2)" "open"
+check "port_probe: closed" "$(port_probe 127.0.0.1 "$C1" 2)" "closed"
+VPS_STATE=$VPS_SETUP_STATE state_set VPS_IP 127.0.0.1
+fwrun env HOSTFW_PROBE_OPEN="$PORT" HOSTFW_PROBE_CLOSED="$C1 $C2" bash -c ". \"$REPO/lib.sh\"; hostfw_probe"
+check "hostfw_probe: as wanted" "$rc:$(paste -sd ',' <<<"$out")" "0:tcp/$PORT open (want open),tcp/$C1 closed (want closed),tcp/$C2 closed (want closed)"
+fwrun env HOSTFW_PROBE_OPEN="$C1" HOSTFW_PROBE_CLOSED="$PORT" bash -c ". \"$REPO/lib.sh\"; hostfw_probe"
+check "hostfw_probe: ssh closed and the panel open fail" "$rc:$(paste -sd ',' <<<"$out")" "1:tcp/$C1 closed (want open),tcp/$PORT open (want closed)"
+VPS_STATE=$VPS_SETUP_STATE state_set VPS_IP 203.0.113.9
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+
 sed -i '/^VPS_IP=/d; /^DB_UUID=/d; /^APP_UUID=/d; /^ROLLBACK_COMMIT=/d; /^LAST_DUMP=/d; /^PROJECT_UUID=/d; /^SERVICE_/d' "$VPS_SETUP_STATE"
 
 # verify.sh picks the right phase
@@ -2213,5 +2545,25 @@ check "verify: answers, no server -> 01" "$out" "NEXT: phases/01-server.md"
 out=$(GH_STUB_LOGGED_IN=0 PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1)
 case "$out" in *"gh not logged in"*"NEXT: phases/00-preflight.md") check "verify: gh not logged in -> 00" ok ok ;;
   *) check "verify: gh not logged in -> 00" "$(echo "$out" | tail -3)" "gh not logged in ... NEXT: phases/00-preflight.md" ;; esac
+
+# verify.sh, PROVIDER=other (R20): phase 02 also wants the host firewall active and persisted.
+# dig is stubbed: no network.
+printf '#!/bin/sh\nexit 0\n' > "$HOME/bin/dig"; chmod +x "$HOME/bin/dig"
+VPS_STATE=$VPS_SETUP_STATE state_set VPS_IP 203.0.113.9
+out=$(PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1 </dev/null)
+has "verify other: host firewall checked" "$out" 'host firewall active and persisted'
+check "verify other: firewall in place -> 03" "$(tail -1 <<<"$out")" "NEXT: phases/03-coolify.md"
+rm -f "$HOME/sysd/enabled-vps-hostfw.service"
+out=$(PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1 </dev/null)
+has "verify other: not persisted is said" "$out" 'host firewall: not-persisted'
+check "verify other: not persisted -> 02" "$(tail -1 <<<"$out")" "NEXT: phases/02-harden.md"
+mv "$HOSTFW_PATH" "$HOSTFW_PATH.away"
+out=$(PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1 </dev/null)
+has "verify other: not installed -> 02" "$(tail -3 <<<"$out" | paste -sd ' ' -)" 'host firewall: not installed .*NEXT: phases/02-harden\.md'
+mv "$HOSTFW_PATH.away" "$HOSTFW_PATH"
+state_set PROVIDER hetzner; state_set SERVER_EXISTS 1
+out=$(PATH="$HOME/bin:$PATH" "$REPO/verify.sh" 2>&1 </dev/null)
+check "verify hetzner: no host firewall check" "$(grep -c 'host firewall' <<<"$out")" "0"
+state_set PROVIDER other
 
 echo; [ "$fails" = 0 ] && echo "ALL PASSED" || { echo "$fails FAILED"; exit 1; }
