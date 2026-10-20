@@ -3,6 +3,9 @@
 // same statement. Two containers alive at once (a rolling deploy) enqueue each slot once, and
 // the queue stays the only way a job runs. Slots are aligned to the Unix epoch (UTC): a daily
 // schedule is due at 00:00 UTC. No cron expressions: "every N seconds" is enough here.
+// Clocks: the slot comes from the container's clock, run_at and the claim from the database's.
+// Skew between two containers is harmless: both compute the same slot key for a given minute and
+// the primary key lets one win; a skewed clock only moves a slot's start by the skew.
 import { validKind } from "./queue.js";
 
 export const SCHEDULES = [

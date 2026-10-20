@@ -24,10 +24,12 @@ export const SCHEMA = `
     attempts int not null default 0,
     max_attempts int not null default 5 check (max_attempts between 1 and 100),
     locked_at timestamptz,
+    lock_token uuid,
     last_error text,
     created_at timestamptz not null default now(),
     finished_at timestamptz
   );
+  alter table jobs add column if not exists lock_token uuid;
   create index if not exists jobs_queued_idx on jobs (run_at, id) where status = 'queued';
   create table if not exists cron_runs (
     name text not null,
@@ -36,14 +38,36 @@ export const SCHEMA = `
   );
 `;
 
+// Any constant: the key of the advisory lock that serialises the schema SQL.
+const MIGRATE_LOCK = 7242400124;
+
+// migrate -> the schema in one transaction under a transaction-level advisory lock, so two
+// containers starting together (a rolling deploy) never race on "create table if not exists"
+// (which can fail with a duplicate pg_type row when run concurrently).
 export async function migrate(db = pool) {
-  await db.query(SCHEMA);
+  const c = await db.connect();
+  try {
+    await c.query("begin");
+    await c.query("select pg_advisory_xact_lock($1)", [MIGRATE_LOCK]);
+    await c.query(SCHEMA);
+    await c.query("commit");
+  } catch (err) {
+    await c.query("rollback").catch(() => {});
+    throw err;
+  } finally {
+    c.release();
+  }
 }
 
 // The database may still be booting (server reboot, first deploy), so retry briefly, then
 // exit: the container restarts instead of running without a schema (starter/lib/db.ts).
-export async function migrateOrExit(attempts = 10, delayMs = 3000) {
+// shouldStop() true (SIGTERM during the retries) ends the loop with exit 0.
+export async function migrateOrExit(attempts = 10, delayMs = 3000, shouldStop = () => false) {
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (shouldStop()) {
+      console.log("db: stopping before the schema was ready");
+      process.exit(0);
+    }
     try {
       await migrate();
       console.log("db: schema ready");

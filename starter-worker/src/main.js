@@ -3,7 +3,7 @@
 // SIGTERM (a deploy, a stop) lets the running job finish, then exits 0.
 import { pool, migrateOrExit } from "./db.js";
 import { tick, SCHEDULES, validateSchedules } from "./cron.js";
-import { claim, requeueStale } from "./queue.js";
+import { claim, heartbeat, requeueStale } from "./queue.js";
 import { HANDLERS, runJob } from "./jobs.js";
 import { createHealthServer } from "./health.js";
 
@@ -16,6 +16,9 @@ const PORT = intEnv("PORT", 3000, 1);
 const POLL_MS = intEnv("WORKER_POLL_MS", 2000, 100);
 const LOCK_SECONDS = intEnv("WORKER_LOCK_SECONDS", 900, 60);
 const STALE_MS = intEnv("WORKER_STALE_SECONDS", 300, 10) * 1000;
+// While a handler runs: the loop counts as alive and the job's lock is renewed, well inside
+// WORKER_LOCK_SECONDS.
+const BEAT_MS = Math.min(30, Math.floor(LOCK_SECONDS / 3)) * 1000;
 
 validateSchedules(SCHEDULES, Object.keys(HANDLERS));
 
@@ -38,7 +41,23 @@ function sleep(ms) {
   });
 }
 
-await migrateOrExit();
+await migrateOrExit(10, 3000, () => state.stopping);
+
+// runWithHeartbeat JOB -> runJob, with state.lastTick and the job's locked_at refreshed every
+// BEAT_MS (same lock_token, so complete and fail still own the row).
+async function runWithHeartbeat(job) {
+  const beat = setInterval(() => {
+    state.lastTick = Date.now();
+    heartbeat(pool, job)
+      .then((ok) => { if (!ok) console.error(`job ${job.id} ${job.kind}: lock lost while running`); })
+      .catch((err) => console.error(`job ${job.id}: heartbeat failed: ${err.message}`));
+  }, BEAT_MS);
+  try {
+    return await runJob(pool, job);
+  } finally {
+    clearInterval(beat);
+  }
+}
 const server = createHealthServer(pool, state, STALE_MS);
 // No host: Node listens on :: (IPv4 and IPv6) when the container has IPv6, else on 0.0.0.0.
 // Coolify's health check calls localhost, which is ::1 first in Alpine.
@@ -53,7 +72,7 @@ while (!state.stopping) {
     if (back) console.log(`worker: ${back} jobs with an expired lock put back`);
     let job;
     while (!state.stopping && (job = await claim(pool))) {
-      await runJob(pool, job);
+      await runWithHeartbeat(job);
       state.lastTick = Date.now();
     }
   } catch (err) {

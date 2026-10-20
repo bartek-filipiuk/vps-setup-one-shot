@@ -121,6 +121,14 @@ worker_checks() {
   check "$name: both jobs ran (status done)" "$got" 2
   check "$name: cron slots claimed (heartbeat, prune)" "$(psql_db "$c-db" "select string_agg(distinct name, ',' order by name) from cron_runs")" "heartbeat,prune"
   check "$name: the cron jobs ran" "$(psql_db "$c-db" "select count(*) >= 2 from jobs where status = 'done' and payload->>'ci' is null")" t
+  # A kind without a handler, inserted the way a web app would: fail() end to end.
+  psql_db "$c-db" "insert into jobs (kind, payload) values ('no_handler', '{\"ci\":3}')" >/dev/null
+  for ((i = 0; i < WAIT; i++)); do
+    got=$(psql_db "$c-db" "select status || ':' || (last_error is not null) || ':' || (lock_token is null) from jobs where payload->>'ci' = '3'")
+    [ "${got%%:*}" = failed ] && break
+    sleep 1
+  done
+  check "$name: a kind without a handler ends failed with last_error, unlocked" "$got" "failed:true:true"
   docker exec "$c" node enqueue.js nope '{}' >/dev/null 2>&1; rc=$?
   check "$name: an unknown kind is refused" "$rc" 1
   docker exec "$c" node enqueue.js echo '[1]' >/dev/null 2>&1; rc=$?

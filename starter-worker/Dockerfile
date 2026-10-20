@@ -13,5 +13,6 @@ COPY --chown=node:node src ./src
 USER node
 EXPOSE 3000
 # Coolify uses this check when the Dockerfile has one (4.3.23 source); busybox wget exits 1 on a 503.
-HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 CMD ["wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
+# sh -c so a PORT set in Coolify (worker_create /worker 8080) is the port checked.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 CMD ["sh", "-c", "wget -q -O /dev/null \"http://localhost:${PORT:-3000}/api/health\""]
 CMD ["node", "src/main.js"]

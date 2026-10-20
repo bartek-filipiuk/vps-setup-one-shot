@@ -1528,7 +1528,7 @@ staging_teardown() {
 # environment of project_ctx, with no domain (autogenerate_domain:false, else Coolify makes one
 # up) and a health check on PORT (default 3000) and HEALTH_PATH (default /api/health), not
 # deployed. Records WORKER_APP_UUID and WORKER_BASE_DIR. A second run finds WORKER_APP_UUID and
-# sends only the health check, when Coolify does not show it.
+# sends only the health check, when Coolify does not show that path and port.
 worker_create() {
   local base=${1:-} port=${2:-3000} health=${3:-/api/health} name repo key branch app ctx project env server body r
   [ -n "$base" ] || { echo "usage: worker_create BASE_DIR [PORT] [HEALTH_PATH]  (like /worker)" >&2; return 1; }
@@ -1547,8 +1547,9 @@ worker_create() {
   if [ -n "$app" ]; then
     service_valid_uuid "$app" || return 1
     r=$(capi GET "/applications/$app") || { echo "worker_create: WORKER_APP_UUID=$app in $VPS_STATE is not readable in Coolify; nothing created" >&2; return 1; }
-    if jq -e --arg h "$health" '.health_check_enabled == true and .health_check_path == $h' <<<"$r" >/dev/null; then
-      echo "worker $name: $app (existing, health check $health)"; return 0
+    if jq -e --arg h "$health" --arg port "$port" \
+      '.health_check_enabled == true and .health_check_path == $h and ((.health_check_port // "") | tostring) == $port' <<<"$r" >/dev/null; then
+      echo "worker $name: $app (existing, health check $health on port $port)"; return 0
     fi
   else
     ctx=$(project_ctx 2>&1) || { echo "worker_create: $ctx" >&2; return 1; }
@@ -1584,7 +1585,9 @@ worker_env_db() {
   r=$(capi GET "/databases/$db") || return 1
   url=$(jq -r '.internal_db_url // empty' <<<"$r"); r=
   [ -n "$url" ] || { echo "worker_env_db: database $db has no internal_db_url; nothing sent" >&2; return 1; }
-  printf '%s' "$url" | app_env_set "$app" DATABASE_URL
+  printf '%s' "$url" | app_env_set "$app" DATABASE_URL; r=$?
+  url=
+  return "$r"
 }
 
 # worker_enqueue KIND [JSON] -> one job into the worker's queue, run inside the running worker
@@ -1599,7 +1602,10 @@ worker_enqueue() {
   app=$(state_get WORKER_APP_UUID)
   [ -n "$app" ] || { echo "worker_enqueue: no WORKER_APP_UUID in $VPS_STATE (WORKER.md step 4)" >&2; return 1; }
   service_valid_uuid "$app" || return 1
-  printf '%s' "$json" | rssh "c=\$(docker ps -q -f name=$app | head -n 1); [ -n \"\$c\" ] || { echo 'no running container for the worker $app' >&2; exit 1; }; docker exec -i \"\$c\" node enqueue.js $kind -"
+  # Coolify names an app's container <uuid>-<time> (<uuid> with "consistent container name" on):
+  # the anchored filter matches only this app. During a rolling deploy two match; either one
+  # is fine (enqueue.js only inserts a row), and docker ps lists the newest first.
+  printf '%s' "$json" | rssh "c=\$(docker ps -q -f 'name=^/?$app(-|\$)' | head -n 1); [ -n \"\$c\" ] || { echo 'no running container for the worker $app' >&2; exit 1; }; docker exec -i \"\$c\" node enqueue.js $kind -"
 }
 
 # worker_jobs -> read-only: the jobs per status in the app's database (DB_UUID), and how long the

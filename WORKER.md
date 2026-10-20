@@ -163,6 +163,14 @@ empty, Save), and note it in `references/coolify-api.md`. `worker_jobs` saying t
 table: the worker has not started; `app_logs "$WK" 50` shows why (a wrong `DATABASE_URL` ends in
 `migrate attempt 10/10 failed` and a restart).
 
+Every deploy stops the old container: the running job gets `SIGTERM` and may finish within
+Coolify's stop grace period (30 s by default in the 4.3.23 source [verify]). A job killed after
+it runs again once its lock expires (`WORKER_LOCK_SECONDS`, 15 minutes). So jobs stay shorter than
+the grace period and safe to run twice; for longer ones the user raises the period in the UI (the
+worker app → **Advanced** → stop grace period, at most 3600 s) or with
+`capi PATCH "/applications/<WORKER_APP_UUID>" '{"stop_grace_period":120}'` (the field is in the
+4.3.23 PATCH allow-list [verify]).
+
 A bad worker version goes back like the web app's, with `ROLLBACK.md` step 2 and the worker's
 uuid: `rollback_and_wait <WORKER_APP_UUID> <commit>`, the commit of the worker's last good
 deployment from its `rollback-images` list (`ROLLBACK_COMMIT` in P is the web app's). Its tables

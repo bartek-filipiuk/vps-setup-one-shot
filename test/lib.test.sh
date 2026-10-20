@@ -1685,9 +1685,15 @@ check "worker_create: no domain anywhere" "$(grep -c domain= "$HOME/seq.log")" "
 check "worker_create: state" "$(VPS_STATE=$PW state_get WORKER_APP_UUID):$(VPS_STATE=$PW state_get WORKER_BASE_DIR):$(VPS_STATE=$PW state_get APP_UUID)" "a-shop-worker:/worker:a-shop"
 : > "$HOME/seq.log"
 VPS_STATE=$PW s3run worker_create /worker
-check "worker_create rerun: existing, nothing sent" "$rc:$out:$(grep -cE 'POST|PATCH' "$HOME/seq.log")" "0:worker shop-worker: a-shop-worker (existing, health check /api/health):0"
+check "worker_create rerun: existing, nothing sent" "$rc:$out:$(grep -cE 'POST|PATCH' "$HOME/seq.log")" "0:worker shop-worker: a-shop-worker (existing, health check /api/health on port 3000):0"
 VPS_STATE=$PW s3run worker_create /worker 3000 /healthz
 check "worker_create rerun, other health path: PATCH only" "$rc:$(grep -c '^app POST' "$HOME/seq.log"):$(grep -c '^app PATCH a-shop-worker health_check' "$HOME/seq.log")" "0:0:1"
+: > "$HOME/seq.log"
+VPS_STATE=$PW s3run worker_create /worker 8080 /healthz
+check "worker_create rerun, other port: PATCH only" "$rc:$(grep -c '^app POST' "$HOME/seq.log"):$(grep -c '^app PATCH a-shop-worker health_check' "$HOME/seq.log")" "0:0:1"
+: > "$HOME/seq.log"
+VPS_STATE=$PW s3run worker_create /worker 8080 /healthz
+check "worker_create rerun, same port and path again: nothing sent" "$rc:$(grep -cE 'POST|PATCH' "$HOME/seq.log")" "0:0"
 : > "$HOME/seq.log"
 out=$({ VPS_STATE=$PW worker_create; VPS_STATE=$PW worker_create worker; VPS_STATE=$PW worker_create /a/../b; VPS_STATE=$PW worker_create /worker 0; VPS_STATE=$PW worker_create /worker 3000 health; } 2>&1)
 has "worker_create: usage" "$out" "^usage: worker_create BASE_DIR \[PORT\] \[HEALTH_PATH\]"
@@ -1729,7 +1735,7 @@ check "worker_env_db refused: one env POST in all" "$(grep -c '^env POST' "$HOME
 VPS_STATE=$PW s3run worker_enqueue echo '{"hello": 1}'
 check "worker_enqueue rc:output" "$rc:$out" "0:enqueued job 7 echo"
 check "worker_enqueue: payload on stdin, compact" "$(cat "$HOME/enqueue.stdin")" '{"hello":1}'
-has "worker_enqueue: the worker's container by its uuid" "$(cat "$HOME/docker.log")" '^docker ps -q -f name=a-shop-worker$'
+has "worker_enqueue: the worker's container by its uuid, anchored" "$(cat "$HOME/docker.log")" '^docker ps -q -f name=\^/\?a-shop-worker\(-\|\$\)$'
 has "worker_enqueue: node enqueue.js KIND - in the container" "$(cat "$HOME/docker.log")" '^docker exec -i cid node enqueue\.js echo -$'
 VPS_STATE=$PW s3run worker_enqueue prune
 check "worker_enqueue: default payload {}" "$rc:$(cat "$HOME/enqueue.stdin")" "0:{}"

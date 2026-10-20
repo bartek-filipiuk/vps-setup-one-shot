@@ -2,7 +2,8 @@
 // no pg package needed). The real database path is proven by test/fixtures.sh starter-worker.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { backoffMs, claim, complete, enqueue, fail, parsePayload, prune, requeueStale, stats, validKind } from "../src/queue.js";
+import { readFileSync } from "node:fs";
+import { backoffMs, claim, complete, enqueue, fail, heartbeat, parsePayload, prune, requeueStale, stats, validKind } from "../src/queue.js";
 import { HANDLERS, runJob } from "../src/jobs.js";
 import { healthAnswer } from "../src/health.js";
 
@@ -65,28 +66,49 @@ test("claim: oldest due queued job with SKIP LOCKED; null when none", async () =
   assert.equal(await claim(db), null);
   const sql = db.calls[0].text;
   assert.match(sql, /status = 'running'/);
+  assert.match(sql, /lock_token = gen_random_uuid\(\)/);
+  assert.match(sql, /returning id, kind, payload, attempts, max_attempts, lock_token$/);
   assert.match(sql, /attempts = attempts \+ 1/);
   assert.match(sql, /where status = 'queued' and run_at <= now\(\) order by run_at, id for update skip locked limit 1/);
 });
 
 test("fail: backoff from the attempts, final flag, error text cut to 500", async () => {
   const db = fakeDb({ rows: [{ status: "queued" }], rowCount: 1 }, { rows: [{ status: "failed" }], rowCount: 1 });
-  assert.equal(await fail(db, { id: "3", attempts: 2 }, "boom"), "queued");
-  assert.deepEqual(db.calls[0].values, ["3", "boom", false, 20]);
-  assert.equal(await fail(db, { id: "3", attempts: 1 }, "x".repeat(900), { final: true }), "failed");
+  assert.equal(await fail(db, { id: "3", attempts: 2, lock_token: "t1" }, "boom"), "queued");
+  assert.deepEqual(db.calls[0].values, ["3", "boom", false, 20, "t1"]);
+  assert.match(db.calls[0].text, /where id = \$1 and status = 'running' and lock_token = \$5 returning status$/);
+  assert.match(db.calls[0].text, /lock_token = null/);
+  assert.equal(await fail(db, { id: "3", attempts: 1, lock_token: "t1" }, "x".repeat(900), { final: true }), "failed");
   assert.equal(db.calls[1].values[1].length, 500);
   assert.equal(db.calls[1].values[2], true);
   assert.match(db.calls[0].text, /attempts >= max_attempts then 'failed' else 'queued'/);
 });
 
-test("complete and requeueStale", async () => {
-  const db = fakeDb({ rowCount: 1 }, { rowCount: 2 });
-  await complete(db, "9");
-  assert.match(db.calls[0].text, /set status = 'done', finished_at = now\(\)/);
-  assert.deepEqual(db.calls[0].values, ["9"]);
+test("fail with the lock lost: null", async () => {
+  assert.equal(await fail(fakeDb({ rows: [], rowCount: 0 }), { id: "3", attempts: 1, lock_token: "old" }, "boom"), null);
+});
+
+test("complete, heartbeat and requeueStale: owned by the lock token", async () => {
+  const job = { id: "9", lock_token: "t9" };
+  const db = fakeDb({ rowCount: 1 }, { rowCount: 0 }, { rowCount: 1 }, { rowCount: 0 }, { rowCount: 2 });
+  assert.equal(await complete(db, job), true);
+  assert.match(db.calls[0].text, /set status = 'done', finished_at = now\(\), locked_at = null, lock_token = null/);
+  assert.match(db.calls[0].text, /where id = \$1 and status = 'running' and lock_token = \$2$/);
+  assert.deepEqual(db.calls[0].values, ["9", "t9"]);
+  assert.equal(await complete(db, job), false);
+  assert.equal(await heartbeat(db, job), true);
+  assert.equal(db.calls[2].text, "update jobs set locked_at = now() where id = $1 and status = 'running' and lock_token = $2");
+  assert.deepEqual(db.calls[2].values, ["9", "t9"]);
+  assert.equal(await heartbeat(db, job), false);
   assert.equal(await requeueStale(db, 900), 2);
-  assert.match(db.calls[1].text, /where status = 'running' and locked_at < now\(\) - make_interval\(secs => \$1\)/);
-  assert.deepEqual(db.calls[1].values, [900]);
+  assert.match(db.calls[4].text, /lock_token = null/);
+  assert.match(db.calls[4].text, /where status = 'running' and locked_at < now\(\) - make_interval\(secs => \$1\)/);
+  assert.deepEqual(db.calls[4].values, [900]);
+});
+
+test("the image HEALTHCHECK follows PORT", () => {
+  const line = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8").split("\n").find((l) => l.startsWith("HEALTHCHECK "));
+  assert.equal(line, 'HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 CMD ["sh", "-c", "wget -q -O /dev/null \\"http://localhost:${PORT:-3000}/api/health\\""]');
 });
 
 test("prune deletes only done and failed jobs, and old cron slots", async () => {
@@ -107,7 +129,7 @@ test("stats returns the rows", async () => {
 });
 
 test("runJob: done, retried, failed, unknown kind", async () => {
-  const job = { id: "5", kind: "ok", payload: { a: 1 }, attempts: 1, max_attempts: 5 };
+  const job = { id: "5", kind: "ok", payload: { a: 1 }, attempts: 1, max_attempts: 5, lock_token: "t5" };
   let seen;
   const handlers = { ok: async (p) => { seen = p; }, bad: async () => { throw new Error("nope"); } };
   let db = fakeDb({ rowCount: 1 });
@@ -120,6 +142,19 @@ test("runJob: done, retried, failed, unknown kind", async () => {
   db = fakeDb({ rows: [{ status: "failed" }], rowCount: 1 });
   assert.equal(await runJob(db, { ...job, kind: "toString" }, { handlers, log: quiet }), "failed");
   assert.deepEqual(db.calls[0].values.slice(1, 3), ["no handler for job kind 'toString'", true]);
+});
+
+test("runJob: lock lost on done, retry and unknown kind -> discarded, no retry", async () => {
+  const job = { id: "6", kind: "ok", payload: {}, attempts: 1, max_attempts: 5, lock_token: "old" };
+  const handlers = { ok: async () => {}, bad: async () => { throw new Error("nope"); } };
+  const errors = [];
+  const log = { log() {}, error: (m) => errors.push(m) };
+  for (const kind of ["ok", "bad", "missing"]) {
+    const db = fakeDb({ rows: [], rowCount: 0 });
+    assert.equal(await runJob(db, { ...job, kind }, { handlers, log }), "lost", kind);
+    assert.equal(db.calls.length, 1, kind);
+  }
+  assert.deepEqual(errors, ["job 6 ok: lock lost, result discarded", "job 6 bad: lock lost, result discarded", "job 6 missing: lock lost, result discarded"]);
 });
 
 test("built-in handlers: echo and prune", async () => {

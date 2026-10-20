@@ -21,6 +21,16 @@ vps-setup-one-shot. Plain Node 22, one dependency (`pg`), no build step.
   to the queue after 10 s, 20 s, 40 s, ... (at most an hour) until `max_attempts` (5), then it
   is `failed` with `last_error`. A job left `running` for `WORKER_LOCK_SECONDS` (900; its
   container was killed) goes back to the queue, so handlers must be safe to run twice.
+- Ownership: a claim writes a new `lock_token` (its own column; `locked_at` is only the time).
+  While a handler runs, the worker renews `locked_at` every 30 s under that token and counts the
+  loop as alive. `done` or a retry is written only while the row is still `running` with the
+  token; if the lock expired and another claim took the job, the old result is logged as "lock
+  lost, result discarded" and dropped.
+- Stopping: on `SIGTERM` the running job may finish, but only within Coolify's stop grace
+  period (30 s by default in the 4.3.23 source; the app's **Advanced** settings, or
+  `stop_grace_period` through the API, 1 to 3600 s; not seen on a server [verify]). Docker kills
+  the container after it, and a job killed there runs again once `WORKER_LOCK_SECONDS` expire:
+  keep jobs shorter than the grace period, and idempotent.
 
 ## Enqueue from the web app
 
@@ -54,8 +64,8 @@ From the worker container itself (`docker exec`, or `worker_enqueue` in vps-setu
 `GET /api/health`, the contract of the web app: `200 {"status":"ok","db":"ok"}`; `503
 {"status":"error","db":"error"}` when the database does not answer; `503
 {"status":"error","db":"ok"}` when the database is fine but the loop has not ticked for
-`WORKER_STALE_SECONDS` (300; a job that runs longer than that makes the worker unhealthy, so
-split long work into smaller jobs). The image's `HEALTHCHECK` calls it; nothing outside the
+`WORKER_STALE_SECONDS` (300; a running handler keeps it alive through the 30-second renewal, so
+this means the loop itself is stuck). The image's `HEALTHCHECK` calls it; nothing outside the
 server can.
 
 ## One instance
