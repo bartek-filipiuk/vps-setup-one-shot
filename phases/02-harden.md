@@ -35,7 +35,7 @@ fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /
 
 Order matters, so nobody gets locked out:
 
-1. Prove key login works in a **fresh** connection: `. ./lib.sh; rssh 'echo key-login-ok'`.
+1. Prove key login works in a **fresh** connection: `. ./lib.sh; rssh_fresh 'echo key-login-ok'`.
 2. Only then write the drop-in. It is named `00-` because sshd uses the first value it reads,
    and cloud images ship their own `50-cloud-init.conf`.
 
@@ -54,7 +54,7 @@ Expect `passwordauthentication no` and `permitrootlogin without-password`
 Do **not** set `PermitRootLogin no`: Coolify manages the server by SSH-ing into it as root with
 its own key. Key-only root login is the secure setting that keeps Coolify working.
 
-3. Prove it again in a fresh connection: `. ./lib.sh; rssh 'echo still-in'`.
+3. Prove it again in a fresh connection: `. ./lib.sh; rssh_fresh 'echo still-in'`.
    If that fails, stop. Hetzner users can recover: server → tab **Rescue** → **Reset root
    password** (copy it), then the **Console** button (top right), log in as root and delete
    `/etc/ssh/sshd_config.d/00-hardening.conf`. Other providers: their rescue system or
@@ -67,8 +67,12 @@ firewall goes into Docker's `DOCKER-USER` chain and into `INPUT`, for IPv4 and I
 small script on the server (`vps-hostfw`) with a boot unit. Every rule matches only the public
 interface (the default route's), so traffic between containers is never touched, and it lets
 in only TCP 22, 80, 443 and ICMP, like the cloud firewall. Tell the user: "Now the firewall on
-the server. It is tried for five minutes first and removes itself unless I confirm it, so a
-mistake cannot lock us out."
+the server. It is tried for at most five minutes first and removes itself unless I confirm
+it, so a mistake cannot lock us out."
+
+Before step 1: `server_check` (phase 01) warns when `ufw` or `nftables.service` is active.
+Disable it first, after the user's yes (`rssh 'ufw disable'`, `rssh 'systemctl disable --now
+nftables'`): its rules would mix with these, and `ufw`'s never see Docker's ports anyway.
 
 1. Install it (nothing is applied yet):
 
@@ -93,12 +97,14 @@ around it.
 3. Prove the way in, in **fresh** connections, before the deadline:
 
 ```
-. ./lib.sh; rssh 'echo still-in' && hostfw_probe
+. ./lib.sh; rssh_fresh 'echo still-in' && hostfw_probe
 ```
 
-Expect `still-in` and `tcp/22 open (want open)`, and `closed` for 8000, 6001, 6002 and 8080
-(nothing listens there yet; phase 04 step 5 proves 8000 again once Coolify runs). From a VPN
-or a company network the probe may say `unknown`: then only `still-in` counts.
+`rssh_fresh` opens a new connection even when the user's ssh config shares one (ControlMaster).
+Expect `still-in` and `tcp/22 open (want open)` (sshd's port, read from the server), and
+`closed` for 8000, 6001, 6002 and 8080 (nothing listens there yet; phase 04 step 5 proves 8000
+again once Coolify runs). From a VPN or a filtered network the probe may say `unknown`, or even
+report 22 as `closed`: then only `still-in` counts.
 
 4. Only if step 3 passed, keep it:
 

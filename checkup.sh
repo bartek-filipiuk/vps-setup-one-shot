@@ -90,6 +90,7 @@ hostfw_line() {
     case $w in
       active|persisted) ;;
       not-persisted) mark=$(worst "$mark" WARN); probs="$probs; not persisted (vps-hostfw.service disabled: hostfw_confirm)" ;;
+      unit-failed) mark=FAIL; probs="$probs; vps-hostfw.service failed: the rules may not have come back at the last boot or Docker restart" ;;
       trial-pending) mark=$(worst "$mark" WARN); probs="$probs; a trial is pending and reverts by itself (hostfw_confirm keeps it)" ;;
       input4-off|input6-off) mark=FAIL; probs="$probs; no drop rule in INPUT for IPv${w:5:1}" ;;
       docker-user4-unreferenced) mark=FAIL; probs="$probs; DOCKER-USER is not used by FORWARD (Docker's nftables backend?)" ;;

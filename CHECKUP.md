@@ -81,9 +81,10 @@ added to the line:
 | `no drop rule in INPUT` | FAIL | the host's own ports are open to everyone |
 | `DOCKER-USER rules missing`, `... without -i <iface> or without the drop` | FAIL | Docker's published ports (8000 the panel) are not guarded |
 | `another rule comes first in DOCKER-USER` | FAIL | a rule above ours lets traffic through first |
-| `DOCKER-USER is not used by FORWARD`, `Docker uses its nftables backend` | FAIL | Docker no longer reads `DOCKER-USER`; Docker 29 can run an nftables backend that has no such chain |
+| `DOCKER-USER is not used by FORWARD`, `Docker uses its nftables backend` | FAIL | Docker no longer reads `DOCKER-USER`; Docker can run an nftables backend that has no such chain **[verify]** |
 | `IPv6 opens ..., IPv4 ...` | FAIL | the two families differ |
 | `not persisted` | WARN | the rules are in place now but not after a reboot |
+| `vps-hostfw.service failed` | FAIL | the boot unit failed: after the last boot or Docker restart the rules may be missing (`rssh 'journalctl -u vps-hostfw -n 20'`) |
 | `a trial is pending` | WARN | someone ran a trial and did not confirm it; it removes itself |
 | `n/a (no host firewall ...)` | WARN | `vps-hostfw` not installed (a setup from before R20, or phase 02 step 4 skipped) |
 
@@ -104,7 +105,7 @@ firewall (`hcloud firewall apply-to-resource vps-setup-fw --type server --server
 unguarded, shadowed, not persisted) is fixed by running phase 02 step 4 again from its step 1,
 trial and confirm included, which puts every rule back in place. `DOCKER-USER is not used` with
 Docker's nftables backend: stop, this needs a human (the host firewall cannot guard Docker's
-ports there; `references/providers.md`).
+ports there **[verify]**; `references/providers.md`).
 A reachable port with no firewall rule for it on Hetzner means the firewall is not applied, or
 the probe went somewhere else (VPN, a proxy on this machine): run `./checkup.sh` again from
 another network before changing anything.

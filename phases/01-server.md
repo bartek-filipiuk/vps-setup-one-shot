@@ -137,8 +137,9 @@ ssh -o StrictHostKeyChecking=accept-new "$U@$(state_get VPS_IP)" 'sudo install -
 rssh true && echo root-ok
 ```
 
-This replaces root's `authorized_keys` (cloud images may put a `command="Please login as ..."`
-line there that refuses root **[verify]**). Phase 02 keeps root by key only, which Coolify needs.
+This replaces root's `authorized_keys`: any key already there is gone (cloud images may put a
+`command="Please login as ..."` line there that refuses root **[verify]**). Phase 02 keeps root
+by key only, which Coolify needs.
 
 ### 3. Check the box (you)
 

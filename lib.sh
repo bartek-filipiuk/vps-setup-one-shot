@@ -27,6 +27,15 @@ rssh() {
   ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "root@$ip" "$@"
 }
 
+# rssh_fresh -> rssh in a new TCP connection, never through an ssh ControlMaster socket the
+# user's ~/.ssh/config may set up: proves the way in after a firewall or sshd change (phase 02).
+rssh_fresh() {
+  local ip; ip=$(grep -m1 '^VPS_IP=' "$VPS_SETUP_STATE" 2>/dev/null | cut -d= -f2-)
+  [ -n "$ip" ] || { echo "VPS_IP not set in $VPS_SETUP_STATE" >&2; return 1; }
+  ssh -o ControlPath=none -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=accept-new "root@$ip" "$@"
+}
+
 # --- Coolify API ---
 
 # Config values are read with grep, not sourced: tokens contain '|'.
@@ -2585,7 +2594,7 @@ SERVER_MIN_CPU=2 SERVER_MIN_MEM_MB=3700 SERVER_MIN_DISK_GB=40
 # server_facts_script -> the read-only script server_facts runs on the server (sh): tagged lines
 #   os <id> <version>   cpu <n>   mem_mb <n>   disk_free_gb <n>   iface <default route's>
 #   ip4 <address> / ip6 <address> (global, on that interface)   virt <systemd-detect-virt>
-#   sshd_port <n>   facts done
+#   sshd_port <n>   ufw active   nftables_service active (only when they are)   facts done
 server_facts_script() {
   cat <<'EOF'
 . /etc/os-release 2>/dev/null; echo "os ${ID:-?} ${VERSION_ID:-?}"
@@ -2600,6 +2609,8 @@ if [ -n "$i" ]; then
 fi
 v=$(systemd-detect-virt 2>/dev/null); echo "virt ${v:-none}"
 sshd -T 2>/dev/null | awk '$1 == "port" { print "sshd_port", $2 }'
+ufw status 2>/dev/null | grep -q '^Status: active' && echo "ufw active"
+systemctl is-active --quiet nftables 2>/dev/null && echo "nftables_service active"
 echo "facts done"
 EOF
 }
@@ -2639,6 +2650,11 @@ server_check() {
   line OK "machine" "${virt:-none} (none = bare metal)"
   if [ -n "$sp" ]; then line OK "sshd port" "$sp$( [ "$sp" = 22 ] || echo " (not 22: the host firewall of phase 02 step 4 keeps it open)")"
   else line FAIL "sshd port" "sshd -T printed no port"; bad=1; fi
+  # a second firewall would mix its rules with vps-hostfw's (and ufw's never see Docker's ports)
+  grep -qx 'ufw active' <<<"$f" &&
+    line WARN "ufw" "active: disable it before phase 02 step 4 (rssh 'ufw disable'), after the user's yes"
+  grep -qx 'nftables_service active' <<<"$f" &&
+    line WARN "nftables.service" "active: disable it before phase 02 step 4 (rssh 'systemctl disable --now nftables'), after the user's yes"
   return "$bad"
 }
 
@@ -2650,9 +2666,10 @@ HOSTFW_CONF=${HOSTFW_CONF:-/etc/vps-hostfw.conf}
 HOSTFW_UNIT_FILE=${HOSTFW_UNIT_FILE:-/etc/systemd/system/vps-hostfw.service}
 # The ports of the cloud firewall (FIREWALL_EXPECT): always open, never closed by hostfw_port_remove.
 HOSTFW_BASE_PORTS="22 80 443"
-# What hostfw_probe expects from this machine: open, and closed (Coolify's 8000, 6001, 6002 and
-# the proxy's 8080, which listen on every address).
-HOSTFW_PROBE_OPEN=${HOSTFW_PROBE_OPEN:-22}
+# What hostfw_probe expects from this machine: open (empty: the ports sshd listens on, read over
+# ssh, else 22), and closed (Coolify's 8000, 6001, 6002 and the proxy's 8080, which listen on
+# every address).
+HOSTFW_PROBE_OPEN=${HOSTFW_PROBE_OPEN:-}
 HOSTFW_PROBE_CLOSED=${HOSTFW_PROBE_CLOSED:-8000 6001 6002 8080}
 
 # hostfw_unit -> the systemd unit that applies the confirmed rules at boot, after Docker (and
@@ -2701,28 +2718,35 @@ MARK=vps-hostfw
 UNIT=vps-hostfw.service
 TIMER=vps-hostfw-revert
 TRIAL_S=300
-PORTS='' IFACE='' PUB=''
+PORTS='' IFACE='' BACKEND='' PUB='' LENIENT=0
 
 die() { echo "vps-hostfw: $*" >&2; exit 1; }
 
-# conf_load FILE -> PORTS and IFACE from KEY="value" lines (read, never sourced), validated.
+# iface_ok NAME -> 0 for a plausible interface name (letters, digits, _ . @ : -, not starting with -)
+iface_ok() { case $1 in ''|-*|*[!A-Za-z0-9_.@:-]*) return 1 ;; esac; }
+
+# conf_load FILE -> PORTS, IFACE and BACKEND from KEY="value" lines (read, never sourced),
+# validated. BACKEND=iptables is pinned by confirm: Docker's backend was iptables (or no Docker).
 conf_load() {
   [ -f "$1" ] || die "no config $1 (hostfw_install writes it)"
   PORTS=$(sed -n 's/^PORTS="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$1" | tail -n 1)
   IFACE=$(sed -n 's/^IFACE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$1" | tail -n 1)
+  BACKEND=$(sed -n 's/^BACKEND="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$1" | tail -n 1)
   local p
   for p in $PORTS; do
     case $p in ''|*[!0-9]*|0*) die "$1: not a port: '$p'" ;; esac
     [ "$p" -le 65535 ] || die "$1: not a port: '$p'"
   done
   [ -n "$PORTS" ] || die "$1: PORTS is empty"
-  case $IFACE in *[!A-Za-z0-9_.@:-]*) die "$1: not an interface name: '$IFACE'" ;; esac
+  [ -z "$IFACE" ] || iface_ok "$IFACE" || die "$1: not an interface name: '$IFACE'"
+  case $BACKEND in ''|iptables) ;; *) die "$1: BACKEND must be iptables or empty, got '$BACKEND'" ;; esac
 }
 
-# conf_write FILE PORTS IFACE
+# conf_write FILE PORTS IFACE [BACKEND]
 conf_write() {
   { echo "# vps-hostfw (vps-setup-one-shot): TCP ports open on the public interface; IFACE empty = the default route's"
-    printf 'PORTS="%s"\nIFACE="%s"\n' "$2" "$3"; } > "$1.new" && chmod 644 "$1.new" && mv "$1.new" "$1"
+    printf 'PORTS="%s"\nIFACE="%s"\n' "$2" "$3"
+    [ -z "${4:-}" ] || printf 'BACKEND="%s"\n' "$4"; } > "$1.new" && chmod 644 "$1.new" && mv "$1.new" "$1"
 }
 
 # default_iface 4|6 -> the interface of the default route
@@ -2737,6 +2761,7 @@ pub_iface() {
   local v6
   PUB=$IFACE; [ -n "$PUB" ] || PUB=$(default_iface 4)
   [ -n "$PUB" ] || die "no IPv4 default route; set IFACE in $CONF"
+  iface_ok "$PUB" || die "not an interface name: '$PUB'"
   v6=$(default_iface 6)
   [ -z "$v6" ] || [ "$v6" = "$PUB" ] || die "the IPv6 default route is on $v6, IPv4 on $PUB: one public interface is supported"
 }
@@ -2751,23 +2776,32 @@ check_sshd() {
   done
 }
 
-# docker_backend -> none (no docker), iptables, nftables or unknown
+# docker_backend -> none (no docker), iptables, nftables or unknown (Docker unreadable, or no
+# FirewallBackend in its answer)
 docker_backend() {
   command -v docker >/dev/null 2>&1 || { echo none; return; }
-  local d; d=$(timeout 20 docker info --format '{{.FirewallBackend.Driver}}' 2>/dev/null)
+  local d; d=$(timeout 20 docker info --format '{{if .FirewallBackend}}{{.FirewallBackend.Driver}}{{end}}' 2>/dev/null)
   case $d in iptables|nftables) echo "$d" ;; *) echo unknown ;; esac
 }
 
+# check_backend -> refuses nftables always; refuses unknown on a trial. At boot and on revert
+# (LENIENT=1) a config confirmed with BACKEND=iptables is applied even when Docker cannot be read
+# yet: refusing there would leave the box open.
 check_backend() {
   case $(docker_backend) in
     none|iptables) ;;
     nftables) die "Docker uses its nftables firewall backend: there is no DOCKER-USER chain to guard; refusing" ;;
-    *) die "could not read Docker's firewall backend (docker info --format '{{.FirewallBackend.Driver}}'); refusing" ;;
+    *) { [ "$LENIENT" = 1 ] && [ "$BACKEND" = iptables ]; } ||
+         die "could not read Docker's firewall backend (docker info, FirewallBackend.Driver); refusing" ;;
   esac
 }
 
+# OURS_RE: a -S line with our comment, exactly the token vps-hostfw (quoted or not), then -j
+OURS_RE="--comment (\"$MARK\"|$MARK) -j "
 # ours BIN CHAIN -> our rules of CHAIN as -S lines
-ours() { "$1" -w -S "$2" 2>/dev/null | grep -E -- "--comment \"?$MARK\"?( |$)"; }
+ours() { "$1" -w -S "$2" 2>/dev/null | grep -E -- "$OURS_RE"; }
+# starts PREFIX -> the lines of stdin that start with PREFIX (fixed string, no regex)
+starts() { awk -v p="$1" 'index($0, p) == 1'; }
 
 # remove_ours BIN CHAIN -> deletes our rules, one by one, from their -S lines; nothing else
 remove_ours() {
@@ -2836,14 +2870,16 @@ apply_conf() {
 
 trial_pending() { systemctl is-active --quiet "$TIMER.timer"; }
 
-# back_to_confirmed -> our rules out; the confirmed config in again if there is one
+# back_to_confirmed -> our rules out; the confirmed config in again if there is one. Returns 1
+# when that failed, so the caller keeps the revert timer.
 back_to_confirmed() {
-  remove_all || die "could not remove the rules"
+  remove_all || { echo "vps-hostfw: could not remove the rules" >&2; return 1; }
   if [ -f "$OK_CONF" ]; then
     cp "$OK_CONF" "$CONF"
-    ( validate "$OK_CONF" ) || die "the confirmed config is refused now (above); no vps-hostfw rules"
+    LENIENT=1
+    ( validate "$OK_CONF" ) || { echo "vps-hostfw: the confirmed config is refused now (above); no vps-hostfw rules" >&2; return 1; }
     validate "$OK_CONF"
-    apply_conf || { remove_all; die "the confirmed config did not apply; no vps-hostfw rules now"; }
+    apply_conf || { remove_all; echo "vps-hostfw: the confirmed config did not apply; no vps-hostfw rules now" >&2; return 1; }
     echo "reverted to the confirmed config ($PORTS on $PUB)"
   else
     echo "reverted: no vps-hostfw rules (nothing was confirmed yet)"
@@ -2859,16 +2895,19 @@ trial() {
     die "could not schedule the revert timer; nothing applied"
   if ! apply_conf; then
     echo "vps-hostfw: applying failed; going back" >&2
-    systemctl stop "$TIMER.timer" >/dev/null 2>&1; back_to_confirmed; exit 1
+    # the timer stays until going back worked: it runs revert again otherwise
+    back_to_confirmed && systemctl stop "$TIMER.timer" >/dev/null 2>&1
+    exit 1
   fi
   echo "trial: in tcp/${PORTS// / tcp/} icmp on $PUB (IPv4 and IPv6); reverts at $(date -u -d "+$TRIAL_S sec" +%H:%M:%S) UTC unless confirmed"
 }
 
 confirm() {
   trial_pending || die "no trial pending; run apply --trial first"
-  conf_load "$CONF"
+  conf_load "$CONF"; pub_iface
   systemctl stop "$TIMER.timer" || die "could not stop the revert timer"
-  cp "$CONF" "$OK_CONF" || die "could not keep the config"
+  # the interface and Docker's backend as they were proven, so boot and revert need neither
+  conf_write "$OK_CONF" "$PORTS" "$PUB" iptables || die "could not keep the config"
   systemctl enable --quiet "$UNIT" || die "could not enable $UNIT"
   echo "confirmed: tcp/${PORTS// / tcp/} icmp kept, $UNIT enabled (applied at boot)"
 }
@@ -2888,7 +2927,9 @@ set_port() {
 status() {
   local fam bin s short='' tcp drop du first ref t4='' t6='' icmp=no be persisted=no tr=none
   be=$(docker_backend)
+  # the interface: the config's, else the one confirm pinned, else the default route's
   if [ -f "$CONF" ] && ( conf_load "$CONF" ) 2>/dev/null; then conf_load "$CONF"; PUB=$IFACE; fi
+  if [ -z "$PUB" ] && [ -f "$OK_CONF" ] && ( conf_load "$OK_CONF" ) 2>/dev/null; then conf_load "$OK_CONF"; PUB=$IFACE; fi
   [ -n "$PUB" ] || PUB=$(default_iface 4)
   echo "hostfw installed yes"
   echo "hostfw iface ${PUB:-?}"
@@ -2897,14 +2938,14 @@ status() {
     s=$(ours "$bin" INPUT)
     tcp=$(awk '/ -j ACCEPT/ && / -p tcp/ { for (n = 1; n < NF; n++) if ($n == "--dport") print $(n + 1) }' <<<"$s" | sort -n | paste -sd ' ' -)
     grep -qE -- '-p (icmp|ipv6-icmp) .* -j ACCEPT' <<<"$s" && icmp=yes
-    drop=off; grep -qE -- "^-A INPUT -i $PUB .*-j DROP" <<<"$s" && drop=on
+    drop=off; starts "-A INPUT -i $PUB " <<<"$s" | grep -qE -- ' -j DROP$' && drop=on
     [ "$drop" = on ] || short="$short input$fam-off"
     s=$(ours "$bin" DOCKER-USER)
     if [ -z "$s" ]; then du=missing
-    elif grep -vqE -- "^-A DOCKER-USER -i $PUB " <<<"$s"; then du=unguarded
+    elif [ "$(starts "-A DOCKER-USER -i $PUB " <<<"$s" | wc -l)" != "$(wc -l <<<"$s")" ]; then du=unguarded
     else
       first=$("$bin" -w -S DOCKER-USER 2>/dev/null | grep -m1 '^-A ')
-      case $first in *"$MARK"*) du=guarded ;; *) du=shadowed ;; esac
+      if grep -qE -- "$OURS_RE" <<<"$first"; then du=guarded; else du=shadowed; fi
       grep -qE -- '-j DROP' <<<"$s" || du=unguarded
     fi
     ref=nodocker
@@ -2929,6 +2970,8 @@ status() {
   echo "hostfw backend $be"
   [ "$be" = nftables ] && short="$short docker-nftables"
   [ -f "$OK_CONF" ] && systemctl is-enabled --quiet "$UNIT" 2>/dev/null && persisted=yes
+  # a failed boot unit means the rules did not come back at the last boot or Docker restart
+  if systemctl is-failed --quiet "$UNIT" 2>/dev/null; then persisted=no; short="$short unit-failed"; fi
   [ "$persisted" = yes ] || short="$short not-persisted"
   trial_pending && { tr=pending; short="$short trial-pending"; }
   echo "hostfw persisted $persisted"
@@ -2945,13 +2988,13 @@ case ${1:-} in
       --trial) trial ;;
       --boot)
         [ -f "$OK_CONF" ] || { echo "vps-hostfw: nothing confirmed yet; no rules applied"; exit 0; }
-        cp "$OK_CONF" "$CONF"; validate "$OK_CONF"
+        cp "$OK_CONF" "$CONF"; LENIENT=1; validate "$OK_CONF"
         apply_conf || { remove_all; die "applying the confirmed config failed; no vps-hostfw rules now"; }
         echo "applied the confirmed config: tcp/${PORTS// / tcp/} icmp on $PUB" ;;
       *) die "usage: vps-hostfw apply --trial|--boot" ;;
     esac ;;
   confirm) confirm ;;
-  revert) systemctl stop "$TIMER.timer" >/dev/null 2>&1; back_to_confirmed ;;
+  revert) back_to_confirmed || exit 1; systemctl stop "$TIMER.timer" >/dev/null 2>&1 ;;
   open|close)
     [ "$1" = open ] && a=add || a=remove
     set_port "$a" "${2:-}"
@@ -3025,10 +3068,10 @@ hostfw_port_set() {
   [ "$p" -le 65535 ] || { echo "not a port: $p" >&2; return 1; }
   case " $HOSTFW_BASE_PORTS " in *" $p "*) echo "tcp/$p is a base port of the setup; it stays open" >&2; [ "$act" = open ]; return ;; esac
   rssh "$HOSTFW_PATH $act $p" || return 1
-  if ! rssh 'echo still-in' >/dev/null 2>&1; then
+  if ! rssh_fresh 'echo still-in' >/dev/null 2>&1; then
     echo "a fresh ssh connection failed after the change; it reverts by itself within 5 minutes" >&2; return 1
   fi
-  rssh "$HOSTFW_PATH confirm" || return 1
+  rssh_fresh "$HOSTFW_PATH confirm" || return 1
   k=tcp/$p; cur=$(VPS_STATE=$VPS_SETUP_STATE state_get CHECKUP_PORTS_OK)
   for x in $cur; do [ "$x" = "$k" ] || n="$n${n:+ }$x"; done
   [ "$act" = open ] && n="$n${n:+ }$k"
@@ -3048,13 +3091,15 @@ port_probe() {
   case $rc in 28) echo closed ;; 0) echo open ;; *) echo unknown ;; esac
 }
 
-# hostfw_probe -> the firewall from outside: HOSTFW_PROBE_OPEN must be open, HOSTFW_PROBE_CLOSED
-# closed. Returns 1 otherwise. From a VPN or a NAT network the answer may be about that network.
+# hostfw_probe -> the firewall from outside: HOSTFW_PROBE_OPEN (default: sshd's ports) must be
+# open, HOSTFW_PROBE_CLOSED closed. Returns 1 otherwise. From a VPN or a filtered network the
+# answer may be about that network.
 hostfw_probe() {
-  local ip p r bad=0
+  local ip p r bad=0 open=$HOSTFW_PROBE_OPEN
   ip=$(VPS_STATE=$VPS_SETUP_STATE state_get VPS_IP)
   [ -n "$ip" ] || { echo "VPS_IP not set" >&2; return 1; }
-  for p in $HOSTFW_PROBE_OPEN; do
+  [ -n "$open" ] || open=$(rssh_fresh 'sshd -T 2>/dev/null' </dev/null 2>/dev/null | awk '$1 == "port" && $2 ~ /^[0-9]+$/ { print $2 }' | paste -sd ' ' -)
+  for p in ${open:-22}; do
     r=$(port_probe "$ip" "$p"); echo "tcp/$p $r (want open)"; [ "$r" = open ] || bad=1
   done
   for p in $HOSTFW_PROBE_CLOSED; do

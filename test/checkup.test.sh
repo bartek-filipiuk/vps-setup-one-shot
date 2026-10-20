@@ -286,6 +286,7 @@ FAKE_HOSTFW_SHORT="docker-user4-unreferenced docker-nftables" expect "host firew
 FAKE_HOSTFW_SHORT="docker-user6-missing" expect "host firewall: IPv6 DOCKER-USER missing" 1 '^FAIL +firewall +host .*; DOCKER-USER rules missing for IPv6$'
 FAKE_HOSTFW_SHORT="input4-off" expect "host firewall: no INPUT drop" 1 '^FAIL +firewall +host .*; no drop rule in INPUT for IPv4$'
 FAKE_HOSTFW_SHORT="not-persisted" expect "host firewall: not persisted" 1 '^WARN +firewall +host .*; not persisted \(vps-hostfw\.service disabled: hostfw_confirm\)$'
+FAKE_HOSTFW_SHORT="unit-failed not-persisted" expect "host firewall: the boot unit failed" 1 '^FAIL +firewall +host .*; vps-hostfw\.service failed: the rules may not have come back at the last boot or Docker restart; not persisted'
 FAKE_HOSTFW_SHORT="not-persisted trial-pending" expect "host firewall: a trial pending" 1 '^WARN +firewall +host .*; a trial is pending and reverts by itself'
 FAKE_HOSTFW_TCP6="22 80 443 8000" FAKE_HOSTFW_SHORT=ipv6-ports-differ expect "host firewall: IPv6 differs" 1 '^FAIL +firewall +host .*; IPv6 opens tcp 22 80 443 8000, IPv4 tcp 22 80 443$'
 FAKE_HOSTFW=0 expect "host firewall: not installed" 1 '^WARN +firewall +n/a \(no host firewall: vps-hostfw is not installed; phase 02 step 4\)$'

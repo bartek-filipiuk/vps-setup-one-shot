@@ -42,14 +42,15 @@ reaches `ufw`'s rules. Docker's documentation names the place for a firewall of 
 | `DOCKER-USER`: replies, `-m conntrack --ctorigdstport <port> --ctdir ORIGINAL` per port, then `DROP` | Docker has rewritten the destination already (DNAT) when the packet arrives, so the published port is the connection's original destination port |
 | `PORTS="22 80 443"` (plus `hostfw_port_add` ones) | the same ports as the Hetzner cloud firewall (`FIREWALL_EXPECT`); UDP 443 (HTTP/3) stays closed on both |
 | `apply --trial`: `systemd-run --on-active=300 ... revert` before the first rule | if the new rules cut SSH, they remove themselves after five minutes |
-| refuses when sshd's port is not in `PORTS`, the default route is unclear, IPv6 uses another interface, or Docker runs its nftables backend | each would lock out or guard nothing |
-| `vps-hostfw.service` (oneshot, `After=docker.service`, `PartOf=docker.service`) applies the confirmed config at boot | rules come back after a reboot and after a Docker restart; no `iptables-persistent`, which would also restore Docker's own chains before Docker |
+| refuses when sshd's port is not in `PORTS`, the default route is unclear, IPv6 uses another interface, or Docker runs its nftables backend (which has no `DOCKER-USER` **[verify]**) or cannot be read | each would lock out or guard nothing |
+| `confirm` writes the proven interface and `BACKEND=iptables` into `/etc/vps-hostfw.conf.ok` | at boot and on revert the confirmed rules go back even while Docker cannot be read yet; only `nftables` is refused there |
+| `vps-hostfw.service` (oneshot, `After=docker.service`, `PartOf=docker.service`) applies the confirmed config at boot | rules come back after a reboot and after a Docker restart (a failed run is `unit-failed` in the status and `FAIL` in the checkup); no `iptables-persistent`, which, if saved while Docker runs, would also restore Docker's own chains before Docker |
 
 Seen on an Ubuntu 24.04 Coolify server with Docker 29.1.3, 2026-10-20: `docker info --format
-'{{.FirewallBackend.Driver}}'` prints `iptables` (Docker 29's default backend), and `iptables
+'{{.FirewallBackend.Driver}}'` prints `iptables` (the default there), and `iptables
 --version` prints `iptables v1.8.10 (nf_tables)`, the nft-backed iptables of Ubuntu 24.04.
-`vps-hostfw` refuses when the field says `nftables`, and also when it is empty or missing
-(unknown) on a box with Docker.
+`vps-hostfw` refuses a trial when the field says `nftables`, and also when it is empty or
+missing (unknown) on a box with Docker; at boot and on revert only `nftables` is refused.
 
 Still **[verify]** on a real box:
 

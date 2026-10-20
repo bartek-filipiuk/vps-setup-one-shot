@@ -473,7 +473,7 @@ cat > "$HOME/bin/ssh" <<'STUB'
 printf '%s\n' "$*" > "$HOME/ssh.args"; cat > "$HOME/ssh.stdin"
 echo ssh >> "$HOME/seq.log"
 [ "${SSH_STUB_FAIL:-0}" = 1 ] && { echo "ssh: connect to host 203.0.113.9 port 22: Connection refused" >&2; exit 255; }
-cmd=${*#*root@203.0.113.9 }
+cmd=${*#*root@* }
 PATH="${SSH_STUB_PATH:-$HOME/fakebin:$PATH}" sh -c "$cmd" < "$HOME/ssh.stdin"
 STUB
 cat > "$HOME/fakebin/docker" <<'STUB'
@@ -2217,7 +2217,11 @@ nochain() { echo "${0##*/}: No chain/target/match by that name." >&2; exit 1; }
 case $op in
   -S) [ -f "$f" ] || nochain
       case $ch in INPUT|FORWARD|OUTPUT) echo "-P $ch ACCEPT" ;; *) echo "-N $ch" ;; esac
-      while IFS= read -r l; do echo "-A $ch $l"; done < "$f" ;;
+      # FAKE_IPT_QUOTE=1: the comment quoted, as some iptables versions print it
+      while IFS= read -r l; do
+        [ "${FAKE_IPT_QUOTE:-0}" = 1 ] && l=${l//--comment vps-hostfw /--comment \"vps-hostfw\" }
+        echo "-A $ch $l"
+      done < "$f" ;;
   -N) [ -f "$f" ] && { echo "Chain already exists." >&2; exit 1; }; : > "$f" ;;
   -I|-A)
       [ -f "$f" ] || nochain
@@ -2232,6 +2236,7 @@ case $op in
       [ -f "$f" ] || nochain
       r="$*"; grep -qxF -- "$r" "$f" || { echo "iptables: Bad rule (does a matching rule exist in that chain?)." >&2; exit 1; }
       [ "$op" = -C ] && exit 0
+      [ "${FAKE_IPT_DEL_FAIL:-0}" = 1 ] && { echo "iptables: fake delete failure" >&2; exit 4; }
       awk -v r="$r" '!done && $0 == r { done = 1; next } { print }' "$f" > "$f.new" && mv "$f.new" "$f" ;;
   *) echo "FORBIDDEN $op" >> "$HOME/fw.log"; echo "fake iptables: $op is not allowed" >&2; exit 3 ;;
 esac
@@ -2246,6 +2251,7 @@ set -- $a
 case $1 in
   is-active) [ -e "$d/active-$2" ] ;;
   is-enabled) [ -e "$d/enabled-$2" ] ;;
+  is-failed) [ -e "$d/failed-$2" ] ;;
   enable) touch "$d/enabled-$2" ;;
   disable) rm -f "$d/enabled-$2" ;;
   stop) [ "${FAKE_STOP_FAIL:-0}" = 1 ] && exit 1; rm -f "$d/active-$2" ;;
@@ -2283,7 +2289,7 @@ cat > "$HOME/fwbin/docker" <<'STUB'
 #!/bin/sh
 echo "docker $*" >> "$HOME/fw.log"
 case "$*" in
-  "info --format {{.FirewallBackend.Driver}}") printf '%s\n' "${FAKE_FW_BACKEND-iptables}" ;;
+  "info --format {{if .FirewallBackend}}{{.FirewallBackend.Driver}}{{end}}") printf '%s\n' "${FAKE_FW_BACKEND-iptables}" ;;
   *) echo "fake docker: unexpected $*" >&2; exit 2 ;;
 esac
 STUB
@@ -2339,7 +2345,9 @@ cat > "$HOME/bin/fake-server" <<'STUB'
 #!/bin/sh
 cat >/dev/null
 printf '%s\n' "os ${F_OS:-ubuntu 24.04}" "cpu ${F_CPU:-4}" "mem_mb ${F_MEM:-7820}" "disk_free_gb ${F_DISK:-180}" "iface eth0" \
-  "ip4 ${F_IP:-203.0.113.9}" "ip6 2001:db8::9" "virt none" "sshd_port ${F_SSHD:-22}" "facts done"
+  "ip4 ${F_IP:-203.0.113.9}" "ip6 2001:db8::9" "virt none" "sshd_port ${F_SSHD:-22}"
+[ -n "${F_EXTRA:-}" ] && printf '%s\n' "$F_EXTRA"
+echo "facts done"
 STUB
 chmod +x "$HOME/bin/fake-server"
 SERVER_SSH=$HOME/bin/fake-server fwrun server_check
@@ -2352,6 +2360,19 @@ has "server_check: disk" "$out" '^FAIL +disk / +12 GB free \(want 40 GB'
 F_IP=10.0.0.5 F_SSHD=2222 SERVER_SSH=$HOME/bin/fake-server fwrun server_check
 check "server_check: behind NAT is a WARN, not a FAIL" "$rc:$(grep -cE '^WARN +network' <<<"$out")" "0:1"
 has "server_check: another sshd port is noted" "$out" '^OK +sshd port +2222 \(not 22'
+F_EXTRA="ufw active
+nftables_service active" SERVER_SSH=$HOME/bin/fake-server fwrun server_check
+check "server_check: ufw and nftables.service active are WARNs" "$rc:$(grep -cE '^WARN +(ufw|nftables\.service) +active: disable it before phase 02 step 4' <<<"$out")" "0:2"
+mkdir -p "$HOME/fwbin-ufw"
+# shellcheck disable=SC2016 # $1 belongs to the fake ufw
+printf '#!/bin/sh\n[ "$1" = status ] && echo "Status: active"\n' > "$HOME/fwbin-ufw/ufw"; chmod +x "$HOME/fwbin-ufw/ufw"
+mkdir -p "$HOME/sysd"; touch "$HOME/sysd/active-nftables"
+SSH_STUB_PATH="$HOME/fwbin-ufw:$SSH_STUB_PATH" fwrun server_facts
+has "server_facts: ufw active seen" "$out" '^ufw active$'
+has "server_facts: nftables.service active seen" "$out" '^nftables_service active$'
+rm -f "$HOME/sysd/active-nftables"
+fwrun server_facts
+check "server_facts: neither when they are off" "$(grep -cE '^(ufw|nftables_service) ' <<<"$out")" "0"
 SERVER_SSH=false fwrun server_check
 check "server_check: unreachable" "$rc:$out" "1:server_check: could not read the server (does rssh true work?)"
 
@@ -2399,7 +2420,10 @@ has "hostfw_apply: says why" "$out" 'a trial is already pending'
 fwrun hostfw_confirm
 check "hostfw_confirm: rc" "$rc" "0"
 has "hostfw_confirm: timer stopped, unit enabled" "$(cat "$FW")" '^systemctl enable --quiet vps-hostfw\.service$'
-check "hostfw_confirm: the confirmed config" "$(cmp "$HOSTFW_CONF" "$HOSTFW_CONF.ok" && echo same)" "same"
+check "hostfw_confirm: the confirmed config, interface and backend pinned" "$(grep -v '^#' "$HOSTFW_CONF.ok")" 'PORTS="22 80 443"
+IFACE="eth0"
+BACKEND="iptables"'
+check "hostfw_confirm: the trial config itself unchanged" "$(grep '^IFACE=' "$HOSTFW_CONF")" 'IFACE=""'
 fwrun hostfw_status
 has "hostfw_status: active persisted" "$out" '^hostfw short active persisted$'
 has "hostfw_status: DOCKER-USER guarded" "$out" '^hostfw docker_user4 guarded$'
@@ -2507,6 +2531,63 @@ fwrun hostfw_off
 check "hostfw_off: our rules out, unit off" "$rc:$(ours 4 INPUT):$(ours 6 DOCKER-USER):$([ -e "$HOME/sysd/enabled-vps-hostfw.service" ] && echo on || echo off):$(paste -sd '|' "$HOME/ipt/4/INPUT")" "0:0:0:off:-i docker0 -j ACCEPT"
 check "hostfw: no forbidden iptables operation in the whole run" "$(grep -c FORBIDDEN "$FW")" "0"
 
+# review fixes: the revert timer stays until going back worked
+fwreset; FAKE_IPT_FAIL_AT=5 FAKE_IPT_DEL_FAIL=1 fwrun hostfw_apply
+check "a rule fails and the delete fails too: the revert timer stays" "$rc:$([ -e "$HOME/sysd/active-vps-hostfw-revert.timer" ] && echo pending || echo none)" "1:pending"
+FAKE_IPT_DEL_FAIL=1 fwrun rssh "$HOSTFW_PATH revert"
+check "revert that cannot delete: fails, the timer stays" "$rc:$([ -e "$HOME/sysd/active-vps-hostfw-revert.timer" ] && echo pending || echo none)" "1:pending"
+fwrun rssh "$HOSTFW_PATH revert"
+check "revert that works: the timer goes" "$rc:$([ -e "$HOME/sysd/active-vps-hostfw-revert.timer" ] && echo pending || echo none):$(ours 4 INPUT)" "0:none:0"
+# Docker unreadable: a trial refuses, but boot and revert put the confirmed rules back
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+rm -rf "$HOME/ipt"; fwreset; mkdir -p "$HOME/sysd"; touch "$HOME/sysd/enabled-vps-hostfw.service"
+printf '%s\n' 'PORTS="22 80 443"' 'IFACE="eth0"' 'BACKEND="iptables"' > "$HOSTFW_CONF.ok"
+FAKE_FW_BACKEND='' fwrun rssh "$HOSTFW_PATH apply --boot"
+check "apply --boot, Docker unreadable, confirmed with iptables: the rules back" "$rc:$(ours 4 INPUT):$(ours 6 DOCKER-USER)" "0:7:5"
+FAKE_FW_BACKEND=nftables fwrun rssh "$HOSTFW_PATH apply --boot"
+check "apply --boot, Docker on nftables: refused" "$rc" "1"
+printf '%s\n' 'PORTS="22 80 443"' 'IFACE="eth0"' > "$HOSTFW_CONF.ok"
+FAKE_FW_BACKEND='' fwrun rssh "$HOSTFW_PATH apply --boot"
+check "apply --boot, Docker unreadable, no pinned backend: refused" "$rc" "1"
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm; fwrun rssh "$HOSTFW_PATH open 22222"
+FAKE_FW_BACKEND='' fwrun rssh "$HOSTFW_PATH revert"
+check "revert, Docker unreadable: the confirmed rules back" "$rc:$(ours 4 INPUT):$(grep '^PORTS=' "$HOSTFW_CONF")" '0:7:PORTS="22 80 443"'
+fwreset; fwrun hostfw_apply; FAKE_FW_BACKEND='' fwrun hostfw_confirm; fwrun rssh "$HOSTFW_PATH revert"
+FAKE_FW_BACKEND='' fwrun hostfw_apply
+check "a trial, Docker unreadable: refused" "$rc" "1"
+# a failed boot unit
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm; touch "$HOME/sysd/failed-vps-hostfw.service"
+check "status: the boot unit failed" "$(st)" "unit-failed not-persisted"
+fwrun hostfw_status
+has "status: not persisted while the unit failed" "$out" '^hostfw persisted no$'
+# our comment exactly: quoted is ours, a longer comment is not
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+check "status: quoted comments in -S" "$(FAKE_IPT_QUOTE=1 st)" "active persisted"
+sed -i '1i -p tcp -m comment --comment vps-hostfw-other -j ACCEPT' "$HOME/ipt/4/INPUT"
+sed -i '1i -p tcp -m comment --comment "vps-hostfw something" -j ACCEPT' "$HOME/ipt/4/INPUT"
+check "status: foreign comments that start with the mark are not ours" "$(st):$(grep -c 'vps-hostfw -j' "$HOME/ipt/4/INPUT")" "active persisted:7"
+FAKE_IPT_QUOTE=1 fwrun hostfw_off
+check "off with quoted comments: ours gone, the foreign ones kept" "$rc:$(grep -c 'vps-hostfw -j' "$HOME/ipt/4/INPUT"):$(head -2 "$HOME/ipt/4/INPUT" | paste -sd '|' -)" '0:0:-p tcp -m comment --comment "vps-hostfw something" -j ACCEPT|-p tcp -m comment --comment vps-hostfw-other -j ACCEPT'
+# interface names: no leading dash; dots matched as text
+fwreset; printf '%s\n' 'PORTS="22 80 443"' 'IFACE="-j"' > "$HOSTFW_CONF"
+fwrun hostfw_apply
+refused "IFACE with a leading dash" "not an interface name: '-j'"
+printf '%s\n' 'PORTS="22 80 443"' 'IFACE=""' > "$HOSTFW_CONF"
+fwreset; FAKE_IFACE=eth0.100 FAKE_IFACE6=eth0.100 fwrun hostfw_apply
+check "a VLAN interface name with a dot: applied" "$rc:$(grep -c -- '-i eth0.100 ' "$HOME/ipt/4/DOCKER-USER")" "0:5"
+FAKE_IFACE=eth0.100 FAKE_IFACE6=eth0.100 fwrun hostfw_confirm
+check "a VLAN interface: pinned and active" "$(grep '^IFACE=' "$HOSTFW_CONF.ok"):$(st)" 'IFACE="eth0.100":active persisted'
+sed -i 's/-i eth0\.100 -p tcp -m conntrack --ctorigdstport 80 /-i eth0x100 -p tcp -m conntrack --ctorigdstport 80 /' "$HOME/ipt/4/DOCKER-USER"
+check "a VLAN interface: another name is not taken for it" "$(st)" "docker-user4-unguarded"
+fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
+# rssh_fresh: never through a shared connection
+fwrun rssh_fresh 'echo still-in'
+check "rssh_fresh: runs" "$rc:$out" "0:still-in"
+has "rssh_fresh: no ControlMaster" "$(cat "$HOME/ssh.args")" '^-o ControlPath=none -o ControlMaster=no -o BatchMode=yes .* root@203\.0\.113\.9 echo still-in$'
+fwrun hostfw_port_add 22222
+has "hostfw_port_add: confirmed over a fresh connection" "$(cat "$HOME/ssh.args")" "^-o ControlPath=none -o ControlMaster=no .* $HOSTFW_PATH confirm$"
+fwrun hostfw_port_remove 22222
+
 # hostfw_probe and port_probe from this machine: only 127.0.0.1, the fake API port answers
 read -r C1 C2 <<<"$(python3 -c 'import socket
 ps = []
@@ -2520,6 +2601,13 @@ fwrun env HOSTFW_PROBE_OPEN="$PORT" HOSTFW_PROBE_CLOSED="$C1 $C2" bash -c ". \"$
 check "hostfw_probe: as wanted" "$rc:$(paste -sd ',' <<<"$out")" "0:tcp/$PORT open (want open),tcp/$C1 closed (want closed),tcp/$C2 closed (want closed)"
 fwrun env HOSTFW_PROBE_OPEN="$C1" HOSTFW_PROBE_CLOSED="$PORT" bash -c ". \"$REPO/lib.sh\"; hostfw_probe"
 check "hostfw_probe: ssh closed and the panel open fail" "$rc:$(paste -sd ',' <<<"$out")" "1:tcp/$C1 closed (want open),tcp/$PORT open (want closed)"
+# hostfw_probe without HOSTFW_PROBE_OPEN: sshd's port from the server (the stub runs sshd -T)
+fwrun env FAKE_SSHD_PORT="$PORT" HOSTFW_PROBE_CLOSED="$C1" bash -c ". \"$REPO/lib.sh\"; hostfw_probe"
+check "hostfw_probe: sshd's port read from the server" "$rc:$(paste -sd ',' <<<"$out")" "0:tcp/$PORT open (want open),tcp/$C1 closed (want closed)"
+fwrun env FAKE_SSHD_PORT=2222 HOSTFW_PROBE_CLOSED="$C1" bash -c ". \"$REPO/lib.sh\"; hostfw_probe"
+check "hostfw_probe: sshd on 2222 probes 2222, not 22" "$(grep -c '^tcp/2222 ' <<<"$out"):$(grep -c '^tcp/22 ' <<<"$out")" "1:0"
+fwrun env FAKE_SSHD_NONE=1 HOSTFW_PROBE_CLOSED="$C1" bash -c ". \"$REPO/lib.sh\"; hostfw_probe"
+check "hostfw_probe: sshd unreadable falls back to 22" "$(grep -c '^tcp/22 ' <<<"$out")" "1"
 VPS_STATE=$VPS_SETUP_STATE state_set VPS_IP 203.0.113.9
 fwreset; fwrun hostfw_apply; fwrun hostfw_confirm
 
