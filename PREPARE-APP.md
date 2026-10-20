@@ -89,6 +89,10 @@ Things to flag rather than silently fix:
   no domain and the app's database: `$SETUP_DIR/WORKER.md`, after this app is deployed. Move
   the app's own in-process timers there only with the user; until then they keep running in
   the web app.
+- **Sign-in by email link or transactional mail** to build: `$SETUP_DIR/starter-auth/` is the
+  model (hashed single-use links, sessions and limits in Postgres, SMTP on stdin), and a new app
+  can start from it with `$SETUP_DIR/AUTH.md` (not run on a server yet). An app that already
+  sends mail: its SMTP password is a secret the user owns (step 5).
 
 ## 3. Make it deployable
 

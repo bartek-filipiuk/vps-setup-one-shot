@@ -73,3 +73,23 @@ Read-only checks first; every fix here needs the user's yes.
 | delivery `401`/`403` | secret mismatch | PATCH the secret again and update the hook's secret to the same value |
 | delivery `404` | wrong URL or this Coolify version has no manual GitHub webhook | check `COOLIFY_URL`; otherwise `WEBHOOK=none` (phase 05 step 6) |
 | delivery `200` but no deploy | pushed a branch other than `main` | the app deploys `git_branch` only |
+
+## Mail and sign-in (`AUTH.md`, `starter-auth/`)
+
+`app_logs <APP_UUID> 100` shows the lines below; the app never logs a password, a token or a link
+(except with `MAIL_LOG=1`).
+
+| Symptom or log line | Cause | Fix |
+|---------------------|-------|-----|
+| deploy `failed`, log `config: SMTP_URL is not set` | the SMTP step was skipped | `AUTH.md` step 5, then deploy again |
+| `config: MAIL_FROM is not set` / `config: SITE_URL is not set` | a variable is missing | `AUTH.md` step 4's variables block, then deploy again |
+| `config: SMTP_URL is not a URL` or `... has a broken %-escape` | a character in the password was not percent-encoded | `AUTH.md` step 5 again (it encodes the login and password) |
+| `auth: sign-in request failed: Invalid login: 535 ...` (`EAUTH`) | wrong SMTP login or password (often the account password instead of the generated SMTP one) | a new SMTP password at the provider, `AUTH.md` step 5, redeploy |
+| `auth: sign-in request failed: ... ETIMEDOUT` / `Connection timeout` | the port is blocked or the host is wrong; Hetzner blocks outgoing 25 and 465 on new Cloud servers [verify] | use the provider's port 587 (`smtp://`, STARTTLS) in step 5; check the host on the provider's SMTP page |
+| `auth: sign-in request failed: Error upgrading connection with STARTTLS` | the server on that port does not offer STARTTLS, and the app refuses to send the password unencrypted | the provider's TLS port instead (465 off Hetzner, or their other submission port) |
+| `... 550` / `553` `sender address rejected` / `not verified` | `MAIL_FROM` is not an address or domain the provider verified | verify it at the provider, or set `MAIL_FROM` to a verified one (step 4), redeploy |
+| `mail: sent <id>` but nothing in the inbox | spam filtering, or the provider held it | the spam folder, the provider's log for that message id, then `AUTH.md` step 9 (SPF, DKIM, DMARC) |
+| the page says the link "was already used or has expired" right away | opened after 15 minutes, used once already, or a newer link was asked for and the old one used | ask for a new link; opening the link never uses it, only **Continue** does |
+| `Forbidden: this form must be sent from the site itself.` (403) | `SITE_URL` is not exactly the address in the browser (`http` vs `https`, `www.`, another domain) | set `SITE_URL` to `https://<APP_DOMAIN>` (step 4), redeploy |
+| everyone gets "Too many tries from your network" | all requests carry the same last `X-Forwarded-For` entry: a proxy in front of Coolify's (the Cloudflare orange cloud) | DNS only on Cloudflare, as the setup requires; the limit is 20 requests per 15 minutes per IP |
+| a log line `mail: MAIL_LOG=1, nothing is sent` on the server | `MAIL_LOG` is set on a server: links are in the log | remove `MAIL_LOG` in Coolify, deploy again, delete all sessions (`AUTH.md` step 10) |

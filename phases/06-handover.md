@@ -184,6 +184,7 @@ Then write a summary the user can keep. No secrets in it.
 ## Deploy another app
 
 In that app's repo, tell your agent: Read $(state_get SETUP_DIR)/PREPARE-APP.md and prepare this app for deployment.
+A new app with sign-in by email link and mail (not run on a server yet): Read $(state_get SETUP_DIR)/AUTH.md and guide me through it.
 
 ## Tear everything down (billing stops when the server is deleted)
 

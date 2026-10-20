@@ -343,7 +343,9 @@ connect. Not run yet.
 ### 6.11 App secrets
 
 A value from a provider (SMTP, an API key): the new one is made there first, then, in the user's
-own terminal, with the value on stdin (`read -rs` keeps it off the screen and the command line):
+own terminal, with the value on stdin (`read -rs` keeps it off the screen and the command line).
+For `SMTP_URL` of an app from `AUTH.md`, use `AUTH.md` step 5's block instead: it builds the URL
+and percent-encodes the password:
 
 ```
 . ./lib.sh; printf 'value: ' && read -rs V && echo && printf '%s' "$V" | app_env_set "$(state_get APP_UUID)" "<KEY>" && unset V
