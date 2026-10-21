@@ -5,7 +5,7 @@ const globalForDb = globalThis as unknown as { pool?: Pool };
 
 export const pool =
   globalForDb.pool ??
-  new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+  new Pool({ connectionString: process.env.DATABASE_URL, max: 5, connectionTimeoutMillis: 5000 });
 
 if (!globalForDb.pool) {
   // An idle client that loses its connection (the database restarts) emits "error" on the

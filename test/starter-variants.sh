@@ -38,7 +38,7 @@ else
   fail "tsconfig.json: $B differs from $A by more than allowImportingTsExtensions"
 fi
 
-pool='new Pool({ connectionString: process.env.DATABASE_URL, max: 5 })'
+pool='new Pool({ connectionString: process.env.DATABASE_URL, max: 5, connectionTimeoutMillis: 5000 })'
 for d in "$A" "$B"; do grep -qF "$pool" "$d/lib/db.ts" || fail "$d/lib/db.ts: the pool line changed ($pool)"; done
 grep -q 'process.exit(1)' "$B/lib/db.ts" || fail "$B/lib/db.ts: migrateOrExit no longer exits"
 

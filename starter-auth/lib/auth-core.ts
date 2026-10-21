@@ -14,7 +14,6 @@ export const LINK_MINUTES = 15;
 export const SESSION_DAYS = 30;
 export const IP_LIMIT = 20; // sign-in requests per IP per 15 minutes
 export const EMAIL_LIMIT = 5; // sign-in mails per address per 15 minutes
-export const COOKIE = "session";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RAW_TOKEN = /^[A-Za-z0-9_-]{43}$/; // 32 random bytes in base64url
@@ -160,11 +159,18 @@ export function cookieAttributes(siteUrl: string) {
   };
 }
 
+// cookieName -> "__Host-session" on https: the browser then accepts the cookie only with Secure,
+// Path=/ and no Domain, so a sibling subdomain or a plain-http page cannot set or overwrite it.
+// Plain "session" on http (a local run, the fixture), where a __Host- cookie would be refused.
+export function cookieName(secure: boolean): string {
+  return secure ? "__Host-session" : "session";
+}
+
 // sessionCookie -> the Set-Cookie header value; an empty value with Max-Age=0 clears it.
 export function sessionCookie(raw: string, siteUrl: string): string {
   const a = cookieAttributes(siteUrl);
   const maxAge = raw ? a.maxAge : 0;
-  return `${COOKIE}=${raw}; Path=${a.path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${a.secure ? "; Secure" : ""}`;
+  return `${cookieName(a.secure)}=${raw}; Path=${a.path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${a.secure ? "; Secure" : ""}`;
 }
 
 export type Mail = { to: string; subject: string; text: string; html: string };
@@ -192,8 +198,9 @@ export async function handleSignIn(
   const email = normalizeEmail(req.email);
   if (!email) return see("/?error=invalid");
   try {
-    await cleanup(db);
     if (await rateHit(db, `ip:${clientIp(req.xff)}`, IP_LIMIT)) return see("/?error=busy");
+    // After the IP check, so requests over the limit cause no deletes.
+    await cleanup(db);
     if (await rateHit(db, `email:${email}`, EMAIL_LIMIT)) {
       log.log("auth: link not sent, address over its limit");
       return see(SENT);

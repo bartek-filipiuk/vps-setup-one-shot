@@ -5,8 +5,13 @@ const globalForDb = globalThis as unknown as { pool?: Pool };
 
 export const pool =
   globalForDb.pool ??
-  new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+  new Pool({ connectionString: process.env.DATABASE_URL, max: 5, connectionTimeoutMillis: 5000 });
 
+if (!globalForDb.pool) {
+  // An idle client that loses its connection (the database restarts) emits "error" on the
+  // pool; without a listener that would crash the process instead of failing the next query.
+  pool.on("error", (err) => console.error(`db: idle client error: ${err.message}`));
+}
 globalForDb.pool = pool;
 
 // ponytail: idempotent bootstrap SQL run at server start (instrumentation.ts).

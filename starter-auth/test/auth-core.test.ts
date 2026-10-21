@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  clientIp, consumeLoginToken, cookieAttributes, createLoginToken, createSession, deleteSession, EMAIL_LIMIT,
+  clientIp, consumeLoginToken, cookieAttributes, cookieName, createLoginToken, createSession, deleteSession, EMAIL_LIMIT,
   handleCallback, handleSignIn, handleSignOut, hashToken, IP_LIMIT, newToken, normalizeEmail, peekLoginToken,
   rateHit, readSession, sameOrigin, sessionCookie, upsertUser, validRawToken, type Mail,
 } from "../lib/auth-core.ts";
@@ -105,9 +105,25 @@ test("users and sessions: upsert at sign-in, sessions by hash, expiry in the joi
 test("cookie: HttpOnly, SameSite=Lax, Path=/, 30 days, Secure only on https", () => {
   assert.deepEqual(cookieAttributes(SITE), { httpOnly: true, sameSite: "lax", path: "/", maxAge: 2592000, secure: true });
   assert.equal(cookieAttributes("http://127.0.0.1:3000").secure, false);
-  assert.equal(sessionCookie("abc", SITE), "session=abc; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure");
+  assert.equal(sessionCookie("abc", SITE), "__Host-session=abc; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure");
   assert.equal(sessionCookie("abc", "http://localhost:3000"), "session=abc; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax");
-  assert.equal(sessionCookie("", SITE), "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure");
+});
+
+test("cookie name: __Host-session on https (Secure, Path=/, no Domain), session on http, for set and clear", () => {
+  assert.equal(cookieName(true), "__Host-session");
+  assert.equal(cookieName(false), "session");
+  for (const raw of ["abc", ""]) {
+    const https = sessionCookie(raw, SITE);
+    assert.ok(https.startsWith(`__Host-session=${raw};`), https);
+    assert.match(https, /; Path=\/;/);
+    assert.match(https, /; Secure$/);
+    assert.doesNotMatch(https, /Domain=/i);
+    const http = sessionCookie(raw, "http://127.0.0.1:3000");
+    assert.ok(http.startsWith(`session=${raw};`), http);
+    assert.doesNotMatch(http, /Secure|__Host-/);
+  }
+  assert.equal(sessionCookie("", SITE), "__Host-session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure");
+  assert.equal(sessionCookie("", "http://localhost:3000"), "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
 });
 
 function signIn(over: Partial<{ origin: string | null; referer: string | null; xff: string | null; email: unknown; company: unknown }> = {}) {
@@ -116,7 +132,7 @@ function signIn(over: Partial<{ origin: string | null; referer: string | null; x
 const cleanupAnswers = () => [rows(), rows(), rows()];
 
 test("handleSignIn: one mail with a link to the confirm page, only the hash stored", async () => {
-  const db = fakeDb(...cleanupAnswers(), rows({ hits: 1 }), rows({ hits: 1 }), rows());
+  const db = fakeDb(rows({ hits: 1 }), ...cleanupAnswers(), rows({ hits: 1 }), rows());
   const sent: Mail[] = [];
   const log = logger();
   const a = await handleSignIn(db, signIn(), site, async (m) => { sent.push(m); }, render, log);
@@ -128,9 +144,12 @@ test("handleSignIn: one mail with a link to the confirm page, only the hash stor
   const insert = db.calls[5];
   assert.match(insert.text, /^insert into login_tokens/);
   assert.equal(insert.values[0], hashToken(m![1]));
-  assert.deepEqual(db.calls[3].values, ["ip:10.0.0.2"]);
-  assert.deepEqual(db.calls[4].values, ["email:ann@example.com"]);
-  assert.match(db.calls[0].text, /^delete from login_tokens where expires_at < now\(\)/);
+  assert.deepEqual(db.calls[0].values, ["ip:10.0.0.2"], "the IP check comes first");
+  assert.match(db.calls[0].text, /^insert into auth_rate/);
+  assert.match(db.calls[1].text, /^delete from login_tokens where expires_at < now\(\)/, "then the cleanup");
+  assert.match(db.calls[2].text, /^delete from sessions where expires_at < now\(\)$/);
+  assert.match(db.calls[3].text, /^delete from auth_rate where window_start < now\(\)/);
+  assert.deepEqual(db.calls[4].values, ["email:ann@example.com"], "then the address check");
   assert.deepEqual(log.lines, ["auth: link requested"]);
   assert.ok(!log.lines.join("\n").includes(m![1]), "the token is never logged");
 });
@@ -152,18 +171,19 @@ test("handleSignIn: another site, no origin, honeypot and a bad address send not
 
 test("handleSignIn: an IP over its limit is told busy; an address over its limit silently gets no mail", async () => {
   const none = async () => { throw new Error("must not send"); };
-  const ip = fakeDb(...cleanupAnswers(), rows({ hits: IP_LIMIT + 1 }));
+  const ip = fakeDb(rows({ hits: IP_LIMIT + 1 }));
   assert.deepEqual(await handleSignIn(ip, signIn(), site, none, render, logger()), { status: 303, location: "/?error=busy" });
-  assert.equal(ip.calls.length, 4);
+  assert.equal(ip.calls.length, 1, "an IP over its limit causes no cleanup deletes");
+  assert.match(ip.calls[0].text, /^insert into auth_rate/);
   const log = logger();
-  const em = fakeDb(...cleanupAnswers(), rows({ hits: 1 }), rows({ hits: EMAIL_LIMIT + 1 }));
+  const em = fakeDb(rows({ hits: 1 }), ...cleanupAnswers(), rows({ hits: EMAIL_LIMIT + 1 }));
   assert.deepEqual(await handleSignIn(em, signIn(), site, none, render, log), { status: 303, location: "/?sent=1" });
   assert.equal(em.calls.length, 5, "no token row");
   assert.deepEqual(log.lines, ["auth: link not sent, address over its limit"]);
 });
 
 test("handleSignIn: a failed mail removes the token row and says failed; a database error too", async () => {
-  const db = fakeDb(...cleanupAnswers(), rows({ hits: 1 }), rows({ hits: 1 }), rows(), rows());
+  const db = fakeDb(rows({ hits: 1 }), ...cleanupAnswers(), rows({ hits: 1 }), rows(), rows());
   const log = logger();
   const a = await handleSignIn(db, signIn(), site, async () => { throw new Error("EAUTH 535"); }, render, log);
   assert.deepEqual(a, { status: 303, location: "/?error=failed" });
@@ -181,7 +201,7 @@ test("handleCallback: the token once, a user, a new session cookie, a fixed redi
   const a = await handleCallback(db, { origin: SITE, referer: null, token: t.raw }, SITE, log);
   assert.equal(a.status, 303);
   assert.equal(a.location, "/account");
-  const m = a.cookie!.match(/^session=([A-Za-z0-9_-]{43}); Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure$/);
+  const m = a.cookie!.match(/^__Host-session=([A-Za-z0-9_-]{43}); Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure$/);
   assert.ok(m, a.cookie);
   assert.deepEqual(db.calls[0].values, [t.hash]);
   assert.match(db.calls[0].text, /^update login_tokens set used_at = now\(\)/);
@@ -208,7 +228,7 @@ test("handleCallback: another site, a used or malformed token, a database error"
 test("handleSignOut: same origin only, the row deleted, the cookie cleared", async () => {
   const s = newToken();
   const db = fakeDb(rows(), rows());
-  const cleared = "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure";
+  const cleared = "__Host-session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure";
   assert.deepEqual(await handleSignOut(db, { origin: SITE, referer: null, session: s.raw, everywhere: false }, SITE, logger()), { status: 303, location: "/", cookie: cleared });
   assert.deepEqual(db.calls[0].values, [s.hash]);
   await handleSignOut(db, { origin: SITE, referer: null, session: s.raw, everywhere: true }, SITE, logger());
