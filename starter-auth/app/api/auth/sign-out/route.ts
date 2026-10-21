@@ -1,7 +1,6 @@
-import { cookies } from "next/headers";
 import { pool } from "@/lib/db.ts";
-import { formOf, config, respond } from "@/lib/auth.ts";
-import { COOKIE, handleSignOut } from "@/lib/auth-core.ts";
+import { formOf, config, respond, sessionCookieValue } from "@/lib/auth.ts";
+import { handleSignOut } from "@/lib/auth-core.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +12,7 @@ export async function POST(req: Request) {
     {
       origin: req.headers.get("origin"),
       referer: req.headers.get("referer"),
-      session: (await cookies()).get(COOKIE)?.value,
+      session: await sessionCookieValue(),
       everywhere: form?.get("everywhere") === "1",
     },
     config().siteUrl,

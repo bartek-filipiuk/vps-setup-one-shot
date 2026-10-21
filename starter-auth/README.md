@@ -38,7 +38,9 @@ in; the app says so at start).
 - A link is single use (one atomic `update ... where used_at is null`) and expires in 15 minutes.
 - Every form post must carry an `Origin` (or `Referer`) equal to `SITE_URL`'s origin; anything
   else gets 403. The session cookie is `HttpOnly`, `SameSite=Lax`, `Secure` on https, 30 days,
-  and a new one is made at every sign-in. Sign-out deletes the row.
+  and a new one is made at every sign-in. On https it is named `__Host-session`, so the browser
+  takes it only with `Secure`, `Path=/` and no `Domain` (a subdomain cannot plant one); on http
+  (a local run, the fixture) it is `session`. Sign-out deletes the row.
 - Limits in Postgres, per 15 minutes: 20 sign-in requests per IP (the last `X-Forwarded-For`
   entry, the one Coolify's proxy adds), 5 mails per address (over it the answer stays "sent",
   without a mail, so nobody learns anything). This limits inbox flooding, it does not prevent

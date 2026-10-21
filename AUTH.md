@@ -172,7 +172,8 @@ printf '%s' "$F" | app_env_set "$A" MAIL_FROM
 
 Expect `set DATABASE_URL`, `set SITE_URL`, `set MAIL_FROM`. `SITE_URL` must be exactly the
 address people open (`https://`, no `www.` unless the domain has it): every form is checked
-against it, and `https://` is what marks the session cookie `Secure`.
+against it, and `https://` is what marks the session cookie `Secure` (and names it
+`__Host-session`).
 
 DNS: an A record for the domain pointing to the server IP (no AAAA, DNS only on Cloudflare),
 added by the user, or by you with `DNS_PROVIDER=cloudflare` in `~/.config/vps-setup/state`:

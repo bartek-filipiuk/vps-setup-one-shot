@@ -3,13 +3,19 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { pool } from "./db.ts";
-import { COOKIE, readSession, type Answer, type User } from "./auth-core.ts";
+import { cookieAttributes, cookieName, readSession, type Answer, type User } from "./auth-core.ts";
 import { readConfig } from "./config.ts";
+
+// sessionCookieValue -> the raw session cookie of this request, under the name SITE_URL gives
+// (lib/auth-core.ts cookieName: __Host-session on https, session on http).
+export async function sessionCookieValue(): Promise<string | undefined> {
+  return (await cookies()).get(cookieName(cookieAttributes(readConfig().siteUrl).secure))?.value;
+}
 
 // currentUser -> the signed-in user, or null (also when the database does not answer: the page
 // then shows the sign-in form, and /api/health tells the real story).
 export async function currentUser(): Promise<User | null> {
-  const raw = (await cookies()).get(COOKIE)?.value;
+  const raw = await sessionCookieValue();
   if (!raw) return null;
   try {
     return await readSession(pool, raw);

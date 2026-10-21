@@ -1,5 +1,6 @@
 // Transactional mail over SMTP (nodemailer), or with MAIL_LOG=1 into the log only (nodemailer's
 // JSON transport: no network). One transport per process, made on the first mail.
+import { createHash } from "node:crypto";
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import type { MailSettings } from "./config.ts";
@@ -23,8 +24,15 @@ export function transportOptions(m: MailSettings) {
   };
 }
 
+// transportKey -> what the cached transport is reused for: a sha256 over every SMTP_URL part
+// (the password too, so a rotated SMTP_URL gets a new transport) and never the raw values.
+export function transportKey(m: MailSettings): string {
+  if (m.mode === "log") return "log";
+  return `smtp:${createHash("sha256").update(JSON.stringify([m.host, m.port, m.secure, m.user, m.pass])).digest("hex")}`;
+}
+
 function transport(m: MailSettings): Transporter {
-  const key = m.mode === "log" ? "log" : `${m.host}:${m.port}:${m.user}`;
+  const key = transportKey(m);
   if (!cached || cached.key !== key) cached = { key, t: nodemailer.createTransport(transportOptions(m)) };
   return cached.t;
 }

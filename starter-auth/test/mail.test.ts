@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { describe, readConfig } from "../lib/config.ts";
-import { sendMail, transportOptions } from "../lib/mail.ts";
+import { sendMail, transportKey, transportOptions } from "../lib/mail.ts";
 import { escapeHtml, signInMail } from "../lib/mail-templates.ts";
 import { logger } from "./fake-db.ts";
 
@@ -80,4 +80,16 @@ test("sendMail with MAIL_LOG=1: one JSON line with to, subject and text; nothing
   assert.equal(log.lines.length, 1);
   assert.match(log.lines[0], /^mail: \{/);
   assert.deepEqual(JSON.parse(log.lines[0].slice("mail: ".length)), { to: "ci@example.com", subject: "Sign in", text: "link: http://x/auth/callback?token=t" });
+});
+
+test("transportKey: a rotated password gets a new transport, and the key never holds the password", () => {
+  const a = readConfig({ ...base, SMTP_URL: "smtps://apikey:oldsecretpw@smtp.example.com" }).mail;
+  const b = readConfig({ ...base, SMTP_URL: "smtps://apikey:newsecretpw@smtp.example.com" }).mail;
+  assert.notEqual(transportKey(a), transportKey(b));
+  assert.equal(transportKey(a), transportKey(readConfig({ ...base, SMTP_URL: "smtps://apikey:oldsecretpw@smtp.example.com" }).mail));
+  for (const k of [transportKey(a), transportKey(b)]) {
+    assert.match(k, /^smtp:[0-9a-f]{64}$/);
+    assert.ok(!k.includes("secretpw"), k);
+  }
+  assert.equal(transportKey(readConfig({ SITE_URL: "http://127.0.0.1:3000", MAIL_LOG: "1" }).mail), "log");
 });
